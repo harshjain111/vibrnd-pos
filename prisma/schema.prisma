@@ -213,6 +213,14 @@ model DiningTable {
   name      String
   area      String   @default("Main")
   capacity  Int      @default(4)
+  /// Canvas position for the floor-plan editor (audit TASK 5).
+  /// Stored as percentage of the canvas (0..100) so it stays
+  /// responsive across screen sizes.
+  posX      Float    @default(50)
+  posY      Float    @default(50)
+  /// Visual shape — round / square / rectangle.
+  shape     String   @default("ROUND")
+  active    Boolean  @default(true)
   outletId  String
   outlet    Outlet   @relation(fields: [outletId], references: [id])
   orders    Order[]
@@ -248,6 +256,8 @@ model Order {
   subOrderType  String?      // e.g. "Parcel" / "Takeaway" / "Bar"
   captainId     String?      // user id of the captain who took the order
   amendedAt     DateTime?    // last time the bill was modified post-settlement
+  reprintCount  Int          @default(0) // audit TASK 10 — leakage signal
+  reprintReason String?      // last reason captured
 
   // Online / aggregator fields
   aggregatorOrderId String?

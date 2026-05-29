@@ -53,6 +53,7 @@ export type PageId =
   | "settings.sub-types"
   | "settings.users"
   | "settings.permissions"
+  | "settings.floor-plan"
   | "outlets";
 
 export type PageDef = {
@@ -120,6 +121,7 @@ export const PAGES: PageDef[] = [
   { id: "logs", label: "Audit trail", category: "Management", defaultRoles: ["MANAGER", "OWNER"] },
   { id: "settings", label: "Settings", category: "Management", defaultRoles: ["MANAGER", "OWNER"] },
   { id: "settings.sub-types", label: "Sub-order types", category: "Management", defaultRoles: ["MANAGER", "OWNER"] },
+  { id: "settings.floor-plan", label: "Floor plan", category: "Management", defaultRoles: ["MANAGER", "OWNER"] },
   { id: "settings.users", label: "Users", category: "Management", defaultRoles: ["OWNER"], ownerOnly: true },
   { id: "settings.permissions", label: "Permissions", category: "Management", defaultRoles: ["OWNER"], ownerOnly: true },
   { id: "outlets", label: "Outlets", category: "Management", defaultRoles: ["OWNER"], ownerOnly: true },

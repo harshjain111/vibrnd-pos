@@ -111,6 +111,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Audit trail", href: "/logs", icon: "ListChecks", pageId: "logs" },
       { label: "Settings", href: "/settings", icon: "Settings", pageId: "settings" },
       { label: "Sub-order types", href: "/settings/sub-types", icon: "Globe2", pageId: "settings.sub-types" },
+      { label: "Floor plan", href: "/settings/floor-plan", icon: "Store", pageId: "settings.floor-plan" },
       { label: "Users", href: "/settings/users", icon: "Users", pageId: "settings.users" },
       { label: "Permissions", href: "/settings/permissions", icon: "Shield", pageId: "settings.permissions" },
       { label: "Outlets", href: "/outlets", icon: "Store", pageId: "outlets" },

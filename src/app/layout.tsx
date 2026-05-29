@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/shell/sidebar";
 import { Topbar } from "@/components/shell/topbar";
 import { Toaster } from "@/components/ui/toaster";
 import { SidebarProvider } from "@/components/shell/sidebar-shell";
+import { CommandPalette } from "@/components/shell/command-palette";
 
 export const metadata: Metadata = {
   title: "Vibrnd POS — Restaurant management",
@@ -40,6 +41,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   </main>
                 </div>
               </div>
+              <CommandPalette />
             </SidebarProvider>
           )}
         </Toaster>

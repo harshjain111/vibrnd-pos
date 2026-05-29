@@ -4,6 +4,8 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { logActivity } from "@/lib/audit";
 import { moveStock } from "@/lib/stock";
+import { assertOrderEditable } from "@/lib/day-close";
+import { requireUser } from "@/lib/rbac";
 
 const CancelInput = z.object({
   id: z.string(),
@@ -11,10 +13,13 @@ const CancelInput = z.object({
 });
 
 export async function cancelOrder(input: z.infer<typeof CancelInput>) {
+  const user = await requireUser("MANAGER");
   const { id, reason } = CancelInput.parse(input);
   const o = await db.order.findUnique({ where: { id } });
   if (!o) throw new Error("Order not found");
   if (o.status === "CANCELLED") return;
+  // Bills become immutable after their business day is closed unless an Owner overrides.
+  await assertOrderEditable(o, user.role);
 
   await db.order.update({
     where: { id },
@@ -64,9 +69,11 @@ export async function cancelOrder(input: z.infer<typeof CancelInput>) {
 }
 
 export async function reopenOrder(formData: FormData) {
+  const user = await requireUser("MANAGER");
   const id = String(formData.get("id"));
   const o = await db.order.findUnique({ where: { id } });
   if (!o) return;
+  await assertOrderEditable(o, user.role);
   await db.order.update({ where: { id }, data: { status: "PRINTED", closedAt: null, notes: null } });
   await logActivity({
     action: "UPDATE",
@@ -77,5 +84,31 @@ export async function reopenOrder(formData: FormData) {
   });
   revalidatePath(`/orders/${id}`);
   revalidatePath("/orders");
+  revalidatePath("/logs");
+}
+
+const ReprintInput = z.object({ id: z.string(), reason: z.string().min(3, "Reason is required (min 3 chars)") });
+
+/** Re-print bill (audit TASK 10). Captures reason → audit trail + leakage signal. */
+export async function reprintBill(fd: FormData) {
+  await requireUser("BILLER");
+  const { id, reason } = ReprintInput.parse({
+    id: fd.get("id"),
+    reason: fd.get("reason"),
+  });
+  const o = await db.order.findUnique({ where: { id } });
+  if (!o) throw new Error("Order not found");
+  await db.order.update({
+    where: { id },
+    data: { reprintCount: { increment: 1 }, reprintReason: reason },
+  });
+  await logActivity({
+    action: "UPDATE",
+    entity: "Order",
+    entityId: id,
+    summary: `Re-printed ${o.invoiceNo} (${o.reprintCount + 1}x) — reason: ${reason}`,
+    outletId: o.outletId,
+  });
+  revalidatePath(`/orders/${id}`);
   revalidatePath("/logs");
 }
