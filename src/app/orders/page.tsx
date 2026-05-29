@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ClickableRow } from "@/components/ui/clickable-row";
 import { Empty } from "@/components/ui/empty";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
@@ -103,12 +104,8 @@ export default async function AllOrdersPage({ searchParams }: { searchParams: Pr
               </TableHeader>
               <TableBody>
                 {orders.map((o) => (
-                  <TableRow key={o.id}>
-                    <TableCell className="font-mono text-xs">
-                      <Link href={`/orders/${o.id}`} className="hover:underline">
-                        {o.invoiceNo}
-                      </Link>
-                    </TableCell>
+                  <ClickableRow key={o.id} href={`/orders/${o.id}`}>
+                    <TableCell className="font-mono text-xs">{o.invoiceNo}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {new Date(o.createdAt).toLocaleString("en-IN", {
                         day: "2-digit",
@@ -128,7 +125,7 @@ export default async function AllOrdersPage({ searchParams }: { searchParams: Pr
                         {o.status}
                       </Badge>
                     </TableCell>
-                  </TableRow>
+                  </ClickableRow>
                 ))}
               </TableBody>
             </Table>

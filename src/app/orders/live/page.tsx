@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ClickableRow } from "@/components/ui/clickable-row";
 import { PageHeader } from "@/components/shell/page-header";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Empty } from "@/components/ui/empty";
@@ -83,12 +84,8 @@ export default async function LiveOrdersPage() {
                   </TableHeader>
                   <TableBody>
                     {running.map((o) => (
-                      <TableRow key={o.id}>
-                        <TableCell className="font-mono text-xs">
-                          <Link href={`/orders/${o.id}`} className="hover:underline">
-                            {o.invoiceNo}
-                          </Link>
-                        </TableCell>
+                      <ClickableRow key={o.id} href={`/orders/${o.id}`}>
+                        <TableCell className="font-mono text-xs">{o.invoiceNo}</TableCell>
                         <TableCell>
                           <Badge variant="secondary">{o.orderType.replace("_", " ")}</Badge>
                         </TableCell>
@@ -98,7 +95,7 @@ export default async function LiveOrdersPage() {
                           <StatusBadge status={o.status} />
                         </TableCell>
                         <TableCell className="text-right font-semibold">{inr(o.grandTotal)}</TableCell>
-                      </TableRow>
+                      </ClickableRow>
                     ))}
                   </TableBody>
                 </Table>
