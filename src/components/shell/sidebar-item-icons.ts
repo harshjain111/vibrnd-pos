@@ -21,6 +21,7 @@ import {
   Building2,
   Star,
   ListTodo,
+  Shield,
   type LucideIcon,
 } from "lucide-react";
 import type { IconName } from "./nav-config";
@@ -48,4 +49,5 @@ export const ICONS: Record<IconName, LucideIcon> = {
   Building2,
   Star,
   ListTodo,
+  Shield,
 };

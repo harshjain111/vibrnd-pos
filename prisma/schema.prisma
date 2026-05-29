@@ -76,6 +76,7 @@ model Outlet {
   vendorPayments    VendorPayment[]
   invSettings       InventorySetting[]
   reportNotifications ReportNotification[]
+  rolePermissions   RolePermission[]
 }
 
 model ActivityLog {
@@ -1092,4 +1093,20 @@ model ReportNotificationLog {
   resolvedTo     DateTime?
 
   @@index([notificationId, sentAt])
+}
+
+/// Per-outlet override of the default page-access matrix from src/lib/permissions.ts.
+/// Lets the Owner toggle any role × page combination from /settings/permissions.
+model RolePermission {
+  id        String   @id @default(cuid())
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  role      String   // OWNER | MANAGER | BILLER | CAPTAIN
+  pageId    String   // matches PageId in src/lib/permissions.ts
+  allowed   Boolean  @default(true)
+  updatedById String?
+  updatedAt DateTime @updatedAt
+
+  @@unique([outletId, role, pageId])
+  @@index([outletId])
 }
