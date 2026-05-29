@@ -55,4 +55,24 @@ export async function moveStock(input: MoveInput) {
     // Movement logging must never fail the stock change.
     console.error("[stock] movement log failed:", err);
   }
+
+  // Low-stock notification — fires when crossing min OR par thresholds downward.
+  // Best-effort: never let notification errors bubble up to the caller.
+  try {
+    const crossedMin = after.currentQty < before.minLevel && before.currentQty >= before.minLevel;
+    const crossedPar = after.currentQty < before.parLevel && before.currentQty >= before.parLevel;
+    if (crossedMin || crossedPar) {
+      await db.notification.create({
+        data: {
+          outletId: before.outletId,
+          kind: "LOW_STOCK",
+          title: crossedMin ? `${before.name} below MIN level` : `${before.name} below PAR level`,
+          body: `${before.name} is now at ${after.currentQty} (min ${before.minLevel}, par ${before.parLevel}). Time to reorder.`,
+          link: `/inventory/available?q=${encodeURIComponent(before.name)}`,
+        },
+      });
+    }
+  } catch (err) {
+    console.error("[stock] low-stock notification failed:", err);
+  }
 }

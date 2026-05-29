@@ -4,6 +4,7 @@ import { getSessionUser } from "@/lib/session";
 import { type Role } from "@/lib/rbac";
 import { canAccess, loadOutletPermissions } from "@/lib/permissions";
 import { getActiveOutlet } from "@/lib/outlet";
+import { db } from "@/lib/db";
 import { SidebarShell } from "./sidebar-shell";
 
 export async function Sidebar() {
@@ -13,9 +14,15 @@ export async function Sidebar() {
   // Load any per-outlet permission overrides from the RolePermission table
   // so the Owner's manual toggles take effect.
   let overrides = undefined;
+  let badges: Record<string, number> = {};
   try {
     const outlet = await getActiveOutlet();
     overrides = await loadOutletPermissions(outlet.id);
+    // Per-section dynamic badges (audit §5.4 — Override pending count).
+    const [pendingOverrides] = await Promise.all([
+      db.overrideRequest.count({ where: { outletId: outlet.id, status: "PENDING" } }),
+    ]);
+    badges = { overrides: pendingOverrides };
   } catch {
     // Outlet lookup can fail at signup/login — fall back to defaults silently.
   }
@@ -24,7 +31,10 @@ export async function Sidebar() {
   // disappears if every item in it is filtered out.
   const sections = NAV_SECTIONS.map((s) => ({
     ...s,
-    items: s.items.filter((i) => canAccess(role, i.pageId, overrides)),
+    items: s.items
+      .filter((i) => canAccess(role, i.pageId, overrides))
+      // Attach dynamic count badges where defined.
+      .map((i) => (i.pageId === "overrides" && badges.overrides ? { ...i, badge: badges.overrides } : i)),
   })).filter((s) => s.items.length > 0);
 
   // Active-route highlight from middleware-set header (initial SSR);

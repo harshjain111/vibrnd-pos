@@ -40,6 +40,11 @@ export function SidebarItem({
         )}
         {Icon && <Icon className="h-4 w-4 shrink-0" />}
         <span className="flex-1">{item.label}</span>
+        {typeof item.badge === "number" && item.badge > 0 && (
+          <span className="text-[10px] font-semibold bg-rose-500 text-white px-1.5 py-0.5 rounded-full min-w-5 text-center">
+            {item.badge > 99 ? "99+" : item.badge}
+          </span>
+        )}
         {item.soon && (
           <span className="text-[9px] uppercase bg-white/10 text-white/60 px-1.5 py-0.5 rounded">
             Soon

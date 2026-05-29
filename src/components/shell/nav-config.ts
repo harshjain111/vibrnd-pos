@@ -37,6 +37,8 @@ export type NavItem = {
   soon?: boolean;
   /** Page in the central permission registry. The sidebar hides items the user can't access. */
   pageId: PageId;
+  /** Optional count badge — set dynamically by the server sidebar (e.g. pending overrides). */
+  badge?: number;
 };
 export type NavSection = { label: string; items: NavItem[] };
 

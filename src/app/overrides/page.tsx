@@ -8,6 +8,7 @@ import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
 import { Empty } from "@/components/ui/empty";
 import { DecideButtons } from "./client";
+import { ApprovalStepper } from "./stepper";
 
 export const dynamic = "force-dynamic";
 
@@ -79,7 +80,12 @@ export default async function OverridesPage() {
                           <TableCell>
                             <Badge variant="warning">{r.actionType}</Badge>
                           </TableCell>
-                          <TableCell className="text-sm">{ctx.summary ?? r.contextJson.slice(0, 80)}</TableCell>
+                          <TableCell className="text-sm">
+                            <div>{ctx.summary ?? r.contextJson.slice(0, 80)}</div>
+                            <div className="mt-1.5 max-w-md">
+                              <ApprovalStepper status={r.status as any} currentStage="L2" />
+                            </div>
+                          </TableCell>
                           <TableCell className="text-xs text-muted-foreground">
                             {r.requestedBy?.name ?? "system"}
                           </TableCell>
@@ -136,8 +142,11 @@ export default async function OverridesPage() {
                           <TableCell>
                             <Badge variant="outline">{r.actionType}</Badge>
                           </TableCell>
-                          <TableCell className="text-sm max-w-[280px] truncate">
-                            {ctx.summary ?? r.contextJson.slice(0, 80)}
+                          <TableCell className="text-sm max-w-[280px]">
+                            <div className="truncate">{ctx.summary ?? r.contextJson.slice(0, 80)}</div>
+                            <div className="mt-1.5">
+                              <ApprovalStepper status={r.status as any} currentStage={r.status === "APPROVED" ? "L4" : "L2"} />
+                            </div>
                           </TableCell>
                           <TableCell>
                             <Badge variant={r.status === "APPROVED" ? "success" : "destructive"}>{r.status}</Badge>

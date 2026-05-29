@@ -184,6 +184,61 @@ export function BillingScreen({
     [cart]
   );
 
+  // ─── POS keyboard shortcuts (audit §5.6) ────────────────────────────────
+  // Digit 1..9 → activate Nth category, "K" send KOT, "S" go to Settle,
+  // "B" go back a step, "Esc" reset. Disabled while the user is typing in any
+  // <input> / <textarea> / <select> so we don't fight with form entry.
+  const [showShortcuts, setShowShortcuts] = React.useState(false);
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "?") {
+        setShowShortcuts((v) => !v);
+        return;
+      }
+      if (stage === "menu") {
+        if (/^[1-9]$/.test(key)) {
+          const idx = Number(key) - 1;
+          if (idx === 0) setActiveCat("all");
+          else if (categories[idx - 1]) setActiveCat(categories[idx - 1].id);
+          e.preventDefault();
+          return;
+        }
+        if (key === "k" && cart.length > 0) {
+          sendKot();
+          e.preventDefault();
+          return;
+        }
+        if (key === "s" && cart.length > 0) {
+          setStage("settle");
+          e.preventDefault();
+          return;
+        }
+        if (key === "b") {
+          setStage("customer");
+          e.preventDefault();
+          return;
+        }
+      }
+      if (stage === "settle") {
+        if (key === "b") {
+          setStage("menu");
+          e.preventDefault();
+          return;
+        }
+      }
+      if (key === "escape") {
+        setShowShortcuts(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, cart.length, categories]);
+
   // ─── Auto-discount engine (TASK 12) ──────────────────────────────────────
   // Whenever the cart subtotal changes, ask the server for the best matching
   // auto-discount. Only applies if no manual coupon is in play (manual wins).
@@ -585,7 +640,58 @@ export function BillingScreen({
         insights={insights}
         memberships={memberships}
       />
+
+      {/* Keyboard shortcut hint pill — always visible on the menu/settle steps. */}
+      {(stage === "menu" || stage === "settle") && (
+        <button
+          type="button"
+          onClick={() => setShowShortcuts(true)}
+          className="fixed bottom-3 right-3 z-30 hidden md:inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-[10px] uppercase tracking-wider text-muted-foreground shadow hover:bg-accent"
+          title="View keyboard shortcuts"
+        >
+          ? Shortcuts
+        </button>
+      )}
+
+      {/* Shortcuts overlay */}
+      {showShortcuts && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/50 grid place-items-center p-4"
+          onClick={() => setShowShortcuts(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-lg border bg-card shadow-xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-3 py-2 border-b text-sm font-semibold">POS shortcuts</div>
+            <ul className="p-3 space-y-1.5 text-sm">
+              <Shortcut keys={["1", "9"]} desc="Switch category" />
+              <Shortcut keys={["K"]} desc="Send KOT to kitchen" />
+              <Shortcut keys={["S"]} desc="Go to Settle" />
+              <Shortcut keys={["B"]} desc="Back to previous step" />
+              <Shortcut keys={["?"]} desc="Toggle this help" />
+            </ul>
+            <div className="px-3 py-2 border-t text-[10px] text-muted-foreground">Disabled while typing in any input.</div>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function Shortcut({ keys, desc }: { keys: string[]; desc: string }) {
+  return (
+    <li className="flex items-center justify-between gap-2">
+      <span>{desc}</span>
+      <span className="flex items-center gap-0.5">
+        {keys.map((k, i) => (
+          <React.Fragment key={k}>
+            {i > 0 && <span className="text-xs text-muted-foreground">–</span>}
+            <kbd className="border rounded px-1.5 py-0.5 text-[10px] font-mono bg-muted">{k}</kbd>
+          </React.Fragment>
+        ))}
+      </span>
+    </li>
   );
 }
 
