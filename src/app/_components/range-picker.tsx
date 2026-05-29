@@ -1,12 +1,17 @@
 "use client";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 
+/**
+ * Smart filter pill bar (audit §5.5) — replaces the slow date-picker pair with
+ * Today / Yesterday / Last 7 / Last 30 / This Month / Last Month / Custom.
+ * Stays as a thin client component; reads/writes ?range= on the URL.
+ */
 const OPTIONS = [
   { value: "today", label: "Today" },
   { value: "yesterday", label: "Yesterday" },
-  { value: "last7", label: "Last 7 days" },
-  { value: "last30", label: "Last 30 days" },
+  { value: "last7", label: "Last 7" },
+  { value: "last30", label: "Last 30" },
   { value: "thisMonth", label: "This month" },
   { value: "lastMonth", label: "Last month" },
 ];
@@ -16,24 +21,31 @@ export function RangePicker({ current }: { current: string }) {
   const sp = useSearchParams();
 
   return (
-    <Select
-      value={current}
-      onValueChange={(v) => {
-        const next = new URLSearchParams(sp.toString());
-        next.set("range", v);
-        router.push(`?${next.toString()}`);
-      }}
-    >
-      <SelectTrigger className="w-44 h-9">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {OPTIONS.map((o) => (
-          <SelectItem key={o.value} value={o.value}>
+    <div role="tablist" className="inline-flex flex-wrap items-center gap-1 rounded-full border bg-card p-0.5">
+      {OPTIONS.map((o) => {
+        const active = current === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => {
+              const next = new URLSearchParams(sp.toString());
+              next.set("range", o.value);
+              router.push(`?${next.toString()}`);
+            }}
+            className={cn(
+              "text-xs px-2.5 py-1 rounded-full transition-colors",
+              active
+                ? "bg-primary text-primary-foreground font-semibold"
+                : "text-muted-foreground hover:text-foreground hover:bg-accent"
+            )}
+          >
             {o.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+          </button>
+        );
+      })}
+    </div>
   );
 }

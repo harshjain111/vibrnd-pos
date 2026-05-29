@@ -11,6 +11,8 @@ import { inr } from "@/lib/utils";
 import { Plus, Search, Settings2 } from "lucide-react";
 import { ItemDialog, CategoryDialog, OutOfStockToggle, DeleteItemBtn, TaxSlabDialog, DeleteTaxSlabBtn } from "./client";
 import { Input } from "@/components/ui/input";
+import { DietaryDot } from "@/components/ui/dietary-dot";
+import { MenuBulkButtons } from "./bulk-buttons";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +49,7 @@ export default async function MenuPage({ searchParams }: { searchParams: Promise
         description={`${items.length} items · ${categories.length} categories`}
         actions={
           <>
+            <MenuBulkButtons />
             <CategoryDialog>
               <Button variant="outline" size="sm">
                 <Plus className="h-4 w-4" />
@@ -101,11 +104,15 @@ export default async function MenuPage({ searchParams }: { searchParams: Promise
                     <TableRow key={it.id}>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <span
-                            className={`h-3 w-3 rounded-sm border ${it.isVeg ? "border-emerald-600" : "border-rose-600"} flex items-center justify-center shrink-0`}
-                          >
-                            <span className={`h-1.5 w-1.5 rounded-full ${it.isVeg ? "bg-emerald-600" : "bg-rose-600"}`} />
-                          </span>
+                          {it.imageUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={it.imageUrl} alt="" className="h-8 w-8 rounded object-cover shrink-0" />
+                          ) : (
+                            <div className="h-8 w-8 rounded bg-muted grid place-items-center shrink-0 text-[10px] font-semibold text-muted-foreground uppercase">
+                              {it.name.slice(0, 2)}
+                            </div>
+                          )}
+                          <DietaryDot value={(it as any).dietary || (it.isVeg ? "VEG" : "NON_VEG")} />
                           <div>
                             <div className="font-medium">{it.name}</div>
                             {it.shortCode && <div className="text-xs text-muted-foreground">{it.shortCode}</div>}

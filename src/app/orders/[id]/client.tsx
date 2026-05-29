@@ -14,8 +14,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
-import { XCircle, Printer } from "lucide-react";
-import { cancelOrder, reprintBill } from "./actions";
+import { XCircle, Printer, Split, Check } from "lucide-react";
+import { cancelOrder, reprintBill, splitBillByItem } from "./actions";
 
 export function CancelOrderButton({ id, invoiceNo }: { id: string; invoiceNo: string }) {
   const router = useRouter();
@@ -72,6 +72,134 @@ export function CancelOrderButton({ id, invoiceNo }: { id: string; invoiceNo: st
           </Button>
           <Button variant="destructive" onClick={submit} disabled={pending}>
             {pending ? "Cancelling…" : "Cancel order"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Split a running bill into two by picking line items to move. The picked
+ * lines spawn a new INV-…-S bill; the original keeps the rest. Audit TASK 11.
+ */
+export function SplitBillButton({
+  id,
+  invoiceNo,
+  items,
+}: {
+  id: string;
+  invoiceNo: string;
+  items: { id: string; name: string; qty: number; price: number }[];
+}) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [open, setOpen] = React.useState(false);
+  const [picked, setPicked] = React.useState<Set<string>>(new Set());
+  const [pending, startTransition] = React.useTransition();
+
+  const toggle = (lineId: string) =>
+    setPicked((s) => {
+      const next = new Set(s);
+      if (next.has(lineId)) next.delete(lineId);
+      else next.add(lineId);
+      return next;
+    });
+
+  const pickedTotal = items
+    .filter((i) => picked.has(i.id))
+    .reduce((s, i) => s + i.qty * i.price, 0);
+  const remainingTotal = items.reduce((s, i) => s + i.qty * i.price, 0) - pickedTotal;
+
+  const submit = () => {
+    if (picked.size === 0) {
+      toast({ variant: "destructive", title: "Pick at least one item" });
+      return;
+    }
+    if (picked.size === items.length) {
+      toast({ variant: "destructive", title: "Leave at least one item on the original bill" });
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const res = await splitBillByItem({ id, moveItemIds: [...picked] });
+        toast({
+          variant: "success",
+          title: `Split into ${res.splitInvoice}`,
+          description: `${picked.size} item(s) moved to a new bill.`,
+        });
+        setPicked(new Set());
+        setOpen(false);
+        router.refresh();
+      } catch (e) {
+        toast({ variant: "destructive", title: "Split failed", description: String(e) });
+      }
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          <Split className="h-4 w-4" />
+          Split bill
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Split {invoiceNo}</DialogTitle>
+          <DialogDescription>
+            Pick the items that move to the new bill. The original keeps everything you leave un-ticked.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="max-h-80 overflow-y-auto -mx-2 px-2">
+          <ul className="space-y-1">
+            {items.map((it) => {
+              const ticked = picked.has(it.id);
+              return (
+                <li key={it.id}>
+                  <button
+                    type="button"
+                    onClick={() => toggle(it.id)}
+                    className={`w-full flex items-center justify-between gap-2 p-2 rounded-md border text-sm transition-colors ${
+                      ticked ? "border-primary bg-primary/5" : "hover:bg-accent"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span
+                        className={`h-4 w-4 rounded border grid place-items-center ${
+                          ticked ? "bg-primary border-primary text-primary-foreground" : "border-input"
+                        }`}
+                      >
+                        {ticked && <Check className="h-3 w-3" />}
+                      </span>
+                      <span className="font-medium">{it.name}</span>
+                      <span className="text-xs text-muted-foreground">× {it.qty}</span>
+                    </span>
+                    <span className="text-xs">₹{Math.round(it.qty * it.price).toLocaleString("en-IN")}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-sm pt-2 border-t">
+          <div className="rounded-md border bg-muted/30 p-2.5">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Original keeps</div>
+            <div className="font-semibold">₹{Math.round(remainingTotal).toLocaleString("en-IN")}</div>
+          </div>
+          <div className="rounded-md border border-primary bg-primary/5 p-2.5">
+            <div className="text-[10px] uppercase tracking-wider text-primary">New bill</div>
+            <div className="font-semibold">₹{Math.round(pickedTotal).toLocaleString("en-IN")}</div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={pending || picked.size === 0}>
+            <Split className="h-4 w-4" />
+            {pending ? "Splitting…" : "Split bill"}
           </Button>
         </DialogFooter>
       </DialogContent>

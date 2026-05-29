@@ -9,9 +9,11 @@ const ItemSchema = z.object({
   name: z.string().min(1),
   shortCode: z.string().optional(),
   description: z.string().optional(),
+  imageUrl: z.string().optional(),
   price: z.coerce.number().nonnegative(),
   taxRate: z.coerce.number().min(0).max(100),
   categoryId: z.string().min(1),
+  dietary: z.enum(["VEG", "NON_VEG", "EGG", "JAIN"]).default("VEG"),
   isVeg: z.coerce.boolean().default(true),
   active: z.coerce.boolean().default(true),
   outOfStock: z.coerce.boolean().default(false),
@@ -19,15 +21,19 @@ const ItemSchema = z.object({
 
 export async function saveItem(formData: FormData) {
   const outlet = await getActiveOutlet();
+  const dietary = (formData.get("dietary") as string) || "VEG";
   const parsed = ItemSchema.parse({
     id: formData.get("id") || undefined,
     name: formData.get("name"),
     shortCode: formData.get("shortCode") || undefined,
     description: formData.get("description") || undefined,
+    imageUrl: formData.get("imageUrl") || undefined,
     price: formData.get("price"),
     taxRate: formData.get("taxRate"),
     categoryId: formData.get("categoryId"),
-    isVeg: formData.get("isVeg") === "on",
+    dietary,
+    // Keep isVeg in sync with the dietary marker so legacy queries still work.
+    isVeg: dietary === "VEG" || dietary === "JAIN",
     active: formData.get("active") === "on",
     outOfStock: formData.get("outOfStock") === "on",
   });

@@ -87,6 +87,96 @@ export async function reopenOrder(formData: FormData) {
   revalidatePath("/logs");
 }
 
+const SplitInput = z.object({
+  id: z.string(),
+  moveItemIds: z.array(z.string()).min(1, "Pick at least one item to move to the new bill"),
+});
+
+/**
+ * Split bill v1 (audit TASK 11) — move the picked line items to a brand-new
+ * Order; the original keeps what's left. Only allowed on unsettled bills.
+ * Each split creates a fresh invoice number and copies customer + table.
+ */
+export async function splitBillByItem(input: z.infer<typeof SplitInput>) {
+  const user = await requireUser("MANAGER");
+  const { id, moveItemIds } = SplitInput.parse(input);
+  const orig = await db.order.findUnique({
+    where: { id },
+    include: { items: true },
+  });
+  if (!orig) throw new Error("Order not found");
+  if (orig.status === "CANCELLED" || orig.status === "PAID") {
+    throw new Error(`Cannot split a ${orig.status.toLowerCase()} bill.`);
+  }
+  await assertOrderEditable(orig, user.role);
+
+  const moving = orig.items.filter((i) => moveItemIds.includes(i.id));
+  const remaining = orig.items.filter((i) => !moveItemIds.includes(i.id));
+  if (moving.length === 0) throw new Error("No matching items to move.");
+  if (remaining.length === 0) throw new Error("Pick fewer items — original bill must keep at least one line.");
+
+  // Build a fresh invoice number for the new bill.
+  const count = await db.order.count({ where: { outletId: orig.outletId } });
+  const padded = String(count + 1).padStart(6, "0");
+  const splitInvoice = `INV-${padded}-S`;
+
+  // Totals for both halves.
+  const totalOf = (lines: typeof orig.items) => {
+    const sub = lines.reduce((s, l) => s + l.price * l.qty, 0);
+    const tax = lines.reduce((s, l) => s + l.price * l.qty * (l.taxRate / 100), 0);
+    return { sub, tax, grand: Math.round(sub + tax) };
+  };
+  const tA = totalOf(remaining);
+  const tB = totalOf(moving);
+
+  // Create the new bill with the moved items.
+  const splitOrder = await db.order.create({
+    data: {
+      invoiceNo: splitInvoice,
+      orderType: orig.orderType,
+      channel: orig.channel,
+      status: "PRINTED",
+      subTotal: tB.sub,
+      taxTotal: tB.tax,
+      grandTotal: tB.grand,
+      outletId: orig.outletId,
+      tableId: orig.tableId,
+      customerId: orig.customerId,
+      notes: `Split from ${orig.invoiceNo}`,
+    },
+  });
+  // Move each picked line over to the new order.
+  await db.orderItem.updateMany({
+    where: { id: { in: moveItemIds } },
+    data: { orderId: splitOrder.id },
+  });
+  // Update original totals.
+  await db.order.update({
+    where: { id: orig.id },
+    data: {
+      subTotal: tA.sub,
+      taxTotal: tA.tax,
+      grandTotal: tA.grand,
+      notes: `${orig.notes ? `${orig.notes} · ` : ""}Split: ${moving.length} item(s) moved → ${splitInvoice}`,
+    },
+  });
+
+  await logActivity({
+    action: "UPDATE",
+    entity: "Order",
+    entityId: id,
+    summary: `Split ${orig.invoiceNo} → ${splitInvoice} (${moving.length} item${moving.length === 1 ? "" : "s"})`,
+    outletId: orig.outletId,
+  });
+
+  revalidatePath(`/orders/${id}`);
+  revalidatePath(`/orders/${splitOrder.id}`);
+  revalidatePath("/orders");
+  revalidatePath("/orders/live");
+  revalidatePath("/logs");
+  return { splitId: splitOrder.id, splitInvoice };
+}
+
 const ReprintInput = z.object({ id: z.string(), reason: z.string().min(3, "Reason is required (min 3 chars)") });
 
 /** Re-print bill (audit TASK 10). Captures reason → audit trail + leakage signal. */

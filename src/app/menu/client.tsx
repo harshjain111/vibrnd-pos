@@ -165,11 +165,26 @@ export function ItemDialog({
             <Input name="description" defaultValue={initial?.description} placeholder="Optional" />
           </div>
 
-          <div className="col-span-2 flex flex-wrap gap-4 text-sm">
-            <label className="inline-flex items-center gap-2">
-              <input type="checkbox" name="isVeg" defaultChecked={initial?.isVeg ?? true} />
-              Vegetarian
-            </label>
+          <div className="col-span-2">
+            <Label>Image URL (optional)</Label>
+            <Input name="imageUrl" defaultValue={(initial as any)?.imageUrl ?? ""} placeholder="https://…" />
+          </div>
+
+          <div>
+            <Label>Dietary</Label>
+            <select
+              name="dietary"
+              defaultValue={(initial as any)?.dietary ?? (initial?.isVeg === false ? "NON_VEG" : "VEG")}
+              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+            >
+              <option value="VEG">🟢 Vegetarian</option>
+              <option value="NON_VEG">🔴 Non-vegetarian</option>
+              <option value="EGG">🟡 Egg</option>
+              <option value="JAIN">🟠 Jain</option>
+            </select>
+          </div>
+
+          <div className="flex flex-wrap gap-4 text-sm items-end pb-2">
             <label className="inline-flex items-center gap-2">
               <input type="checkbox" name="active" defaultChecked={initial?.active ?? true} />
               Active

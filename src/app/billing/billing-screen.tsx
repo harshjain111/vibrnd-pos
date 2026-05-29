@@ -47,6 +47,7 @@ import {
 } from "./actions";
 import { lookupDiscount } from "@/app/menu/discounts/actions";
 import { useToast } from "@/components/ui/use-toast";
+import { DietaryDot } from "@/components/ui/dietary-dot";
 
 type Variant = { id: string; name: string; price: number };
 type Addon = { id: string; name: string; priceDelta: number };
@@ -57,6 +58,8 @@ type Item = {
   taxRate: number;
   categoryId: string;
   isVeg: boolean;
+  imageUrl?: string | null;
+  dietary?: string;
   variants: Variant[];
   addons: Addon[];
 };
@@ -964,12 +967,12 @@ function MenuStep(props: {
                     <Star className="h-3 w-3" />
                   </span>
                 )}
+                {it.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={it.imageUrl} alt="" className="h-16 w-full object-cover rounded mb-1.5" />
+                ) : null}
                 <div className="flex items-start justify-between gap-2 mb-1.5">
-                  <span
-                    className={`h-3 w-3 rounded-sm border ${it.isVeg ? "border-emerald-600" : "border-rose-600"} flex items-center justify-center`}
-                  >
-                    <span className={`h-1.5 w-1.5 rounded-full ${it.isVeg ? "bg-emerald-600" : "bg-rose-600"}`} />
-                  </span>
+                  <DietaryDot value={(it as any).dietary || "VEG"} />
                   <span className="text-[10px] text-muted-foreground">GST {it.taxRate}%</span>
                 </div>
                 <div className="font-medium text-sm leading-tight">{it.name}</div>

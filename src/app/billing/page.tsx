@@ -47,6 +47,8 @@ export default async function BillingPage() {
           taxRate: i.taxRate,
           categoryId: i.categoryId,
           isVeg: i.isVeg,
+          imageUrl: i.imageUrl,
+          dietary: (i as any).dietary,
           variants: i.variants.map((v) => ({ id: v.id, name: v.name, price: v.price })),
           addons: i.addons.map((a) => ({ id: a.id, name: a.name, priceDelta: a.priceDelta })),
         }))}

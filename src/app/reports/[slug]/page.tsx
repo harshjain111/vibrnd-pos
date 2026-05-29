@@ -1031,6 +1031,39 @@ export default async function ReportPage({
         }
       />
 
+      {/* One-line summary above every report — audit §5.5. */}
+      {report && orders.length > 0 && (
+        <Card className="mb-3 border-l-4 border-l-primary">
+          <CardContent className="py-3 px-4 text-sm">
+            <span className="text-muted-foreground">
+              <strong className="text-foreground">{label}:</strong>{" "}
+            </span>
+            <strong className="text-foreground">{inr(orders.reduce((s, o) => s + o.grandTotal, 0))}</strong> in {orders.length} bills
+            {" · "}
+            AOV <strong className="text-foreground">{inr(orders.length ? orders.reduce((s, o) => s + o.grandTotal, 0) / orders.length : 0)}</strong>
+            {" · "}
+            <span className="text-emerald-700">tax {inr(orders.reduce((s, o) => s + o.taxTotal, 0))}</span>
+            {prevOrders.length > 0 && (
+              <>
+                {" · "}
+                {(() => {
+                  const cur = orders.reduce((s, o) => s + o.grandTotal, 0);
+                  const prev = prevOrders.reduce((s, o) => s + o.grandTotal, 0);
+                  const delta = prev > 0 ? ((cur - prev) / prev) * 100 : 0;
+                  const sign = delta >= 0 ? "+" : "";
+                  return (
+                    <span className={delta >= 0 ? "text-emerald-700" : "text-rose-700"}>
+                      {sign}
+                      {delta.toFixed(1)}% vs prior period
+                    </span>
+                  );
+                })()}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardContent className="p-0">
           {!report ? (
