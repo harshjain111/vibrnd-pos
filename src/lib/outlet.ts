@@ -1,11 +1,20 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { db } from "./db";
+import { getSessionUser } from "./session";
 
 export const OUTLET_COOKIE = "pos_outlet";
 
-/** Read active outlet from cookie. Falls back to first active outlet. */
+/**
+ * Read active outlet from cookie. Falls back to first active outlet.
+ *
+ * Defense in depth (audit TASK 17): asserts an authenticated session exists.
+ * Every server action that calls this is automatically protected from
+ * unauthenticated hits even if it forgot its own `requireUser` check.
+ */
 export async function getActiveOutlet() {
+  const user = await getSessionUser();
+  if (!user) throw new Error("Authentication required");
   const c = await cookies();
   const cookieVal = c.get(OUTLET_COOKIE)?.value;
 

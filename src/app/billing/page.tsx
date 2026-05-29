@@ -2,11 +2,14 @@ import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { BillingScreen } from "./billing-screen";
 import { PageHeader } from "@/components/shell/page-header";
+import { getSessionUser } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function BillingPage() {
   const outlet = await getActiveOutlet();
+  const user = await getSessionUser();
+  const isCaptain = user?.role === "CAPTAIN";
   const [categories, items, tables, subTypes, captains] = await Promise.all([
     db.category.findMany({ where: { outletId: outlet.id }, orderBy: { rank: "asc" } }),
     db.item.findMany({
@@ -36,6 +39,9 @@ export default async function BillingPage() {
         }
       />
       <BillingScreen
+        captainMode={isCaptain}
+        upiVpa={(outlet as any).upiVpa ?? null}
+        outletName={outlet.name}
         taxInclusive={outlet.taxInclusive}
         loyaltyEarnPer={outlet.loyaltyEarnPer}
         loyaltyRedeemRupees={outlet.loyaltyRedeemRupees}

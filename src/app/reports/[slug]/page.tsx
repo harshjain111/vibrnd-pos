@@ -10,7 +10,7 @@ import { getActiveOutlet } from "@/lib/outlet";
 import { inr } from "@/lib/utils";
 import { rangeBounds, type RangeKey } from "@/lib/analytics";
 import { RangePicker } from "@/app/_components/range-picker";
-import { Bell, Download, Star } from "lucide-react";
+import { Bell, Download, Star, Sparkles } from "lucide-react";
 import { findReport } from "../registry";
 
 export const dynamic = "force-dynamic";
@@ -1018,6 +1018,16 @@ export default async function ReportPage({
               <Button variant="outline" size="sm">
                 <Bell className="h-4 w-4" />
                 Schedule
+              </Button>
+            </Link>
+            <Link
+              href={`/?ai=${encodeURIComponent(
+                `Explain this report: ${title}. The period is ${label}. The dataset has ${orders.length} bills totalling ₹${Math.round(orders.reduce((s, o) => s + o.grandTotal, 0))}. Summarise the insights and suggest one action.`
+              )}`}
+            >
+              <Button variant="outline" size="sm">
+                <Sparkles className="h-4 w-4" />
+                Ask AI
               </Button>
             </Link>
             <Button variant="outline" size="sm">

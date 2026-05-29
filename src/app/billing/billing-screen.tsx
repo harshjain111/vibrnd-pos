@@ -52,6 +52,7 @@ import Link from "next/link";
 import { lookupDiscount } from "@/app/menu/discounts/actions";
 import { useToast } from "@/components/ui/use-toast";
 import { DietaryDot } from "@/components/ui/dietary-dot";
+import { UpiQr } from "@/components/ui/upi-qr";
 
 type Variant = { id: string; name: string; price: number };
 type Addon = { id: string; name: string; priceDelta: number };
@@ -128,6 +129,9 @@ export function BillingScreen({
   loyaltyRedeemRupees = 1,
   subTypes = [],
   captains = [],
+  captainMode = false,
+  upiVpa = null,
+  outletName = "",
 }: {
   categories: Category[];
   items: Item[];
@@ -137,6 +141,12 @@ export function BillingScreen({
   loyaltyRedeemRupees?: number;
   subTypes?: SubType[];
   captains?: Captain[];
+  /** When true, hides the Settle stage entirely (audit TASK 27).
+   *  Captains only take orders + send KOTs; cashiers / managers settle. */
+  captainMode?: boolean;
+  /** UPI VPA used to render the dynamic QR at Settle when UPI is the mode (TASK 20). */
+  upiVpa?: string | null;
+  outletName?: string;
 }) {
   const { toast } = useToast();
   const [stage, setStage] = React.useState<Stage>("customer");
@@ -581,6 +591,7 @@ export function BillingScreen({
           onNext={() => setStage("settle")}
           onSendKot={sendKot}
           kotSent={kotSent}
+          captainMode={captainMode}
           sub={sub}
           tax={tax}
           grand={Math.round(sub + tax)}
@@ -598,6 +609,8 @@ export function BillingScreen({
           discount={discount}
           appliedCode={appliedCode}
           autoDiscount={autoDiscount}
+          upiVpa={upiVpa}
+          outletName={outletName}
           discountCode={discountCode}
           setDiscountCode={setDiscountCode}
           applyCoupon={applyCoupon}
@@ -1010,6 +1023,7 @@ function MenuStep(props: {
   /** Send the KOT to the kitchen now (audit TASK 2). Stays on the Menu step so the captain can add more items. */
   onSendKot: () => void;
   kotSent: { invoiceNo: string } | null;
+  captainMode: boolean;
   pending: boolean;
   sub: number;
   tax: number;
@@ -1039,6 +1053,7 @@ function MenuStep(props: {
     onNext,
     onSendKot,
     kotSent,
+    captainMode,
     pending,
     sub,
     tax,
@@ -1248,10 +1263,21 @@ function MenuStep(props: {
               <ArrowLeft className="h-4 w-4" />
               Back
             </Button>
-            <Button onClick={onNext} disabled={cart.length === 0} size="lg">
-              Next: Settle
-              <ArrowRight className="h-4 w-4" />
-            </Button>
+            {captainMode ? (
+              <Button
+                disabled
+                variant="outline"
+                size="lg"
+                title="Captains take orders + send KOTs; a cashier settles bills."
+              >
+                Settle locked
+              </Button>
+            ) : (
+              <Button onClick={onNext} disabled={cart.length === 0} size="lg">
+                Next: Settle
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -1379,6 +1405,8 @@ function SettleStep(props: {
   discount: number;
   appliedCode: { code: string; name: string } | null;
   autoDiscount: { code: string; name: string; amount: number } | null;
+  upiVpa: string | null;
+  outletName: string;
   discountCode: string;
   setDiscountCode: (s: string) => void;
   applyCoupon: () => void;
@@ -1416,6 +1444,8 @@ function SettleStep(props: {
     discount,
     appliedCode,
     autoDiscount,
+    upiVpa,
+    outletName,
     discountCode,
     setDiscountCode,
     applyCoupon,
@@ -1659,6 +1689,22 @@ function SettleStep(props: {
               ))}
             </div>
           </div>
+
+          {/* UPI dynamic QR (audit TASK 20). Visible only when UPI mode + the
+              outlet has a VPA configured. */}
+          {paymentMode === "UPI" && upiVpa && grand > 0 && (
+            <UpiQr
+              vpa={upiVpa}
+              payeeName={outletName || "Outlet"}
+              amount={grand}
+              note={`Bill ${new Date().toLocaleDateString("en-IN")}`}
+            />
+          )}
+          {paymentMode === "UPI" && !upiVpa && (
+            <div className="rounded-md border border-amber-200 bg-amber-50/50 p-2.5 text-xs text-amber-900">
+              No UPI VPA configured yet. Add one in <a href="/settings" className="underline">Settings → Outlet</a> to show a live QR here.
+            </div>
+          )}
 
           <div className="grid grid-cols-[auto_1fr] gap-2">
             <Button type="button" onClick={onBack} variant="outline" size="lg">

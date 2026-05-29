@@ -2,27 +2,38 @@
 import * as React from "react";
 import { Wifi, WifiOff, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { attachAutoDrain, drain, peekCount } from "@/lib/offline-outbox";
 
 /**
- * Top-bar pill showing online / offline state (audit B9 + TASK 7).
- * Also registers the PWA service worker on first mount so the app becomes
- * installable from Chrome / Safari.
+ * Top-bar pill showing online / offline state (audit B9 + TASK 7) and the
+ * number of mutations queued in the offline outbox (TASK 28). Also registers
+ * the PWA service worker so the app becomes installable from Chrome / Safari.
  */
 export function SyncStatusPill() {
   const [online, setOnline] = React.useState(true);
   const [syncing, setSyncing] = React.useState(false);
+  const [queued, setQueued] = React.useState(0);
 
   React.useEffect(() => {
     setOnline(navigator.onLine);
-    const goOnline = () => {
+    peekCount().then(setQueued).catch(() => {});
+    attachAutoDrain();
+
+    const goOnline = async () => {
       setSyncing(true);
       setOnline(true);
-      // Tiny optimistic UX — show "syncing" briefly when reconnecting.
+      try {
+        await drain();
+        setQueued(await peekCount());
+      } catch {}
       setTimeout(() => setSyncing(false), 1200);
     };
     const goOffline = () => setOnline(false);
     window.addEventListener("online", goOnline);
     window.addEventListener("offline", goOffline);
+
+    // Poll the queue every 10s for the count badge.
+    const poll = setInterval(() => peekCount().then(setQueued).catch(() => {}), 10000);
 
     // Register the service worker (no-op if already registered).
     if ("serviceWorker" in navigator && process.env.NODE_ENV === "production") {
@@ -32,6 +43,7 @@ export function SyncStatusPill() {
     return () => {
       window.removeEventListener("online", goOnline);
       window.removeEventListener("offline", goOffline);
+      clearInterval(poll);
     };
   }, []);
 
@@ -40,11 +52,15 @@ export function SyncStatusPill() {
   let Icon: typeof Wifi = Wifi;
   if (!online) {
     tone = "amber";
-    label = "Offline";
+    label = queued > 0 ? `Offline · ${queued} queued` : "Offline";
     Icon = WifiOff;
   } else if (syncing) {
     tone = "blue";
     label = "Syncing…";
+    Icon = RefreshCw;
+  } else if (queued > 0) {
+    tone = "blue";
+    label = `${queued} queued`;
     Icon = RefreshCw;
   }
 

@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
+import { requireUser } from "@/lib/rbac";
 
 const ItemSchema = z.object({
   id: z.string().optional(),
@@ -20,6 +21,7 @@ const ItemSchema = z.object({
 });
 
 export async function saveItem(formData: FormData) {
+  await requireUser("MANAGER");
   const outlet = await getActiveOutlet();
   const dietary = (formData.get("dietary") as string) || "VEG";
   const parsed = ItemSchema.parse({
@@ -50,6 +52,7 @@ export async function saveItem(formData: FormData) {
 }
 
 export async function deleteItem(formData: FormData) {
+  await requireUser("MANAGER");
   const id = String(formData.get("id"));
   if (!id) return;
   // soft-delete by deactivating to preserve order history
@@ -58,6 +61,7 @@ export async function deleteItem(formData: FormData) {
 }
 
 export async function toggleOutOfStock(formData: FormData) {
+  await requireUser("BILLER");
   const id = String(formData.get("id"));
   const item = await db.item.findUnique({ where: { id } });
   if (!item) return;
@@ -72,6 +76,7 @@ const CategorySchema = z.object({
 });
 
 export async function saveCategory(formData: FormData) {
+  await requireUser("MANAGER");
   const outlet = await getActiveOutlet();
   const parsed = CategorySchema.parse({
     id: formData.get("id") || undefined,
@@ -99,6 +104,7 @@ const VariantsInput = z.object({
 });
 
 export async function saveVariants(input: z.infer<typeof VariantsInput>) {
+  await requireUser("MANAGER");
   const parsed = VariantsInput.parse(input);
   await db.itemVariant.deleteMany({ where: { itemId: parsed.itemId } });
   for (let i = 0; i < parsed.variants.length; i++) {
@@ -128,6 +134,7 @@ const AddonsInput = z.object({
 });
 
 export async function saveAddons(input: z.infer<typeof AddonsInput>) {
+  await requireUser("MANAGER");
   const parsed = AddonsInput.parse(input);
   await db.addon.deleteMany({ where: { itemId: parsed.itemId } });
   for (let i = 0; i < parsed.addons.length; i++) {
