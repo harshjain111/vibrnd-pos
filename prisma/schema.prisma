@@ -2,7 +2,10 @@
 // Single-outlet for v1; multi-outlet ready via Outlet relations.
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // Vercel's serverless runtime is Amazon Linux 2 with OpenSSL 3 — Prisma needs
+  // the matching engine binary or it fails at startup with PrismaClientInitializationError.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
