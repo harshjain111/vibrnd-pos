@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --primary: 16 90% 55%;            /* warm orange — POS brand */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 16 90% 55%;
+    --radius: 0.625rem;
+    --sidebar: 222 47% 11%;
+    --sidebar-foreground: 210 20% 95%;
+    --sidebar-accent: 16 90% 55%;
+  }
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* nicer scrollbars */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+
+/* ---- Print mode ---- */
+
+/* Hide print-only blocks on screen */
+.print-doc { display: none; }
+
+@media print {
+  .print-doc { display: block; }
+
+  @page { size: 80mm auto; margin: 4mm; }
+
+  /* Hide all chrome — only the receipt prints */
+  body * { visibility: hidden !important; }
+  .print-receipt, .print-receipt *,
+  .print-doc, .print-doc * { visibility: visible !important; }
+
+  .print-receipt {
+    position: absolute;
+    top: 0; left: 0;
+    width: 72mm;
+    color: #000 !important;
+    background: #fff !important;
+    font-family: ui-monospace, "SFMono-Regular", Consolas, "Courier New", monospace;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+  .print-receipt h1,
+  .print-receipt h2,
+  .print-receipt .center { text-align: center; }
+  .print-receipt .row { display: flex; justify-content: space-between; gap: 6px; }
+  .print-receipt hr { border: 0; border-top: 1px dashed #000; margin: 4px 0; }
+  .print-receipt .small { font-size: 10px; }
+  .print-receipt .bold { font-weight: 700; }
+  .print-receipt table { width: 100%; border-collapse: collapse; }
+  .print-receipt th,
+  .print-receipt td { padding: 1px 0; font-size: 11px; }
+
+  /* A4 documents (POs, invoices) */
+  .print-doc {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    color: #000 !important;
+    background: #fff !important;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+    font-size: 12px;
+    padding: 0;
+  }
+  .print-doc h1 { font-size: 20px; margin: 0 0 4px; }
+  .print-doc h2 { font-size: 13px; margin: 16px 0 6px; }
+  .print-doc table { width: 100%; border-collapse: collapse; }
+  .print-doc th, .print-doc td { border: 1px solid #999; padding: 6px 8px; text-align: left; font-size: 12px; }
+  .print-doc th { background: #eee; }
+  .print-doc .text-right { text-align: right !important; }
+  .print-doc .muted { color: #555; font-size: 11px; }
+
+  .no-print { display: none !important; }
+}

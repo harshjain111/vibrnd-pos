@@ -1,0 +1,1092 @@
+// Petpooja-style POS backend schema
+// Single-outlet for v1; multi-outlet ready via Outlet relations.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Pooled connection string used by the app at runtime (Supabase Transaction pooler, port 6543).
+  url       = env("DATABASE_URL")
+  // Direct connection used by `prisma db push` / `prisma migrate` (Supabase direct connection, port 5432).
+  directUrl = env("DIRECT_URL")
+}
+
+model Outlet {
+  id              String   @id @default(cuid())
+  name            String
+  code            String   @unique
+  address         String?
+  phone           String?
+  email           String?
+  gstin           String?
+  fssai           String?
+  currency        String   @default("INR")
+  timezone        String   @default("Asia/Kolkata")
+  taxInclusive    Boolean  @default(false) // when true, item prices already include GST
+  loyaltyEarnPer  Float    @default(10)    // 1 point earned per ₹N spent
+  loyaltyRedeemRupees Float @default(1)    // 1 point = ₹N when redeemed
+  tierSilverAt    Int      @default(500)   // points threshold for Silver tier
+  tierGoldAt      Int      @default(2000)  // points threshold for Gold tier
+  tierSilverMult  Float    @default(1.5)   // earn multiplier at Silver
+  tierGoldMult    Float    @default(2.0)   // earn multiplier at Gold
+  storeOpen       Boolean  @default(true)  // master switch — closed gates online orders
+  active          Boolean  @default(true)  // soft-delete
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  items           Item[]
+  categories      Category[]
+  orders          Order[]
+  customers       Customer[]
+  rawMaterials    RawMaterial[]
+  expenses        Expense[]
+  users           User[]
+  tables          DiningTable[]
+  kots            KitchenTicket[]
+  discounts       Discount[]
+  taxSlabs        TaxSlab[]
+  activityLogs    ActivityLog[]
+  stockMovements  StockMovement[]
+  purchaseOrders  PurchaseOrder[]
+  cashEntries     CashEntry[]
+  notifications   Notification[]
+  subOrderTypes   SubOrderType[]
+  salesReturns    SalesReturn[]
+  feedback        Feedback[]
+  giftCards       GiftCard[]
+  payments        Payment[]
+  taskTemplates   TaskTemplate[]
+  tasks           Task[]
+  dayCloses       DayClose[]
+  overrides       OverrideRequest[]
+  membershipPlans MembershipPlan[]
+  membershipRedemptions MembershipRedemption[]
+  units             Unit[]
+  stockCounts       StockCount[]
+  purchases         Purchase[]
+  transfersSent     Transfer[] @relation("TransfersSent")
+  transfersReceived Transfer[] @relation("TransfersReceived")
+  productionMasters ProductionMaster[]
+  productionRuns    ProductionRun[]
+  vendorPayments    VendorPayment[]
+  invSettings       InventorySetting[]
+  reportNotifications ReportNotification[]
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  action    String   // CREATE | UPDATE | DELETE | CANCEL | SETTLE | ACCEPT | REJECT
+  entity    String   // Order | Item | Discount | Customer | RawMaterial | KOT | Outlet | Expense
+  entityId  String?
+  summary   String
+  actor     String   @default("system") // user email / role; "system" for unauthenticated
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([outletId, createdAt])
+  @@index([entity, entityId])
+}
+
+model User {
+  id             String   @id @default(cuid())
+  name           String
+  email          String   @unique
+  passwordHash   String?  // bcrypt-hashed; nullable for legacy seed
+  role           String   @default("BILLER") // OWNER | MANAGER | BILLER | CAPTAIN
+  active         Boolean  @default(true)
+  commissionRate Float    @default(0)        // % of order revenue earned as commission
+  outletId       String
+  outlet         Outlet   @relation(fields: [outletId], references: [id])
+  assignedTasks  Task[]   @relation("AssignedTasks")
+  createdTasks   Task[]   @relation("CreatedTasks")
+  dayCloses      DayClose[]
+  requestedOverrides OverrideRequest[] @relation("RequestedOverrides")
+  approvedOverrides  OverrideRequest[] @relation("ApprovedOverrides")
+  createdAt      DateTime @default(now())
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  name      String
+  rank      Int      @default(0)
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  items     Item[]
+  createdAt DateTime @default(now())
+}
+
+model Item {
+  id            String   @id @default(cuid())
+  name          String
+  shortCode     String?
+  description   String?
+  price         Float
+  taxRate       Float    @default(5) // GST %
+  imageUrl      String?
+  active        Boolean  @default(true)
+  outOfStock    Boolean  @default(false)
+  isVeg         Boolean  @default(true)
+  station       String   @default("MAIN") // MAIN | TANDOOR | BAR | DESSERT
+  categoryId    String
+  category      Category @relation(fields: [categoryId], references: [id])
+  outletId      String
+  outlet        Outlet   @relation(fields: [outletId], references: [id])
+  recipe        Recipe?
+  orderItems    OrderItem[]
+  kotLines      KitchenTicketLine[]
+  variants      ItemVariant[]
+  addons        Addon[]
+  membershipBenefits MembershipBenefit[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model ItemVariant {
+  id        String   @id @default(cuid())
+  itemId    String
+  item      Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  name      String   // "Half" / "Full" / "Small" / "Medium" / "Large"
+  price     Float    // absolute price for this variant
+  rank      Int      @default(0)
+}
+
+model Addon {
+  id          String   @id @default(cuid())
+  itemId      String
+  item        Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  name        String   // "Extra cheese" / "Less spicy" / "No onion"
+  priceDelta  Float    @default(0)
+  rank        Int      @default(0)
+}
+
+model Customer {
+  id             String   @id @default(cuid())
+  name           String
+  phone          String?
+  email          String?
+  address        String?
+  gstin          String?
+  tags           String?  // CSV of segment tags
+  allergies      String?  // CSV — surfaced to the captain on every visit
+  birthday       DateTime?
+  anniversary    DateTime?
+  loyaltyPoints  Int      @default(0)
+  outletId       String
+  outlet         Outlet   @relation(fields: [outletId], references: [id])
+  orders         Order[]
+  loyaltyTxns    LoyaltyTransaction[]
+  feedback       Feedback[]
+  giftCards      GiftCard[]
+  memberships    Membership[]
+  createdAt      DateTime @default(now())
+
+  @@index([phone])
+}
+
+model LoyaltyTransaction {
+  id          String   @id @default(cuid())
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  delta       Int      // positive = earn, negative = redeem
+  balance     Int      // running balance after this txn
+  reason      String   // EARN | REDEEM | ADJUST | EXPIRE
+  orderId     String?
+  note        String?
+  outletId    String
+  createdAt   DateTime @default(now())
+
+  @@index([customerId, createdAt])
+}
+
+model DiningTable {
+  id        String   @id @default(cuid())
+  name      String
+  area      String   @default("Main")
+  capacity  Int      @default(4)
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  orders    Order[]
+}
+
+model Order {
+  id            String       @id @default(cuid())
+  invoiceNo     String       @unique
+  orderType     String       // DINE_IN | PICKUP | DELIVERY | ONLINE
+  status        String       @default("RUNNING") // RUNNING | SAVED | PRINTED | PAID | CANCELLED | PLACED | ACCEPTED | REJECTED | FOOD_READY | PICKED_UP | DELIVERED
+  channel       String       @default("POS") // POS | SWIGGY | ZOMATO | MAGICPIN | DOTPE | WEB | PHONE
+  subTotal      Float        @default(0)
+  taxTotal      Float        @default(0)
+  discount      Float        @default(0)
+  discountCode  String?
+  grandTotal    Float        @default(0)
+  amountPaid    Float        @default(0) // running total of payments received
+  paymentMode   String?      // CASH | CARD | UPI | ONLINE | DUE (last-used mode summary)
+  tip           Float        @default(0)
+  customerId    String?
+  customer      Customer?    @relation(fields: [customerId], references: [id])
+  tableId       String?
+  table         DiningTable? @relation(fields: [tableId], references: [id])
+  outletId      String
+  outlet        Outlet       @relation(fields: [outletId], references: [id])
+  items         OrderItem[]
+  kots          KitchenTicket[]
+  returns       SalesReturn[]
+  feedback      Feedback[]
+  giftCardTxns  GiftCardTxn[]
+  payments      Payment[]
+  notes         String?
+  subOrderType  String?      // e.g. "Parcel" / "Takeaway" / "Bar"
+  captainId     String?      // user id of the captain who took the order
+  amendedAt     DateTime?    // last time the bill was modified post-settlement
+
+  // Online / aggregator fields
+  aggregatorOrderId String?
+  deliveryAddress   String?
+  deliveryOtp       String?
+  riderName         String?
+  riderPhone        String?
+  locality          String?  // derived/captured for delivery & locality reports
+  reconciledAt      DateTime?
+  reconciledAmount  Float?   // what the aggregator actually paid out
+
+  // Loyalty
+  loyaltyEarned    Int  @default(0)
+  loyaltyRedeemed  Int  @default(0)
+
+  createdAt     DateTime     @default(now())
+  closedAt      DateTime?
+
+  @@index([status, createdAt])
+  @@index([outletId, createdAt])
+  @@index([channel, status])
+}
+
+model KitchenTicket {
+  id         String              @id @default(cuid())
+  kotNo      String              @unique
+  orderId    String
+  order      Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status     String              @default("NEW") // NEW | IN_PROGRESS | READY | SERVED | CANCELLED
+  station    String              @default("MAIN") // MAIN | TANDOOR | BAR | DESSERT
+  outletId   String
+  outlet     Outlet              @relation(fields: [outletId], references: [id])
+  lines      KitchenTicketLine[]
+  notes      String?
+  createdAt  DateTime            @default(now())
+  readyAt    DateTime?
+  servedAt   DateTime?
+
+  @@index([status, createdAt])
+  @@index([outletId, status])
+}
+
+model KitchenTicketLine {
+  id              String        @id @default(cuid())
+  ticketId        String
+  ticket          KitchenTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  itemId          String
+  item            Item          @relation(fields: [itemId], references: [id])
+  name            String
+  qty             Int
+  note            String?
+  status          String        @default("NEW") // NEW | READY
+}
+
+model OrderItem {
+  id           String   @id @default(cuid())
+  orderId      String
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId       String
+  item         Item     @relation(fields: [itemId], references: [id])
+  name         String   // snapshot at order time
+  price        Float    // snapshot — includes variant + addons
+  qty          Int
+  taxRate      Float
+  variantName  String?  // e.g. "Half"
+  addonsJson   String?  // JSON snapshot: [{name, priceDelta}]
+  note         String?
+  createdAt    DateTime @default(now())
+}
+
+model RawMaterial {
+  id              String   @id @default(cuid())
+  name            String
+  unit            String   @default("kg") // legacy single-unit, kept for backwards compat
+  purchaseUnit    String?  // unit used on supplier invoices
+  consumptionUnit String?  // unit used by recipes
+  conversionFactor Float   @default(1)    // 1 purchaseUnit = N consumptionUnit
+  parLevel        Float    @default(0)
+  minLevel        Float    @default(0)
+  currentQty      Float    @default(0)
+  avgCost         Float    @default(0)
+  purchasePrice   Float    @default(0)    // standard buy price
+  transferPrice   Float    @default(0)
+  reconciliationPrice Float @default(0)
+  taxType         String   @default("GST")
+  taxPct          Float    @default(0)
+  exciseDuty      Float    @default(0)
+  brand           String?
+  description     String?
+  hsnCode         String?
+  barcode         String?
+  shortCode       String?
+  imageUrl        String?
+  isFavourite     Boolean  @default(false)
+  active          Boolean  @default(true)
+  categoryName    String?
+  subCategory     String?
+  supplierId      String?
+  supplier        Supplier? @relation(fields: [supplierId], references: [id])
+  outletId        String
+  outlet          Outlet   @relation(fields: [outletId], references: [id])
+  recipes         RecipeIngredient[]
+  movements       StockMovement[]
+  poLines         PurchaseOrderLine[]
+  purchaseLines   PurchaseLine[]
+  transferLines   TransferLine[]
+  productionInputs   ProductionInputLine[]
+  productionMastersAsOutput ProductionMaster[] @relation("ProductionOutputRM")
+  countLines      StockCountLine[]
+  rmSuppliers     RawMaterialSupplier[]
+  createdAt       DateTime @default(now())
+}
+
+/// Many-to-many between RawMaterial and Supplier with the per-pair negotiated rate.
+model RawMaterialSupplier {
+  id            String      @id @default(cuid())
+  rawMaterialId String
+  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id], onDelete: Cascade)
+  supplierId    String
+  supplier      Supplier    @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  negotiatedRate Float       @default(0)
+  isPrimary     Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+
+  @@unique([rawMaterialId, supplierId])
+}
+
+model StockMovement {
+  id            String      @id @default(cuid())
+  rawMaterialId String
+  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id], onDelete: Cascade)
+  delta         Float       // signed: positive = in, negative = out
+  reason        String      // SALE | CANCEL_REVERSE | ADJUST | PURCHASE | WASTAGE | OPENING
+  refType       String?     // Order | Outlet | Manual
+  refId         String?
+  qtyBefore     Float
+  qtyAfter      Float
+  note          String?
+  outletId      String
+  outlet        Outlet      @relation(fields: [outletId], references: [id])
+  createdAt     DateTime    @default(now())
+
+  @@index([outletId, createdAt])
+  @@index([rawMaterialId, createdAt])
+}
+
+model Supplier {
+  id              String   @id @default(cuid())
+  name            String
+  company         String?
+  contact         String?
+  email           String?
+  phone           String?
+  pan             String?
+  gstin           String?
+  fssai           String?
+  type            String   @default("SUPPLIER") // SUPPLIER | THIRD_PARTY | BOTH
+  registerAddress String?
+  shippingAddress String?
+  state           String?
+  city            String?
+  pinCode         String?
+  address         String?  // legacy free-form
+  termsOfPayment  String?
+  termsOfDelivery String?
+  openingBalance  Float    @default(0)
+  active          Boolean  @default(true)
+  rawMaterials    RawMaterial[]
+  purchaseOrders  PurchaseOrder[]
+  purchases       Purchase[]
+  vendorPayments  VendorPayment[]
+  rmSuppliers     RawMaterialSupplier[]
+  createdAt       DateTime @default(now())
+}
+
+model PurchaseOrder {
+  id           String              @id @default(cuid())
+  poNo         String              @unique
+  supplierId   String
+  supplier     Supplier            @relation(fields: [supplierId], references: [id])
+  status       String              @default("DRAFT") // DRAFT | SENT | RECEIVED | CANCELLED
+  subTotal     Float               @default(0)
+  taxTotal     Float               @default(0)
+  grandTotal   Float               @default(0)
+  notes        String?
+  outletId     String
+  outlet       Outlet              @relation(fields: [outletId], references: [id])
+  lines        PurchaseOrderLine[]
+  purchases    Purchase[]
+  receivedAt   DateTime?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  @@index([outletId, status])
+}
+
+model PurchaseOrderLine {
+  id            String        @id @default(cuid())
+  poId          String
+  po            PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  rawMaterialId String
+  rawMaterial   RawMaterial   @relation(fields: [rawMaterialId], references: [id])
+  qty           Float
+  unit          String
+  unitPrice     Float
+  lineTotal     Float
+}
+
+model Recipe {
+  id          String   @id @default(cuid())
+  itemId      String   @unique
+  item        Item     @relation(fields: [itemId], references: [id])
+  ingredients RecipeIngredient[]
+  createdAt   DateTime @default(now())
+}
+
+model RecipeIngredient {
+  id            String      @id @default(cuid())
+  recipeId      String
+  recipe        Recipe      @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  rawMaterialId String
+  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  qty           Float
+  unit          String
+}
+
+model TaxSlab {
+  id        String   @id @default(cuid())
+  name      String   // "GST 5%" / "GST 12%" / "GST 18%" / "VAT 5%"
+  rate      Float    // 5 / 12 / 18
+  active    Boolean  @default(true)
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([outletId, name])
+}
+
+model Discount {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  type        String   // FLAT | PERCENT | BOGO
+  value       Float    // flat ₹ amount, or percent (0-100)
+  minOrder    Float    @default(0)
+  maxDiscount Float?   // cap for percent type
+  active      Boolean  @default(true)
+  validFrom   DateTime?
+  validTo     DateTime?
+  outletId    String
+  outlet      Outlet   @relation(fields: [outletId], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([outletId, active])
+}
+
+model SubOrderType {
+  id         String   @id @default(cuid())
+  name       String
+  parentType String   // DINE_IN | PICKUP | DELIVERY
+  rank       Int      @default(0)
+  active     Boolean  @default(true)
+  outletId   String
+  outlet     Outlet   @relation(fields: [outletId], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@unique([outletId, name])
+}
+
+model MembershipPlan {
+  id            String   @id @default(cuid())
+  name          String
+  price         Float
+  durationDays  Int      // 365 for "one year"
+  active        Boolean  @default(true)
+  outletId      String   // owner outlet — but memberships work across all outlets
+  outlet        Outlet   @relation(fields: [outletId], references: [id])
+  benefits      MembershipBenefit[]
+  memberships   Membership[]
+  createdAt     DateTime @default(now())
+}
+
+model MembershipBenefit {
+  id           String  @id @default(cuid())
+  planId       String
+  plan         MembershipPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  name         String  // "One free tea per day"
+  itemId       String? // grants free instance of this menu item
+  item         Item?   @relation(fields: [itemId], references: [id])
+  qtyPerDay    Int     @default(1)
+  redemptions  MembershipRedemption[]
+}
+
+model Membership {
+  id           String  @id @default(cuid())
+  customerId   String
+  customer     Customer @relation(fields: [customerId], references: [id])
+  planId       String
+  plan         MembershipPlan @relation(fields: [planId], references: [id])
+  startsAt     DateTime
+  expiresAt    DateTime
+  active       Boolean @default(true)
+  redemptions  MembershipRedemption[]
+  otps         MembershipOtp[]
+  createdAt    DateTime @default(now())
+
+  @@index([customerId, active])
+  @@index([expiresAt])
+}
+
+model MembershipRedemption {
+  id           String  @id @default(cuid())
+  membershipId String
+  membership   Membership @relation(fields: [membershipId], references: [id])
+  benefitId    String
+  benefit      MembershipBenefit @relation(fields: [benefitId], references: [id])
+  businessDay  DateTime // midnight of the day — used for the unique cap
+  outletId     String   // where redeemed
+  outlet       Outlet   @relation(fields: [outletId], references: [id])
+  orderId      String?  // tied to the bill it was applied on
+  createdAt    DateTime @default(now())
+
+  // Foolproof daily cap: one row per (member, benefit, day) ACROSS all outlets
+  @@unique([membershipId, benefitId, businessDay])
+  @@index([businessDay])
+}
+
+model MembershipOtp {
+  id           String   @id @default(cuid())
+  membershipId String
+  membership   Membership @relation(fields: [membershipId], references: [id])
+  code         String   // 6-digit
+  expiresAt    DateTime
+  usedAt       DateTime?
+  createdAt    DateTime @default(now())
+
+  @@index([membershipId, createdAt])
+}
+
+model TaskTemplate {
+  id            String   @id @default(cuid())
+  title         String
+  description   String?
+  type          String   // RECURRING | ADHOC | TODO
+  cadence       String   @default("ONE_OFF") // ONE_OFF | DAILY | WEEKLY | MONTHLY
+  defaultRole   String?  // OWNER | MANAGER | BILLER | CAPTAIN
+  slaMinutes    Int?     // soft SLA before task goes overdue
+  active        Boolean  @default(true)
+  outletId      String
+  outlet        Outlet   @relation(fields: [outletId], references: [id])
+  tasks         Task[]
+  lastRunAt     DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([outletId, active])
+}
+
+model Task {
+  id           String   @id @default(cuid())
+  title        String
+  description  String?
+  type         String   // RECURRING | ADHOC | TODO
+  status       String   @default("OPEN") // OPEN | IN_PROGRESS | DONE | CANCELLED | OVERDUE
+  templateId   String?
+  template     TaskTemplate? @relation(fields: [templateId], references: [id])
+  assignedRole String?  // role this task belongs to (any user with that role can claim)
+  assignedToId String?  // optional specific user
+  assignedTo   User?    @relation("AssignedTasks", fields: [assignedToId], references: [id])
+  dueAt        DateTime?
+  completedAt  DateTime?
+  photoUrl     String?
+  createdById  String?
+  createdBy    User?    @relation("CreatedTasks", fields: [createdById], references: [id])
+  outletId     String
+  outlet       Outlet   @relation(fields: [outletId], references: [id])
+  createdAt    DateTime @default(now())
+
+  @@index([outletId, status, dueAt])
+}
+
+model DayClose {
+  id              String   @id @default(cuid())
+  businessDay     DateTime // midnight of that day
+  openingCash     Float    @default(0)
+  expectedCash    Float    // computed: opening + top-ups - withdrawals + cash sales - cash expenses
+  countedCash     Float
+  variance        Float    // counted - expected
+  denominations   String   // JSON: { "2000": 5, "500": 12, ... }
+  note            String?
+  closedById      String?
+  closedBy        User?    @relation(fields: [closedById], references: [id])
+  outletId        String
+  outlet          Outlet   @relation(fields: [outletId], references: [id])
+  createdAt       DateTime @default(now())
+
+  @@unique([outletId, businessDay])
+}
+
+model OverrideRequest {
+  id           String   @id @default(cuid())
+  actionType   String   // DISCOUNT | VOID_LINE | REFUND | OTHER
+  contextJson  String   // JSON: { orderId, lineId, amount, percent, reason... }
+  status       String   @default("PENDING") // PENDING | APPROVED | REJECTED | EXPIRED
+  requestedById String?
+  requestedBy  User?    @relation("RequestedOverrides", fields: [requestedById], references: [id])
+  approvedById String?
+  approvedBy   User?    @relation("ApprovedOverrides", fields: [approvedById], references: [id])
+  resolution   String?  // optional note on resolution
+  outletId     String
+  outlet       Outlet   @relation(fields: [outletId], references: [id])
+  createdAt    DateTime @default(now())
+  resolvedAt   DateTime?
+
+  @@index([outletId, status, createdAt])
+}
+
+model CashEntry {
+  id        String   @id @default(cuid())
+  kind      String   // OPENING | TOP_UP | WITHDRAWAL
+  amount    Float    // positive (kind determines direction)
+  reason    String?
+  actor     String   @default("system")
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([outletId, createdAt])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  kind      String   // ONLINE_ORDER | LOW_STOCK | STALE_BILL | INFO
+  title     String
+  body      String?
+  link      String?
+  read      Boolean  @default(false)
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([outletId, read, createdAt])
+}
+
+model Payment {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount    Float
+  mode      String   // CASH | UPI | CARD | ONLINE | WALLET | GIFT_CARD
+  note      String?
+  actor     String   @default("system")
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([outletId, createdAt])
+}
+
+model SalesReturn {
+  id          String   @id @default(cuid())
+  returnNo    String   @unique
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id])
+  reason      String
+  refundMode  String   @default("CASH") // CASH | UPI | CARD | WALLET | GIFT_CARD
+  amount      Float
+  actor       String   @default("system")
+  outletId    String
+  outlet      Outlet   @relation(fields: [outletId], references: [id])
+  lines       SalesReturnLine[]
+  createdAt   DateTime @default(now())
+
+  @@index([outletId, createdAt])
+}
+
+model SalesReturnLine {
+  id           String       @id @default(cuid())
+  returnId     String
+  return       SalesReturn  @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  orderItemId  String?      // snapshot ref — line may be edited later
+  name         String
+  qty          Int
+  unitPrice    Float
+  lineTotal    Float
+}
+
+model GiftCard {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  balance       Float
+  initialAmount Float
+  active        Boolean  @default(true)
+  expiresAt     DateTime?
+  customerId    String?
+  customer      Customer? @relation(fields: [customerId], references: [id])
+  outletId      String
+  outlet        Outlet   @relation(fields: [outletId], references: [id])
+  txns          GiftCardTxn[]
+  createdAt     DateTime @default(now())
+
+  @@index([outletId, active])
+}
+
+model GiftCardTxn {
+  id        String   @id @default(cuid())
+  cardId    String
+  card      GiftCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  kind      String   // ISSUE | TOP_UP | REDEEM | REFUND
+  amount    Float    // signed: positive credits the card, negative debits
+  orderId   String?
+  order     Order?   @relation(fields: [orderId], references: [id])
+  actor     String   @default("system")
+  createdAt DateTime @default(now())
+
+  @@index([cardId, createdAt])
+}
+
+model Feedback {
+  id           String   @id @default(cuid())
+  category     String   // FOOD | SERVICE | AMBIANCE | DELIVERY | OTHER
+  rating       Int      // 1..5
+  text         String?
+  customerId   String?
+  customer     Customer? @relation(fields: [customerId], references: [id])
+  orderId      String?
+  order        Order?    @relation(fields: [orderId], references: [id])
+  resolved     Boolean   @default(false)
+  resolvedNote String?
+  outletId     String
+  outlet       Outlet    @relation(fields: [outletId], references: [id])
+  createdAt    DateTime  @default(now())
+
+  @@index([outletId, createdAt])
+  @@index([outletId, resolved])
+}
+
+model Expense {
+  id                String   @id @default(cuid())
+  category          String   // RENT | SALARY | UTILITIES | RAW_MATERIAL | OTHER
+  vendor            String?
+  amount            Float
+  paymentMode       String   @default("CASH")
+  note              String?
+  status            String   @default("PENDING_MANAGER") // PENDING_MANAGER | PENDING_AUDITOR | APPROVED | REJECTED
+  managerApprovedById String?
+  managerApprovedAt   DateTime?
+  auditorApprovedById String?
+  auditorApprovedAt   DateTime?
+  rejectedById        String?
+  rejectedAt          DateTime?
+  rejectionReason     String?
+  ownerFlagged        Boolean @default(false)
+  createdById         String?
+  outletId    String
+  outlet      Outlet   @relation(fields: [outletId], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([outletId, status, createdAt])
+}
+
+// ─────────── Inventory module additions (per Inventory_Module_Implementation_Spec) ───────────
+
+model Unit {
+  id              String   @id @default(cuid())
+  name            String
+  baseUnit        String?  // e.g. "BOX" might roll up to "PIECE"
+  conversionFactor Float   @default(1)
+  outletId        String
+  outlet          Outlet   @relation(fields: [outletId], references: [id])
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  @@unique([outletId, name])
+}
+
+/// One per (outlet, business day) — the day-end physical count snapshot.
+model StockCount {
+  id           String   @id @default(cuid())
+  outletId     String
+  outlet       Outlet   @relation(fields: [outletId], references: [id])
+  businessDay  DateTime
+  countType    String   @default("DAY_END") // DAY_END | DAY_START | SPOT
+  frozen       Boolean  @default(false)
+  frozenById   String?
+  frozenAt     DateTime?
+  countedById  String?
+  notes        String?
+  lines        StockCountLine[]
+  createdAt    DateTime @default(now())
+
+  @@unique([outletId, businessDay, countType])
+  @@index([outletId, businessDay])
+}
+
+model StockCountLine {
+  id            String       @id @default(cuid())
+  countId       String
+  count         StockCount   @relation(fields: [countId], references: [id], onDelete: Cascade)
+  rawMaterialId String
+  rawMaterial   RawMaterial  @relation(fields: [rawMaterialId], references: [id])
+  expectedQty   Float        @default(0)
+  countedQty    Float        @default(0)
+  variance      Float        @default(0)
+  comments      String?
+
+  @@index([countId])
+}
+
+/// Stock Purchase header — distinct from PurchaseOrder (the request) and Purchase Return.
+model Purchase {
+  id              String         @id @default(cuid())
+  invoiceNo       String?        // vendor invoice ref
+  invoiceDate     DateTime
+  supplierId      String?
+  supplier        Supplier?      @relation(fields: [supplierId], references: [id])
+  poId            String?        // when this Purchase is recorded against a PurchaseOrder
+  purchaseOrder   PurchaseOrder? @relation(fields: [poId], references: [id])
+  poReferenceNo   String?
+  subTotal        Float          @default(0)
+  totalDiscount   Float          @default(0)
+  otherCharges    Float          @default(0)
+  otherTaxes      Float          @default(0)
+  grandTotal      Float          @default(0)
+  paymentType     String         @default("UNPAID") // UNPAID | PAID | PARTIAL
+  paymentMode     String?
+  paymentRef      String?
+  amountPaid      Float          @default(0)
+  updateStock     Boolean        @default(true)
+  status          String         @default("PENDING_MANAGER") // PENDING_MANAGER | PENDING_AUDITOR | APPROVED | REJECTED | CANCELLED
+  rejectionReason String?
+  invoiceFileUrl  String?
+  outletId        String
+  outlet          Outlet         @relation(fields: [outletId], references: [id])
+  lines           PurchaseLine[]
+  payments        VendorPayment[]
+  returns         PurchaseReturn[]
+  createdById     String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([outletId, status])
+  @@index([supplierId, invoiceDate])
+}
+
+model PurchaseLine {
+  id             String      @id @default(cuid())
+  purchaseId     String
+  purchase       Purchase    @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  rawMaterialId  String
+  rawMaterial    RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  qty            Float
+  unit           String
+  price          Float
+  discountType   String      @default("FLAT")
+  discountValue  Float       @default(0)
+  cgst           Float       @default(0)
+  sgst           Float       @default(0)
+  igst           Float       @default(0)
+  exciseDuty     Float       @default(0)
+  amount         Float       @default(0)
+  batchNo        String?
+  expiryDate     DateTime?
+  varianceReason String?
+}
+
+model PurchaseReturn {
+  id              String   @id @default(cuid())
+  debitNoteNo     String?
+  debitNoteDate   DateTime
+  supplierId      String?
+  purchaseId      String?
+  purchase        Purchase? @relation(fields: [purchaseId], references: [id])
+  reason          String?
+  grandTotal      Float    @default(0)
+  outletId        String
+  status          String   @default("DRAFT")
+  linesJson       String?
+  createdAt       DateTime @default(now())
+}
+
+/// Stock movement between two outlets. Sender decrements on send; receiver
+/// increments only after the receiver marks Received.
+model Transfer {
+  id               String       @id @default(cuid())
+  challanNo        String?
+  transferDate     DateTime
+  status           String       @default("SENT") // SENT | RECEIVED | CANCELLED
+  senderOutletId   String
+  sender           Outlet       @relation("TransfersSent", fields: [senderOutletId], references: [id])
+  receiverOutletId String
+  receiver         Outlet       @relation("TransfersReceived", fields: [receiverOutletId], references: [id])
+  notes            String?
+  lines            TransferLine[]
+  sentById         String?
+  receivedById     String?
+  receivedAt       DateTime?
+  createdAt        DateTime     @default(now())
+
+  @@index([receiverOutletId, status])
+  @@index([senderOutletId, status])
+}
+
+model TransferLine {
+  id            String      @id @default(cuid())
+  transferId    String
+  transfer      Transfer    @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  rawMaterialId String
+  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  qtySent       Float
+  qtyReceived   Float?
+  unit          String
+  priceAtTransfer Float     @default(0)
+}
+
+/// Reusable conversion recipe — e.g. 5kg flour + 1kg ghee → 3kg dough.
+model ProductionMaster {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  defaultQty    Float    @default(1)
+  outputRMId    String
+  outputRM      RawMaterial @relation("ProductionOutputRM", fields: [outputRMId], references: [id])
+  outputQty     Float
+  outputUnit    String
+  inputs        ProductionInputLine[]
+  runs          ProductionRun[]
+  outletId      String
+  outlet        Outlet   @relation(fields: [outletId], references: [id])
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+}
+
+model ProductionInputLine {
+  id           String           @id @default(cuid())
+  masterId     String
+  master       ProductionMaster @relation(fields: [masterId], references: [id], onDelete: Cascade)
+  rawMaterialId String
+  rawMaterial   RawMaterial     @relation(fields: [rawMaterialId], references: [id])
+  qty          Float
+  unit         String
+}
+
+model ProductionRun {
+  id           String           @id @default(cuid())
+  masterId     String
+  master       ProductionMaster @relation(fields: [masterId], references: [id])
+  type         String           @default("DIRECT") // DIRECT | AGAINST_PO
+  runQty       Float
+  status       String           @default("EXECUTED")
+  outletId     String
+  outlet       Outlet           @relation(fields: [outletId], references: [id])
+  executedById String?
+  executedAt   DateTime         @default(now())
+  notes        String?
+
+  @@index([outletId, executedAt])
+}
+
+/// Payment made to a supplier — may settle one or many purchases via allocations JSON.
+model VendorPayment {
+  id          String   @id @default(cuid())
+  supplierId  String
+  supplier    Supplier @relation(fields: [supplierId], references: [id])
+  amount      Float
+  mode        String   @default("CASH")
+  reference   String?
+  occurredAt  DateTime @default(now())
+  allocations String?  // JSON [{ purchaseId, amount }, …]
+  notes       String?
+  purchaseId  String?
+  purchase    Purchase? @relation(fields: [purchaseId], references: [id])
+  outletId    String
+  outlet      Outlet   @relation(fields: [outletId], references: [id])
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@index([supplierId, occurredAt])
+}
+
+/// Rules-as-data for the 9-tab Inventory Settings page (per-outlet toggles).
+model InventorySetting {
+  id          String   @id @default(cuid())
+  outletId    String
+  outlet      Outlet   @relation(fields: [outletId], references: [id])
+  tab         String
+  key         String
+  value       String
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+
+  @@unique([outletId, key])
+  @@index([outletId, tab])
+}
+
+// ─────────── Reports module additions (per Reports_Module_Implementation_Spec) ───────────
+
+/// Per-user starred reports. The reports themselves live in code/JSON (the engine);
+/// favourites only need (userId, slug). Unique enforces idempotent stars.
+model ReportFavourite {
+  id        String   @id @default(cuid())
+  userId    String
+  slug      String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, slug])
+  @@index([userId])
+}
+
+/// Scheduled email delivery of a report. Multi-recipient, multi-format,
+/// daily / weekly / monthly cadence with relative date ranges resolved at send time.
+model ReportNotification {
+  id              String   @id @default(cuid())
+  name            String   // friendly label
+  slug            String   // report slug to render
+  recipients      String   // comma-separated email list
+  status          String   @default("ACTIVE") // ACTIVE | INACTIVE
+  frequency       String   @default("DAILY")  // DAILY | WEEKLY | MONTHLY
+  time            String   @default("08:00")  // HH:MM (24h, local)
+  dayOfWeek       String?  // CSV for WEEKLY (MON,TUE,…)
+  dayOfMonth      Int?     // 1..28 for MONTHLY
+  format          String   @default("EXCEL")  // EXCEL | PDF | BOTH
+  subject         String?
+  dateRange       String   @default("YESTERDAY") // YESTERDAY | LAST_7 | THIS_MONTH | LAST_MONTH | ROLLING_N
+  rollingDays     Int?     // when dateRange = ROLLING_N
+  outletScope     String?  // CSV of outlet ids; null = current outlet only
+  outletId        String
+  outlet          Outlet   @relation(fields: [outletId], references: [id])
+  createdById     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  logs            ReportNotificationLog[]
+
+  @@index([outletId, status])
+}
+
+/// Send-history per notification — feeds the "delivery history" panel.
+model ReportNotificationLog {
+  id             String   @id @default(cuid())
+  notificationId String
+  notification   ReportNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  sentAt         DateTime @default(now())
+  status         String   @default("OK") // OK | FAILED | RETRY
+  errorMsg       String?
+  resolvedFrom   DateTime?
+  resolvedTo     DateTime?
+
+  @@index([notificationId, sentAt])
+}
