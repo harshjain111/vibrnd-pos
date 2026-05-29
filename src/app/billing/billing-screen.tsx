@@ -12,6 +12,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import { inr } from "@/lib/utils";
 import {
@@ -44,7 +45,10 @@ import {
   getBillMemberships,
   sendBillOtp,
   verifyBillOtp,
+  listHeldBills,
+  getAutoDiscount,
 } from "./actions";
+import Link from "next/link";
 import { lookupDiscount } from "@/app/menu/discounts/actions";
 import { useToast } from "@/components/ui/use-toast";
 import { DietaryDot } from "@/components/ui/dietary-dot";
@@ -171,6 +175,40 @@ export function BillingScreen({
   const [couponErr, setCouponErr] = React.useState<string | null>(null);
   const [redeemPoints, setRedeemPoints] = React.useState<number>(0);
   const [tip, setTip] = React.useState<number>(0);
+  const [autoDiscount, setAutoDiscount] = React.useState<{ code: string; name: string; amount: number } | null>(null);
+
+  // Subtotal used by the auto-discount engine — computed inline so we don't
+  // depend on `sub` (declared further below).
+  const subForEngine = React.useMemo(
+    () => cart.reduce((s, l) => s + l.unitPrice * l.qty, 0),
+    [cart]
+  );
+
+  // ─── Auto-discount engine (TASK 12) ──────────────────────────────────────
+  // Whenever the cart subtotal changes, ask the server for the best matching
+  // auto-discount. Only applies if no manual coupon is in play (manual wins).
+  React.useEffect(() => {
+    if (cart.length === 0 || appliedCode) {
+      setAutoDiscount(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await getAutoDiscount(subForEngine);
+        if (!cancelled) {
+          setAutoDiscount(r ? { code: r.code, name: r.name, amount: r.amount } : null);
+          if (r) setDiscount(r.amount);
+          else setDiscount((d) => (appliedCode ? d : 0));
+        }
+      } catch {
+        /* swallow — engine errors shouldn't break the wizard */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [subForEngine, cart.length, appliedCode]);
 
   // ─── Stage 1 helpers ──────────────────────────────────────────────────────
   const lookupAndProfile = () => {
@@ -504,6 +542,7 @@ export function BillingScreen({
           totalDiscount={totalDiscount}
           discount={discount}
           appliedCode={appliedCode}
+          autoDiscount={autoDiscount}
           discountCode={discountCode}
           setDiscountCode={setDiscountCode}
           applyCoupon={applyCoupon}
@@ -660,7 +699,10 @@ function CustomerStep(props: {
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-3">
       <Card>
         <CardHeader>
-          <CardTitle>Who's the customer?</CardTitle>
+          <CardTitle className="flex items-center justify-between gap-2">
+            <span>Who's the customer?</span>
+            <RecallHeldButton />
+          </CardTitle>
           <CardDescription>
             Phone first — we'll auto-fill name, allergies, loyalty &amp; membership perks from past visits.
           </CardDescription>
@@ -1230,6 +1272,7 @@ function SettleStep(props: {
   totalDiscount: number;
   discount: number;
   appliedCode: { code: string; name: string } | null;
+  autoDiscount: { code: string; name: string; amount: number } | null;
   discountCode: string;
   setDiscountCode: (s: string) => void;
   applyCoupon: () => void;
@@ -1266,6 +1309,7 @@ function SettleStep(props: {
     totalDiscount,
     discount,
     appliedCode,
+    autoDiscount,
     discountCode,
     setDiscountCode,
     applyCoupon,
@@ -1380,6 +1424,19 @@ function SettleStep(props: {
               {cappedRedeem > 0 && (
                 <div className="text-xs text-amber-800">Discounts ₹{redeemRupees} from this bill.</div>
               )}
+            </CardContent>
+          </Card>
+        )}
+
+        {autoDiscount && !appliedCode && (
+          <Card className="border-emerald-300 bg-emerald-50/60">
+            <CardContent className="py-2.5 px-3 text-sm flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 text-emerald-900">
+                <Sparkles className="h-3.5 w-3.5" />
+                <span className="font-semibold">{autoDiscount.name}</span>
+                <span className="text-xs text-emerald-700">auto-applied</span>
+              </span>
+              <span className="font-semibold text-emerald-800">−{inr(autoDiscount.amount)}</span>
             </CardContent>
           </Card>
         )}
@@ -1786,6 +1843,101 @@ function CatChip({ active, onClick, children }: { active?: boolean; onClick: () 
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * Recall held bills picker (audit TASK 11 v2). Lists held / printed orders so
+ * a captain can resume work on one without leaving the New Bill page. Links to
+ * the full order detail page; from there the existing Settle flow takes over.
+ */
+function RecallHeldButton() {
+  const [open, setOpen] = React.useState(false);
+  const [rows, setRows] = React.useState<Awaited<ReturnType<typeof listHeldBills>>>([]);
+  const [q, setQ] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    listHeldBills()
+      .then((r) => setRows(r))
+      .finally(() => setLoading(false));
+  }, [open]);
+
+  const filtered = rows.filter((r) => {
+    if (!q.trim()) return true;
+    const term = q.toLowerCase();
+    return (
+      r.invoiceNo.toLowerCase().includes(term) ||
+      (r.customerName ?? "").toLowerCase().includes(term) ||
+      (r.customerPhone ?? "").toLowerCase().includes(term) ||
+      (r.tableName ?? "").toLowerCase().includes(term)
+    );
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button type="button" variant="outline" size="sm">
+          <Pause className="h-4 w-4" />
+          Recall held bill
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Recall a held bill</DialogTitle>
+          <DialogDescription>
+            Search by invoice, customer name, phone, or table.
+          </DialogDescription>
+        </DialogHeader>
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="INV-… / phone / Aarav / T1"
+          autoFocus
+        />
+        <div className="max-h-72 overflow-y-auto -mx-1 px-1">
+          {loading ? (
+            <div className="p-6 text-center text-sm text-muted-foreground">Loading…</div>
+          ) : filtered.length === 0 ? (
+            <div className="p-6 text-center text-sm text-muted-foreground">
+              {rows.length === 0 ? "No held bills." : "No matches."}
+            </div>
+          ) : (
+            <ul className="space-y-1">
+              {filtered.map((r) => (
+                <li key={r.id}>
+                  <Link
+                    href={`/orders/${r.id}`}
+                    onClick={() => setOpen(false)}
+                    className="block p-2 rounded-md border hover:bg-accent transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm">
+                          <span className="font-mono">{r.invoiceNo}</span>
+                          {r.tableName && <span className="text-muted-foreground"> · {r.tableName}</span>}
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {r.customerName ?? "Walk-in"}
+                          {r.customerPhone ? ` · ${r.customerPhone}` : ""}
+                          {" · "}
+                          {r.lineCount} item{r.lineCount === 1 ? "" : "s"}
+                          {" · "}
+                          {new Date(r.createdAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                        </div>
+                      </div>
+                      <span className="text-sm font-semibold shrink-0">{inr(r.grandTotal)}</span>
+                    </div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -9,6 +9,7 @@ import { AskAiButton } from "./ask-ai";
 import { OutletSwitcher } from "./outlet-switcher";
 import { MenuButton } from "./sidebar-shell";
 import { SyncStatusPill } from "./sync-status";
+import { ActivityPeek } from "./activity-peek";
 
 export async function Topbar() {
   const outlet = await getActiveOutlet();
@@ -38,6 +39,7 @@ export async function Topbar() {
         </form>
 
         <SyncStatusPill />
+        <ActivityPeek />
         <AskAiButton />
         <NotificationBell outletId={outlet.id} />
         <Button variant="ghost" size="icon" aria-label="Help" className="hidden sm:inline-flex">

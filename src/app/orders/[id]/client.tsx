@@ -14,8 +14,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
-import { XCircle, Printer, Split, Check } from "lucide-react";
-import { cancelOrder, reprintBill, splitBillByItem } from "./actions";
+import { XCircle, Printer, Split, Check, Gift } from "lucide-react";
+import { cancelOrder, reprintBill, splitBillByItem, compOrder } from "./actions";
 
 export function CancelOrderButton({ id, invoiceNo }: { id: string; invoiceNo: string }) {
   const router = useRouter();
@@ -200,6 +200,79 @@ export function SplitBillButton({
           <Button onClick={submit} disabled={pending || picked.size === 0}>
             <Split className="h-4 w-4" />
             {pending ? "Splitting…" : "Split bill"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Mark order as complimentary (Sprint 2 acceptance gate). Zeroes grand total,
+ * captures a mandatory reason, and counts as a leakage signal.
+ */
+export function CompOrderButton({ id, invoiceNo }: { id: string; invoiceNo: string }) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [open, setOpen] = React.useState(false);
+  const [reason, setReason] = React.useState("");
+  const [pending, startTransition] = React.useTransition();
+
+  const submit = () => {
+    if (reason.trim().length < 3) {
+      toast({ variant: "destructive", title: "Reason required" });
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const fd = new FormData();
+        fd.set("id", id);
+        fd.set("reason", reason.trim());
+        await compOrder(fd);
+        toast({ variant: "success", title: `${invoiceNo} marked complimentary`, description: "Audit trail captured." });
+        setOpen(false);
+        setReason("");
+        router.refresh();
+      } catch (e) {
+        toast({ variant: "destructive", title: "Comp failed", description: String(e) });
+      }
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm" className="text-amber-700 border-amber-300 hover:bg-amber-50">
+          <Gift className="h-4 w-4" />
+          Comp
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Comp {invoiceNo}?</DialogTitle>
+          <DialogDescription>
+            Marks the bill as complimentary, zeroes the grand total. A reason is required and goes to the audit trail —
+            this is tracked as a leakage signal.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label>Reason <span className="text-xs text-muted-foreground font-normal">— required</span></Label>
+            <Input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="VIP guest / staff meal / service recovery"
+              autoFocus
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={pending}>
+            <Gift className="h-4 w-4" />
+            {pending ? "Comping…" : "Mark complimentary"}
           </Button>
         </DialogFooter>
       </DialogContent>

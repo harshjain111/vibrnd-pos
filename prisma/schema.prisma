@@ -507,11 +507,21 @@ model Discount {
   active      Boolean  @default(true)
   validFrom   DateTime?
   validTo     DateTime?
+  /// Auto-discount engine (audit TASK 12). When true the discount applies
+  /// automatically at settle without a coupon code — the engine picks the
+  /// single best matching auto-discount for the cart.
+  isAuto      Boolean  @default(false)
+  /// Comma-separated DOW (MON,TUE,…SUN). Empty = all days.
+  daysOfWeek  String?
+  /// Hour-of-day window in 24h. Both null = all day.
+  hourFrom    Int?
+  hourTo      Int?
   outletId    String
   outlet      Outlet   @relation(fields: [outletId], references: [id])
   createdAt   DateTime @default(now())
 
   @@index([outletId, active])
+  @@index([outletId, isAuto, active])
 }
 
 model SubOrderType {

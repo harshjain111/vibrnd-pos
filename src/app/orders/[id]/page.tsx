@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { inr, inr2 } from "@/lib/utils";
 import { ArrowLeft, ChefHat, Printer, RotateCcw, Pencil, Undo2 } from "lucide-react";
-import { CancelOrderButton, ReprintBillButton, SplitBillButton } from "./client";
+import { CancelOrderButton, ReprintBillButton, SplitBillButton, CompOrderButton } from "./client";
 import { reopenOrder } from "./actions";
 import { getAuthorizedUser } from "@/lib/rbac";
 
@@ -119,6 +119,9 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                 invoiceNo={order.invoiceNo}
                 items={order.items.map((it) => ({ id: it.id, name: it.name, qty: it.qty, price: it.price }))}
               />
+            )}
+            {!cancelled && !settled && (
+              <CompOrderButton id={order.id} invoiceNo={order.invoiceNo} />
             )}
             {!cancelled && <CancelOrderButton id={order.id} invoiceNo={order.invoiceNo} />}
             {cancelled && (

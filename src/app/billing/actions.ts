@@ -452,6 +452,32 @@ export async function getBillMemberships(phone: string) {
   }));
 }
 
+/**
+ * List held bills (status SAVED/PRINTED) for the recall picker on POS Customer
+ * step. Returns lightweight rows the captain can scan and pick from.
+ */
+export async function listHeldBills() {
+  const outlet = await getActiveOutlet();
+  const rows = await db.order.findMany({
+    where: { outletId: outlet.id, status: { in: ["SAVED", "PRINTED"] } },
+    include: { customer: true, table: true, items: { select: { id: true } } },
+    orderBy: { createdAt: "desc" },
+    take: 30,
+  });
+  return rows.map((o) => ({
+    id: o.id,
+    invoiceNo: o.invoiceNo,
+    orderType: o.orderType,
+    status: o.status,
+    customerName: o.customer?.name ?? null,
+    customerPhone: o.customer?.phone ?? null,
+    tableName: o.table?.name ?? null,
+    lineCount: o.items.length,
+    grandTotal: o.grandTotal,
+    createdAt: o.createdAt.toISOString(),
+  }));
+}
+
 /** Generates a 6-digit OTP for a membership, 5-minute validity. Returns the code so the demo UI can display it. */
 export async function sendBillOtp(membershipId: string) {
   if (!membershipId) return { error: "Membership required" } as const;
@@ -464,6 +490,17 @@ export async function sendBillOtp(membershipId: string) {
   const expiresAt = new Date(Date.now() + 5 * 60_000);
   await db.membershipOtp.create({ data: { membershipId, code, expiresAt } });
   return { ok: true as const, code, phone: m.customer.phone ?? "" };
+}
+
+/**
+ * Best-matching auto-discount for the current cart subtotal (audit TASK 12).
+ * Returns `null` if no auto-discount qualifies. Client uses this to show a
+ * "Auto-applied" chip on the Settle step before settle is pressed.
+ */
+export async function getAutoDiscount(subtotal: number) {
+  const outlet = await getActiveOutlet();
+  const { pickAutoDiscount } = await import("@/lib/auto-discount");
+  return pickAutoDiscount({ outletId: outlet.id, subtotal });
 }
 
 /** Verifies an OTP. Marks it used. Does NOT create a redemption row — that happens at placeOrder. */

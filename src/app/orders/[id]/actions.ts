@@ -177,6 +177,49 @@ export async function splitBillByItem(input: z.infer<typeof SplitInput>) {
   return { splitId: splitOrder.id, splitInvoice };
 }
 
+const CompInput = z.object({
+  id: z.string(),
+  reason: z.string().min(3, "Reason is required"),
+});
+
+/**
+ * Comp / Complimentary — zero the bill and capture why.
+ * Counts as a leakage signal (Sprint 2 acceptance gate). Manager-only.
+ */
+export async function compOrder(fd: FormData) {
+  const user = await requireUser("MANAGER");
+  const { id, reason } = CompInput.parse({
+    id: fd.get("id"),
+    reason: fd.get("reason"),
+  });
+  const o = await db.order.findUnique({ where: { id } });
+  if (!o) throw new Error("Order not found");
+  await assertOrderEditable(o, user.role);
+
+  await db.order.update({
+    where: { id },
+    data: {
+      status: "PAID",
+      paymentMode: "COMP",
+      grandTotal: 0,
+      amountPaid: 0,
+      discount: o.subTotal + o.taxTotal,
+      notes: `${o.notes ? `${o.notes} · ` : ""}Complimentary: ${reason}`,
+      closedAt: new Date(),
+    },
+  });
+  await logActivity({
+    action: "UPDATE",
+    entity: "Order",
+    entityId: id,
+    summary: `Complimentary ${o.invoiceNo} — reason: ${reason}`,
+    outletId: o.outletId,
+  });
+  revalidatePath(`/orders/${id}`);
+  revalidatePath("/orders");
+  revalidatePath("/logs");
+}
+
 const ReprintInput = z.object({ id: z.string(), reason: z.string().min(3, "Reason is required (min 3 chars)") });
 
 /** Re-print bill (audit TASK 10). Captures reason → audit trail + leakage signal. */
