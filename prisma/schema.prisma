@@ -133,6 +133,9 @@ model Item {
   active        Boolean  @default(true)
   outOfStock    Boolean  @default(false)
   isVeg         Boolean  @default(true)
+  /// 4-way dietary marker per audit TASK 4 — overrides isVeg when set.
+  /// VEG (green) | NON_VEG (red) | EGG (yellow) | JAIN (saffron)
+  dietary       String   @default("VEG")
   station       String   @default("MAIN") // MAIN | TANDOOR | BAR | DESSERT
   categoryId    String
   category      Category @relation(fields: [categoryId], references: [id])

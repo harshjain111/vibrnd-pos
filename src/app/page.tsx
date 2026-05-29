@@ -59,7 +59,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         <KpiCard
           title="Cancelled Orders"
           value={String(k.statusCounts.cancelled)}
-          subline="In range"
+          subline={k.statusCounts.cancelled > 0 ? "In range" : "All good in this range"}
           icon={<AlertCircle className="h-4 w-4" />}
           tone={k.statusCounts.cancelled > 0 ? "warn" : "neutral"}
         />

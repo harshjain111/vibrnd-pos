@@ -9,6 +9,11 @@ import { SidebarProvider } from "@/components/shell/sidebar-shell";
 export const metadata: Metadata = {
   title: "Vibrnd POS — Restaurant management",
   description: "All-in-one POS, menu, inventory, CRM, and reporting for restaurants.",
+  manifest: "/manifest.json",
+  applicationName: "Vibrnd POS",
+  appleWebApp: { capable: true, title: "Vibrnd POS", statusBarStyle: "black-translucent" },
+  themeColor: "#f97316",
+  icons: { icon: "/icon-192.svg", apple: "/icon-512.svg" },
 };
 
 const NO_CHROME = ["/login"];

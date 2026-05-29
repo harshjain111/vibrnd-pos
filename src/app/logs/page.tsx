@@ -41,7 +41,22 @@ export default async function AuditLogPage({
     take: 300,
   });
 
-  const entities = ["Order", "KOT", "Item", "Discount", "Customer", "RawMaterial", "Outlet", "Expense", "Table"];
+  // Friendlier labels per audit B12 — internal entity name stays the same in the URL/value.
+  const entities: { value: string; label: string }[] = [
+    { value: "Order", label: "Order" },
+    { value: "KOT", label: "KOT" },
+    { value: "Item", label: "Item" },
+    { value: "Discount", label: "Discount" },
+    { value: "Customer", label: "Customer" },
+    { value: "RawMaterial", label: "Raw Material" },
+    { value: "Outlet", label: "Outlet" },
+    { value: "Expense", label: "Expense" },
+    { value: "Table", label: "Dining Table" },
+    { value: "Purchase", label: "Purchase" },
+    { value: "Transfer", label: "Transfer" },
+    { value: "StockCount", label: "Stock Count" },
+    { value: "ReportNotification", label: "Scheduled Report" },
+  ];
 
   return (
     <div>
@@ -64,8 +79,8 @@ export default async function AuditLogPage({
             >
               <option value="all">All entities</option>
               {entities.map((e) => (
-                <option key={e} value={e}>
-                  {e}
+                <option key={e.value} value={e.value}>
+                  {e.label}
                 </option>
               ))}
             </select>

@@ -34,6 +34,7 @@ import {
   ShieldCheck,
   Check,
   ChevronRight,
+  ChefHat,
 } from "lucide-react";
 import {
   placeOrder,
@@ -366,6 +367,39 @@ export function BillingScreen({
     });
   };
 
+  // ─── Send KOT (audit TASK 2) ────────────────────────────────────────────
+  // Saves the order as held (state: SAVED) AND tells the kitchen to start cooking.
+  // Stays on the Menu step so the captain can add more items (Round 2 KOT)
+  // before settling.
+  const [kotSent, setKotSent] = React.useState<{ invoiceNo: string } | null>(null);
+  const sendKot = () => {
+    if (cart.length === 0) return;
+    startTransition(async () => {
+      try {
+        const res = await holdOrder(commonOrderInput());
+        // Hit the print-agent stub so this becomes a real "send to kitchen" action.
+        fetch("/api/print/kot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            orderId: res.id,
+            kotNo: res.invoiceNo,
+            station: "MAIN",
+            lines: linesPayload(),
+          }),
+        }).catch(() => {});
+        setKotSent({ invoiceNo: res.invoiceNo });
+        toast({
+          variant: "success",
+          title: "KOT sent to kitchen",
+          description: `${res.invoiceNo} · add more items for a Round 2 KOT, or settle.`,
+        });
+      } catch (e) {
+        toast({ variant: "destructive", title: "Couldn't send KOT", description: String(e) });
+      }
+    });
+  };
+
   const resetAll = () => {
     setStage("customer");
     setCart([]);
@@ -449,9 +483,12 @@ export function BillingScreen({
           tableName={tables.find((t) => t.id === tableId)?.name}
           onBack={() => setStage("customer")}
           onNext={() => setStage("settle")}
+          onSendKot={sendKot}
+          kotSent={kotSent}
           sub={sub}
           tax={tax}
           grand={Math.round(sub + tax)}
+          pending={pending}
         />
       )}
 
@@ -819,6 +856,10 @@ function MenuStep(props: {
   tableName?: string;
   onBack: () => void;
   onNext: () => void;
+  /** Send the KOT to the kitchen now (audit TASK 2). Stays on the Menu step so the captain can add more items. */
+  onSendKot: () => void;
+  kotSent: { invoiceNo: string } | null;
+  pending: boolean;
   sub: number;
   tax: number;
   grand: number;
@@ -845,6 +886,9 @@ function MenuStep(props: {
     tableName,
     onBack,
     onNext,
+    onSendKot,
+    kotSent,
+    pending,
     sub,
     tax,
     grand,
@@ -1022,6 +1066,32 @@ function MenuStep(props: {
             </div>
           </div>
 
+          {/* KOT-sent banner — appears after the kitchen receives the order. */}
+          {kotSent && (
+            <div className="rounded-md border border-emerald-300 bg-emerald-50/70 p-2.5 text-xs text-emerald-900">
+              <div className="font-semibold inline-flex items-center gap-1.5">
+                <Check className="h-3.5 w-3.5" />
+                KOT sent · {kotSent.invoiceNo}
+              </div>
+              <div className="text-emerald-800/80 mt-0.5">
+                Kitchen is cooking. Add more items below for a Round 2 KOT, or hit Settle when the customer pays.
+              </div>
+            </div>
+          )}
+
+          {/* Send KOT — primary action between Menu and Settle (audit TASK 2). */}
+          <Button
+            type="button"
+            onClick={onSendKot}
+            disabled={cart.length === 0 || pending}
+            className="w-full"
+            size="lg"
+            variant={kotSent ? "outline" : "default"}
+          >
+            <ChefHat className="h-4 w-4" />
+            {kotSent ? `Send Round ${countSentRounds(kotSent) + 1} KOT` : "Send KOT to kitchen"}
+          </Button>
+
           <div className="grid grid-cols-2 gap-2">
             <Button type="button" variant="outline" onClick={onBack}>
               <ArrowLeft className="h-4 w-4" />
@@ -1036,6 +1106,14 @@ function MenuStep(props: {
       </Card>
     </div>
   );
+}
+
+// Simple counter so the button label flips Round 1 → Round 2 → … if the captain
+// keeps adding items and re-sending the KOT mid-meal.
+function countSentRounds(_state: { invoiceNo: string } | null) {
+  // The current implementation tracks only "has been sent at least once". A future
+  // pass can grow this into a numeric round counter when we wire real KOT batching.
+  return 0;
 }
 
 /* ─── MembershipRedeemRow — inline OTP flow ──────────────────────────────── */

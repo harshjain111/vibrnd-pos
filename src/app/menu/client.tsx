@@ -432,8 +432,17 @@ export function OutOfStockToggle({ id, outOfStock }: { id: string; outOfStock: b
   return (
     <form action={toggleOutOfStock}>
       <input type="hidden" name="id" value={id} />
-      <Button type="submit" variant={outOfStock ? "secondary" : "ghost"} size="sm">
-        {outOfStock ? "In stock" : "Out"}
+      <Button
+        type="submit"
+        variant={outOfStock ? "secondary" : "ghost"}
+        size="sm"
+        title={
+          outOfStock
+            ? "Item is currently hidden from POS, Digital Menu and aggregators. Click to put it back in stock."
+            : "Mark this item as out of stock. It will be greyed out on POS and pushed out-of-stock on Swiggy / Zomato within 60 seconds."
+        }
+      >
+        {outOfStock ? "Mark in stock" : "Mark out of stock"}
       </Button>
     </form>
   );
