@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ClickableRow } from "@/components/ui/clickable-row";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { inr } from "@/lib/utils";
@@ -78,12 +79,8 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                   : null;
                 const tags = c.tags ? c.tags.split(",").map((t) => t.trim()).filter(Boolean) : [];
                 return (
-                  <TableRow key={c.id}>
-                    <TableCell className="font-medium">
-                      <Link href={`/customers/${c.id}`} className="hover:underline">
-                        {c.name}
-                      </Link>
-                    </TableCell>
+                  <ClickableRow key={c.id} href={`/customers/${c.id}`}>
+                    <TableCell className="font-medium">{c.name}</TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">{c.phone ?? "—"}</TableCell>
                     <TableCell className="text-muted-foreground">{c.email ?? "—"}</TableCell>
                     <TableCell>
@@ -117,7 +114,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                         </Button>
                       </CustomerDialog>
                     </TableCell>
-                  </TableRow>
+                  </ClickableRow>
                 );
               })}
             </TableBody>
