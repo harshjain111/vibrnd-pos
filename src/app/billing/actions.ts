@@ -8,6 +8,7 @@ import { nextInvoiceNo, inr } from "@/lib/utils";
 import { logActivity } from "@/lib/audit";
 import { moveStock } from "@/lib/stock";
 import { recordLoyalty, pointsEarned, redeemValue, tierFor, earnMultiplier } from "@/lib/loyalty";
+import { requireUser } from "@/lib/rbac";
 
 const AddonShape = z.object({
   name: z.string(),
@@ -450,6 +451,214 @@ export async function getBillMemberships(phone: string) {
       qtyPerDay: b.qtyPerDay,
     })),
   }));
+}
+
+/**
+ * Resume a held bill — return its full state for the BillingScreen to rehydrate.
+ * Used by /billing?resume=ID. Includes items, customer, table, KOT state.
+ */
+export async function resumeHeldBill(orderId: string) {
+  const outlet = await getActiveOutlet();
+  const o = await db.order.findUnique({
+    where: { id: orderId },
+    include: {
+      items: { include: { item: true } },
+      customer: true,
+      table: true,
+      kots: { select: { id: true, kotNo: true, status: true, printedCount: true, reprintCount: true } },
+    },
+  });
+  if (!o || o.outletId !== outlet.id) throw new Error("Bill not found");
+  if (o.status === "PAID" || o.status === "CANCELLED") {
+    throw new Error(`This bill is already ${o.status.toLowerCase()}.`);
+  }
+  return {
+    id: o.id,
+    invoiceNo: o.invoiceNo,
+    orderType: o.orderType as "DINE_IN" | "PICKUP" | "DELIVERY",
+    subOrderType: o.subOrderType,
+    tableId: o.tableId,
+    captainId: o.captainId,
+    customerPhone: o.customer?.phone ?? "",
+    customerName: o.customer?.name ?? "",
+    allergies: o.customer?.allergies ?? "",
+    birthday: o.customer?.birthday ? o.customer.birthday.toISOString().slice(0, 10) : "",
+    anniversary: o.customer?.anniversary ? o.customer.anniversary.toISOString().slice(0, 10) : "",
+    items: o.items.map((li) => ({
+      orderItemId: li.id,
+      itemId: li.itemId,
+      itemName: li.item?.name ?? li.name,
+      qty: li.qty,
+      price: li.price,
+      taxRate: li.taxRate,
+      variantName: li.variantName,
+      addonsJson: li.addonsJson,
+    })),
+    kots: o.kots.map((k) => ({
+      id: k.id,
+      kotNo: k.kotNo,
+      status: k.status,
+      printedCount: k.printedCount,
+      reprintCount: k.reprintCount,
+    })),
+    notes: o.notes,
+  };
+}
+
+/**
+ * Settle a held bill — update existing Order to PAID instead of creating new.
+ * Used when /billing was launched via ?resume=ID and the captain pressed Settle.
+ */
+const SettleHeldInput = z.object({
+  orderId: z.string(),
+  paymentMode: z.enum(["CASH", "CARD", "UPI", "ONLINE", "DUE"]),
+  discount: z.number().nonnegative().default(0),
+  discountCode: z.string().optional(),
+  redeemPoints: z.number().int().nonnegative().default(0),
+  tip: z.number().nonnegative().default(0),
+});
+export async function settleHeldBill(input: z.infer<typeof SettleHeldInput>) {
+  const data = SettleHeldInput.parse(input);
+  const outlet = await getActiveOutlet();
+  const o = await db.order.findUnique({ where: { id: data.orderId }, include: { items: true } });
+  if (!o || o.outletId !== outlet.id) throw new Error("Order not found");
+  if (o.status === "PAID" || o.status === "CANCELLED") throw new Error(`Already ${o.status.toLowerCase()}.`);
+
+  let sub = 0;
+  let tax = 0;
+  for (const l of o.items) {
+    const lineTotal = l.price * l.qty;
+    sub += lineTotal;
+    tax += lineTotal * (l.taxRate / 100);
+  }
+  const grand = Math.max(0, Math.round(sub + tax - (data.discount || 0) + (data.tip || 0)));
+  await db.order.update({
+    where: { id: o.id },
+    data: {
+      status: data.paymentMode === "DUE" ? "PRINTED" : "PAID",
+      subTotal: sub,
+      taxTotal: tax,
+      discount: data.discount,
+      discountCode: data.discountCode,
+      grandTotal: grand,
+      amountPaid: data.paymentMode === "DUE" ? 0 : grand,
+      tip: data.tip || 0,
+      paymentMode: data.paymentMode,
+      closedAt: data.paymentMode === "DUE" ? null : new Date(),
+    },
+  });
+  if (data.paymentMode !== "DUE") {
+    await db.payment.create({
+      data: {
+        orderId: o.id,
+        outletId: outlet.id,
+        amount: grand,
+        mode: data.paymentMode,
+        actor: "system",
+      },
+    });
+  }
+  await logActivity({
+    action: "SETTLE",
+    entity: "Order",
+    entityId: o.id,
+    summary: `Resumed + settled ${o.invoiceNo} for ${inr(grand)} via ${data.paymentMode}`,
+    outletId: outlet.id,
+  });
+  revalidatePath("/orders");
+  revalidatePath("/orders/live");
+  revalidatePath("/kds");
+  redirect(`/billing/receipt/${o.id}`);
+}
+
+/**
+ * Send the first KOT for a held bill. Idempotent — server records
+ * printedCount; the client uses this to lock the Send KOT button after first
+ * press. Reprints go through `reprintKot` (with a mandatory reason).
+ */
+export async function sendKotForOrder(orderId: string) {
+  await requireUser("BILLER");
+  const outlet = await getActiveOutlet();
+  const o = await db.order.findUnique({
+    where: { id: orderId },
+    include: { items: true, kots: true },
+  });
+  if (!o || o.outletId !== outlet.id) throw new Error("Order not found");
+  if (o.kots.some((k) => k.printedCount > 0)) {
+    return { alreadySent: true as const, kotNo: o.kots[0].kotNo };
+  }
+  // The KOT row already exists from holdOrder; just bump its printedCount and timestamp.
+  if (o.kots[0]) {
+    await db.kitchenTicket.update({
+      where: { id: o.kots[0].id },
+      data: { printedCount: { increment: 1 }, status: "NEW" },
+    });
+    await logActivity({
+      action: "CREATE",
+      entity: "KOT",
+      entityId: o.kots[0].id,
+      summary: `Sent KOT ${o.kots[0].kotNo} for ${o.invoiceNo}`,
+      outletId: outlet.id,
+    });
+    revalidatePath("/kds");
+    return { alreadySent: false as const, kotNo: o.kots[0].kotNo };
+  }
+  // Fallback — order exists but no KOT row yet. Create one.
+  const kotCount = await db.kitchenTicket.count({ where: { outletId: outlet.id } });
+  const kotNo = `KOT-${String(kotCount + 1).padStart(6, "0")}`;
+  const k = await db.kitchenTicket.create({
+    data: {
+      kotNo,
+      orderId: o.id,
+      outletId: outlet.id,
+      station: "MAIN",
+      status: "NEW",
+      printedCount: 1,
+      lines: {
+        create: o.items.map((li) => ({
+          itemId: li.itemId,
+          name: li.name,
+          qty: li.qty,
+          note: li.variantName ?? undefined,
+        })),
+      },
+    },
+  });
+  revalidatePath("/kds");
+  return { alreadySent: false as const, kotNo: k.kotNo };
+}
+
+/**
+ * Reprint an already-sent KOT. Mandatory reason — captured to audit and
+ * bumps the reprintCount counter.
+ */
+export async function reprintKot(orderId: string, reason: string) {
+  await requireUser("BILLER");
+  if (!reason || reason.trim().length < 3) throw new Error("Reason required (min 3 chars).");
+  const outlet = await getActiveOutlet();
+  const o = await db.order.findUnique({
+    where: { id: orderId },
+    include: { kots: true },
+  });
+  if (!o || o.outletId !== outlet.id) throw new Error("Order not found");
+  const kot = o.kots[0];
+  if (!kot) throw new Error("No KOT to reprint.");
+  await db.kitchenTicket.update({
+    where: { id: kot.id },
+    data: {
+      reprintCount: { increment: 1 },
+      reprintReason: reason.trim(),
+    },
+  });
+  await logActivity({
+    action: "UPDATE",
+    entity: "KOT",
+    entityId: kot.id,
+    summary: `Re-printed KOT ${kot.kotNo} for ${o.invoiceNo} — reason: ${reason}`,
+    outletId: outlet.id,
+  });
+  revalidatePath("/kds");
+  return { kotNo: kot.kotNo, reprintCount: kot.reprintCount + 1 };
 }
 
 /**

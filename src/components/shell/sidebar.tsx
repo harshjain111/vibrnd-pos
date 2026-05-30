@@ -15,9 +15,11 @@ export async function Sidebar() {
   // so the Owner's manual toggles take effect.
   let overrides = undefined;
   let badges: Record<string, number> = {};
+  let kdsEnabled = true;
   try {
     const outlet = await getActiveOutlet();
     overrides = await loadOutletPermissions(outlet.id);
+    kdsEnabled = (outlet as any).kdsEnabled ?? true;
     // Per-section dynamic badges (audit §5.4 — Override pending count).
     const [pendingOverrides] = await Promise.all([
       db.overrideRequest.count({ where: { outletId: outlet.id, status: "PENDING" } }),
@@ -33,6 +35,8 @@ export async function Sidebar() {
     ...s,
     items: s.items
       .filter((i) => canAccess(role, i.pageId, overrides))
+      // Hide KDS when the outlet has disabled it.
+      .filter((i) => !(i.pageId === "kds" && !kdsEnabled))
       // Attach dynamic count badges where defined.
       .map((i) => (i.pageId === "overrides" && badges.overrides ? { ...i, badge: badges.overrides } : i)),
   })).filter((s) => s.items.length > 0);

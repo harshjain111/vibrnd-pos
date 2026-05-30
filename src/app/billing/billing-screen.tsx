@@ -47,6 +47,7 @@ import {
   verifyBillOtp,
   listHeldBills,
   getAutoDiscount,
+  reprintKot,
 } from "./actions";
 import Link from "next/link";
 import { lookupDiscount } from "@/app/menu/discounts/actions";
@@ -132,6 +133,8 @@ export function BillingScreen({
   captainMode = false,
   upiVpa = null,
   outletName = "",
+  kdsEnabled = true,
+  resumed = null,
 }: {
   categories: Category[];
   items: Item[];
@@ -147,21 +150,58 @@ export function BillingScreen({
   /** UPI VPA used to render the dynamic QR at Settle when UPI is the mode (TASK 20). */
   upiVpa?: string | null;
   outletName?: string;
+  /** When false, "Send KOT" becomes "Print KOT" (local printer instead of KDS push). */
+  kdsEnabled?: boolean;
+  /** When set, rehydrates from this held bill instead of starting fresh. */
+  resumed?: {
+    id: string;
+    invoiceNo: string;
+    orderType: "DINE_IN" | "PICKUP" | "DELIVERY";
+    subOrderType: string | null;
+    tableId: string | null;
+    captainId: string | null;
+    customerPhone: string;
+    customerName: string;
+    allergies: string;
+    birthday: string;
+    anniversary: string;
+    items: Array<{
+      orderItemId: string;
+      itemId: string;
+      itemName: string;
+      qty: number;
+      price: number;
+      taxRate: number;
+      variantName: string | null;
+      addonsJson: string | null;
+    }>;
+    kots: Array<{ id: string; kotNo: string; status: string; printedCount: number; reprintCount: number }>;
+    notes: string | null;
+  } | null;
 }) {
   const { toast } = useToast();
-  const [stage, setStage] = React.useState<Stage>("customer");
+  // When resuming a held bill, jump straight to the Menu step so the captain
+  // can add more items or settle.
+  const [stage, setStage] = React.useState<Stage>(resumed ? "menu" : "customer");
   const [pending, startTransition] = React.useTransition();
+  const resumedOrderId = resumed?.id ?? null;
+  /** True once the kitchen has been notified (printedCount > 0). Locks the
+   * Send KOT button — a separate Reprint button covers the anti-leakage flow. */
+  const initialKotSent =
+    resumed?.kots?.some((k) => k.printedCount > 0)
+      ? { invoiceNo: resumed.kots[0].kotNo, reprintCount: resumed.kots[0].reprintCount }
+      : null;
 
   // ─── Stage 1: customer + order setup ──────────────────────────────────────
-  const [customerPhone, setCustomerPhone] = React.useState("");
-  const [customerName, setCustomerName] = React.useState("");
-  const [allergies, setAllergies] = React.useState("");
-  const [birthday, setBirthday] = React.useState("");
-  const [anniversary, setAnniversary] = React.useState("");
-  const [orderType, setOrderType] = React.useState<"DINE_IN" | "PICKUP" | "DELIVERY">("DINE_IN");
-  const [subType, setSubType] = React.useState<string>("");
-  const [tableId, setTableId] = React.useState<string>(tables[0]?.id ?? "");
-  const [captainId, setCaptainId] = React.useState<string>("");
+  const [customerPhone, setCustomerPhone] = React.useState(resumed?.customerPhone ?? "");
+  const [customerName, setCustomerName] = React.useState(resumed?.customerName ?? "");
+  const [allergies, setAllergies] = React.useState(resumed?.allergies ?? "");
+  const [birthday, setBirthday] = React.useState(resumed?.birthday ?? "");
+  const [anniversary, setAnniversary] = React.useState(resumed?.anniversary ?? "");
+  const [orderType, setOrderType] = React.useState<"DINE_IN" | "PICKUP" | "DELIVERY">(resumed?.orderType ?? "DINE_IN");
+  const [subType, setSubType] = React.useState<string>(resumed?.subOrderType ?? "");
+  const [tableId, setTableId] = React.useState<string>(resumed?.tableId ?? tables[0]?.id ?? "");
+  const [captainId, setCaptainId] = React.useState<string>(resumed?.captainId ?? "");
 
   // customer enrichment
   const [customerBalance, setCustomerBalance] = React.useState<number>(0);
@@ -174,7 +214,44 @@ export function BillingScreen({
   // ─── Stage 2: menu + cart ─────────────────────────────────────────────────
   const [activeCat, setActiveCat] = React.useState<string>("all");
   const [search, setSearch] = React.useState("");
-  const [cart, setCart] = React.useState<CartLine[]>([]);
+  // When resuming a held bill, seed the cart from its existing line items so
+  // the captain can pick up exactly where the bill was left off.
+  const [cart, setCart] = React.useState<CartLine[]>(() => {
+    if (!resumed) return [];
+    return resumed.items.map((li) => {
+      const baseItem = items.find((it) => it.id === li.itemId);
+      const fallback: Item = baseItem ?? {
+        id: li.itemId,
+        name: li.itemName,
+        price: li.price,
+        taxRate: li.taxRate,
+        categoryId: "",
+        isVeg: true,
+        variants: [],
+        addons: [],
+      };
+      const addons: Addon[] = (() => {
+        if (!li.addonsJson) return [];
+        try {
+          return (JSON.parse(li.addonsJson) as Array<{ name: string; priceDelta: number }>).map((a, i) => ({
+            id: `resumed-${li.orderItemId}-${i}`,
+            name: a.name,
+            priceDelta: a.priceDelta,
+          }));
+        } catch {
+          return [];
+        }
+      })();
+      return {
+        key: `resumed-${li.orderItemId}`,
+        item: fallback,
+        qty: li.qty,
+        variant: li.variantName ? { id: `v-${li.orderItemId}`, name: li.variantName, price: li.price } : undefined,
+        addons,
+        unitPrice: li.price,
+      };
+    });
+  });
   const [pickerItem, setPickerItem] = React.useState<Item | null>(null);
 
   // ─── Stage 3: settle ──────────────────────────────────────────────────────
@@ -477,33 +554,66 @@ export function BillingScreen({
   // Saves the order as held (state: SAVED) AND tells the kitchen to start cooking.
   // Stays on the Menu step so the captain can add more items (Round 2 KOT)
   // before settling.
-  const [kotSent, setKotSent] = React.useState<{ invoiceNo: string } | null>(null);
+  const [kotSent, setKotSent] = React.useState<{ invoiceNo: string; reprintCount?: number } | null>(initialKotSent);
+
+  // ─── KOT send / reprint (TASK 2 + audit improvement) ─────────────────────
+  // Idempotent — once `kotSent` is set the Send button is locked client-side
+  // AND the server's `sendKotForOrder` no-ops if printedCount > 0.
   const sendKot = () => {
-    if (cart.length === 0) return;
+    if (kotSent || cart.length === 0) return;
     startTransition(async () => {
       try {
         const res = await holdOrder(commonOrderInput());
-        // Hit the print-agent stub so this becomes a real "send to kitchen" action.
-        fetch("/api/print/kot", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            orderId: res.id,
-            kotNo: res.invoiceNo,
-            station: "MAIN",
-            lines: linesPayload(),
-          }),
-        }).catch(() => {});
+        // Tell the kitchen — KDS push if enabled, local print otherwise.
+        if (kdsEnabled) {
+          fetch("/api/print/kot", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              orderId: res.id,
+              kotNo: res.invoiceNo,
+              station: "MAIN",
+              lines: linesPayload(),
+            }),
+          }).catch(() => {});
+        } else {
+          // Open a new tab to print the receipt-style KOT.
+          window.open(`/orders/kot/${res.id}/print`, "_blank");
+        }
         setKotSent({ invoiceNo: res.invoiceNo });
         toast({
           variant: "success",
-          title: "KOT sent to kitchen",
-          description: `${res.invoiceNo} · add more items for a Round 2 KOT, or settle.`,
+          title: kdsEnabled ? "KOT sent to kitchen" : "KOT sent to printer",
+          description: `${res.invoiceNo} · button now locked. Use Reprint with a reason if you need another copy.`,
         });
+        // Optional client URL update so refreshes keep the resumed view.
+        if (!resumedOrderId) {
+          window.history.replaceState({}, "", `/billing?resume=${res.id}`);
+        }
       } catch (e) {
         toast({ variant: "destructive", title: "Couldn't send KOT", description: String(e) });
       }
     });
+  };
+
+  // Reprint KOT — requires a reason; calls the server action.
+  const reprintKotAction = async (reason: string) => {
+    if (!kotSent) return;
+    const id = resumedOrderId;
+    if (!id) {
+      toast({ variant: "destructive", title: "Can't reprint", description: "Order id missing." });
+      return;
+    }
+    try {
+      const r = await reprintKot(id, reason);
+      setKotSent({ invoiceNo: r.kotNo, reprintCount: r.reprintCount });
+      if (!kdsEnabled) {
+        window.open(`/orders/kot/${id}/print`, "_blank");
+      }
+      toast({ variant: "success", title: "KOT re-printed", description: `Reason logged: ${reason}` });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Reprint failed", description: String(e) });
+    }
   };
 
   const resetAll = () => {
@@ -590,6 +700,8 @@ export function BillingScreen({
           onBack={() => setStage("customer")}
           onNext={() => setStage("settle")}
           onSendKot={sendKot}
+          onReprintKot={reprintKotAction}
+          kdsEnabled={kdsEnabled}
           kotSent={kotSent}
           captainMode={captainMode}
           sub={sub}
@@ -689,6 +801,67 @@ export function BillingScreen({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Reprint KOT button + inline reason capture (anti-leakage).
+ * Shown only after a KOT has been sent; opens a tiny popover-style dialog.
+ */
+function ReprintKotInlineButton({
+  onConfirm,
+  pending,
+}: {
+  onConfirm: (reason: string) => Promise<void>;
+  pending: boolean;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [reason, setReason] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  return (
+    <>
+      <Button type="button" variant="outline" size="lg" onClick={() => setOpen(true)} disabled={pending}>
+        <ChefHat className="h-4 w-4" />
+        Reprint
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Re-print KOT</DialogTitle>
+            <DialogDescription>
+              Reason required — re-prints are tracked as a leakage signal.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label>Reason</Label>
+            <Input
+              autoFocus
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Printer jammed / kitchen lost the copy / smudged"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={async () => {
+                if (reason.trim().length < 3) return;
+                setBusy(true);
+                await onConfirm(reason.trim());
+                setBusy(false);
+                setReason("");
+                setOpen(false);
+              }}
+              disabled={busy || reason.trim().length < 3}
+            >
+              {busy ? "Re-printing…" : "Confirm reprint"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -1022,7 +1195,9 @@ function MenuStep(props: {
   onNext: () => void;
   /** Send the KOT to the kitchen now (audit TASK 2). Stays on the Menu step so the captain can add more items. */
   onSendKot: () => void;
-  kotSent: { invoiceNo: string } | null;
+  onReprintKot: (reason: string) => Promise<void>;
+  kdsEnabled: boolean;
+  kotSent: { invoiceNo: string; reprintCount?: number } | null;
   captainMode: boolean;
   pending: boolean;
   sub: number;
@@ -1052,6 +1227,8 @@ function MenuStep(props: {
     onBack,
     onNext,
     onSendKot,
+    onReprintKot,
+    kdsEnabled,
     kotSent,
     captainMode,
     pending,
@@ -1237,26 +1414,45 @@ function MenuStep(props: {
             <div className="rounded-md border border-emerald-300 bg-emerald-50/70 p-2.5 text-xs text-emerald-900">
               <div className="font-semibold inline-flex items-center gap-1.5">
                 <Check className="h-3.5 w-3.5" />
-                KOT sent · {kotSent.invoiceNo}
+                KOT generated · {kotSent.invoiceNo}
+                {typeof kotSent.reprintCount === "number" && kotSent.reprintCount > 0 && (
+                  <span className="ml-1 text-amber-700">({kotSent.reprintCount}× re-printed)</span>
+                )}
               </div>
               <div className="text-emerald-800/80 mt-0.5">
-                Kitchen is cooking. Add more items below for a Round 2 KOT, or hit Settle when the customer pays.
+                Kitchen is cooking. Add more items and hit Settle when the customer pays — or re-print the KOT if needed.
               </div>
             </div>
           )}
 
-          {/* Send KOT — primary action between Menu and Settle (audit TASK 2). */}
-          <Button
-            type="button"
-            onClick={onSendKot}
-            disabled={cart.length === 0 || pending}
-            className="w-full"
-            size="lg"
-            variant={kotSent ? "outline" : "default"}
-          >
-            <ChefHat className="h-4 w-4" />
-            {kotSent ? `Send Round ${countSentRounds(kotSent) + 1} KOT` : "Send KOT to kitchen"}
-          </Button>
+          {/* Send KOT — primary action between Menu and Settle (audit TASK 2).
+              Once generated, the button locks. Reprint requires a separate
+              click + reason (idempotent + anti-leakage). */}
+          {!kotSent ? (
+            <Button
+              type="button"
+              onClick={onSendKot}
+              disabled={cart.length === 0 || pending}
+              className="w-full"
+              size="lg"
+            >
+              <ChefHat className="h-4 w-4" />
+              {kdsEnabled ? "Send KOT to kitchen" : "Print KOT"}
+            </Button>
+          ) : (
+            <div className="grid grid-cols-[1fr_auto] gap-2">
+              <Button type="button" disabled variant="outline" size="lg" className="w-full">
+                <Check className="h-4 w-4 text-emerald-600" />
+                KOT generated
+              </Button>
+              <ReprintKotInlineButton
+                onConfirm={async (reason) => {
+                  await onReprintKot(reason);
+                }}
+                pending={pending}
+              />
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-2">
             <Button type="button" variant="outline" onClick={onBack}>

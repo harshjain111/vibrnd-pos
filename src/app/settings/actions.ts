@@ -70,9 +70,14 @@ export async function deleteTable(fd: FormData) {
 export async function setTaxInclusive(fd: FormData) {
   const outlet = await db.outlet.findFirstOrThrow();
   const enabled = fd.get("taxInclusive") === "on";
-  await db.outlet.update({ where: { id: outlet.id }, data: { taxInclusive: enabled } });
+  const kdsEnabled = fd.get("kdsEnabled") === "on";
+  await db.outlet.update({
+    where: { id: outlet.id },
+    data: { taxInclusive: enabled, kdsEnabled },
+  });
   revalidatePath("/settings");
   revalidatePath("/billing");
+  revalidatePath("/kds");
   revalidatePath("/", "layout");
 }
 

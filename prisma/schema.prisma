@@ -37,6 +37,7 @@ model Outlet {
   tierSilverMult  Float    @default(1.5)   // earn multiplier at Silver
   tierGoldMult    Float    @default(2.0)   // earn multiplier at Gold
   storeOpen       Boolean  @default(true)  // master switch — closed gates online orders
+  kdsEnabled      Boolean  @default(true)  // when false the POS prints KOTs locally instead of pushing to /kds
   active          Boolean  @default(true)  // soft-delete
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -307,6 +308,11 @@ model KitchenTicket {
   outlet     Outlet              @relation(fields: [outletId], references: [id])
   lines      KitchenTicketLine[]
   notes      String?
+  /// KOT idempotency — Print KOT button locks after first send; reprints
+  /// require a reason and bump this counter (audit anti-leakage signal).
+  printedCount  Int       @default(0)
+  reprintCount  Int       @default(0)
+  reprintReason String?
   createdAt  DateTime            @default(now())
   readyAt    DateTime?
   servedAt   DateTime?

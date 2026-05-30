@@ -84,7 +84,7 @@ export default async function LiveOrdersPage() {
                   </TableHeader>
                   <TableBody>
                     {running.map((o) => (
-                      <ClickableRow key={o.id} href={`/orders/${o.id}`}>
+                      <ClickableRow key={o.id} href={`/billing?resume=${o.id}`}>
                         <TableCell className="font-mono text-xs">{o.invoiceNo}</TableCell>
                         <TableCell>
                           <Badge variant="secondary">{o.orderType.replace("_", " ")}</Badge>

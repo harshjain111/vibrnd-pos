@@ -182,6 +182,17 @@ export default async function SettingsPage() {
                     </div>
                     <input type="checkbox" name="taxInclusive" defaultChecked={outlet.taxInclusive} className="h-4 w-4" />
                   </label>
+                  <label className="flex items-center justify-between gap-3 cursor-pointer pt-2 border-t">
+                    <div>
+                      <div>Use Kitchen Display (KDS)</div>
+                      <div className="text-xs text-muted-foreground">
+                        When ON, Send KOT pushes the ticket to <code>/kds</code>. When OFF, the
+                        button label becomes <strong>Print KOT</strong> and opens a printable
+                        ticket in a new tab.
+                      </div>
+                    </div>
+                    <input type="checkbox" name="kdsEnabled" defaultChecked={(outlet as any).kdsEnabled ?? true} className="h-4 w-4" />
+                  </label>
                   <Button type="submit" size="sm" variant="outline">
                     Save invoice settings
                   </Button>

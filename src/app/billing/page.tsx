@@ -3,13 +3,28 @@ import { getActiveOutlet } from "@/lib/outlet";
 import { BillingScreen } from "./billing-screen";
 import { PageHeader } from "@/components/shell/page-header";
 import { getSessionUser } from "@/lib/session";
+import { resumeHeldBill } from "./actions";
 
 export const dynamic = "force-dynamic";
 
-export default async function BillingPage() {
+export default async function BillingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ resume?: string }>;
+}) {
   const outlet = await getActiveOutlet();
   const user = await getSessionUser();
   const isCaptain = user?.role === "CAPTAIN";
+  const sp = await searchParams;
+  // Optional: resume a held bill so the cart, customer, table all rehydrate.
+  let resumed = null as Awaited<ReturnType<typeof resumeHeldBill>> | null;
+  if (sp.resume) {
+    try {
+      resumed = await resumeHeldBill(sp.resume);
+    } catch {
+      // Bill not found / already settled / different outlet — fall through to fresh start.
+    }
+  }
   const [categories, items, tables, subTypes, captains] = await Promise.all([
     db.category.findMany({ where: { outletId: outlet.id }, orderBy: { rank: "asc" } }),
     db.item.findMany({
@@ -31,15 +46,19 @@ export default async function BillingPage() {
   return (
     <div>
       <PageHeader
-        title="New bill"
+        title={resumed ? `Continue ${resumed.invoiceNo}` : "New bill"}
         description={
-          outlet.taxInclusive
-            ? "Prices include GST · build an order and settle payment"
-            : "Build an order and settle payment"
+          resumed
+            ? `Resuming a held bill — add more items or settle when ready`
+            : outlet.taxInclusive
+              ? "Prices include GST · build an order and settle payment"
+              : "Build an order and settle payment"
         }
       />
       <BillingScreen
         captainMode={isCaptain}
+        kdsEnabled={(outlet as any).kdsEnabled ?? true}
+        resumed={resumed}
         upiVpa={(outlet as any).upiVpa ?? null}
         outletName={outlet.name}
         taxInclusive={outlet.taxInclusive}
