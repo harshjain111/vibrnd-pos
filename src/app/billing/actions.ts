@@ -572,6 +572,133 @@ export async function settleHeldBill(input: z.infer<typeof SettleHeldInput>) {
 }
 
 /**
+ * Append new line items to a held bill and generate the next KOT round.
+ *
+ * Use this when the captain has already sent KOT #1 and the customer now wants
+ * to add more items. We append the new lines to the existing Order, create a
+ * NEW KitchenTicket (e.g. KOT-000023-R2), and bump totals. The original KOT
+ * row's printedCount/reprintCount stays untouched — each round is its own
+ * audit-trail entry.
+ */
+const RoundKotInput = z.object({
+  orderId: z.string(),
+  lines: z.array(CartLine).min(1),
+});
+export async function addRoundKot(input: z.infer<typeof RoundKotInput>) {
+  await requireUser("BILLER");
+  const outlet = await getActiveOutlet();
+  const data = RoundKotInput.parse(input);
+  const order = await db.order.findUnique({
+    where: { id: data.orderId },
+    include: { items: true, kots: true },
+  });
+  if (!order || order.outletId !== outlet.id) throw new Error("Order not found");
+  if (order.status === "PAID" || order.status === "CANCELLED") {
+    throw new Error(`Cannot add to a ${order.status.toLowerCase()} bill.`);
+  }
+
+  // Load item rows to capture name / station / taxRate for the new lines.
+  const items = await db.item.findMany({
+    where: { id: { in: data.lines.map((l) => l.itemId) }, outletId: outlet.id },
+  });
+  const itemMap = new Map(items.map((i) => [i.id, i]));
+
+  // 1. Append the new OrderItems.
+  let addSub = 0;
+  let addTax = 0;
+  for (const l of data.lines) {
+    const it = itemMap.get(l.itemId);
+    if (!it) continue;
+    const displayName = l.variantName ? `${it.name} (${l.variantName})` : it.name;
+    const lineTotal = l.unitPrice * l.qty;
+    const rate = it.taxRate / 100;
+    if (outlet.taxInclusive) {
+      const base = lineTotal / (1 + rate);
+      addSub += base;
+      addTax += lineTotal - base;
+    } else {
+      addSub += lineTotal;
+      addTax += lineTotal * rate;
+    }
+    await db.orderItem.create({
+      data: {
+        orderId: order.id,
+        itemId: it.id,
+        name: displayName,
+        price: l.unitPrice,
+        qty: l.qty,
+        taxRate: it.taxRate,
+        variantName: l.variantName,
+        addonsJson: l.addons.length ? JSON.stringify(l.addons) : null,
+      },
+    });
+  }
+  // Bump order totals.
+  await db.order.update({
+    where: { id: order.id },
+    data: {
+      subTotal: { increment: addSub },
+      taxTotal: { increment: addTax },
+      grandTotal: { increment: Math.round(addSub + addTax) },
+    },
+  });
+
+  // 2. Create a fresh KitchenTicket — one per round — grouped by station.
+  // Round number = current kot count for this order + 1.
+  const roundIndex = order.kots.length + 1;
+  const linesByStation = new Map<string, typeof data.lines>();
+  for (const l of data.lines) {
+    const it = itemMap.get(l.itemId);
+    if (!it) continue;
+    const station = it.station || "MAIN";
+    const arr = linesByStation.get(station) ?? [];
+    arr.push(l);
+    linesByStation.set(station, arr);
+  }
+  const kotsCreated: { kotNo: string; station: string }[] = [];
+  for (const [station, ls] of linesByStation) {
+    const kotCount = await db.kitchenTicket.count({ where: { outletId: outlet.id } });
+    const kotNo = `KOT-${String(kotCount + 1).padStart(6, "0")}-R${roundIndex}`;
+    const k = await db.kitchenTicket.create({
+      data: {
+        kotNo,
+        orderId: order.id,
+        outletId: outlet.id,
+        station,
+        status: "NEW",
+        printedCount: 1,
+        lines: {
+          create: ls.map((l) => {
+            const it = itemMap.get(l.itemId)!;
+            const note = [
+              l.variantName ? l.variantName : null,
+              ...l.addons.map((a) => `+ ${a.name}`),
+            ]
+              .filter(Boolean)
+              .join(" · ");
+            return { itemId: it.id, name: it.name, qty: l.qty, note: note || undefined };
+          }),
+        },
+      },
+    });
+    kotsCreated.push({ kotNo: k.kotNo, station });
+  }
+
+  await logActivity({
+    action: "CREATE",
+    entity: "KOT",
+    entityId: order.id,
+    summary: `Round ${roundIndex} KOT(s) sent for ${order.invoiceNo} — ${kotsCreated.length} new line(s)`,
+    outletId: outlet.id,
+  });
+
+  revalidatePath("/kds");
+  revalidatePath("/orders/live");
+  revalidatePath(`/orders/${order.id}`);
+  return { roundIndex, kots: kotsCreated };
+}
+
+/**
  * Send the first KOT for a held bill. Idempotent — server records
  * printedCount; the client uses this to lock the Send KOT button after first
  * press. Reprints go through `reprintKot` (with a mandatory reason).

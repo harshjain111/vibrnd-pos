@@ -48,6 +48,7 @@ import {
   listHeldBills,
   getAutoDiscount,
   reprintKot,
+  addRoundKot,
 } from "./actions";
 import Link from "next/link";
 import { lookupDiscount } from "@/app/menu/discounts/actions";
@@ -83,6 +84,8 @@ type CartLine = {
   unitPrice: number;
   /** when set, this line is being granted free as a membership benefit */
   membershipClaim?: { membershipId: string; benefitId: string };
+  /** Round number in which this line was punched to the kitchen. Undefined = not yet sent. */
+  sentInRound?: number;
 };
 
 type MembershipBenefit = {
@@ -184,7 +187,9 @@ export function BillingScreen({
   // can add more items or settle.
   const [stage, setStage] = React.useState<Stage>(resumed ? "menu" : "customer");
   const [pending, startTransition] = React.useTransition();
-  const resumedOrderId = resumed?.id ?? null;
+  // Mutable — first KOT creates the Order and we cache its id here so
+  // subsequent Round-N sends know which Order to append to.
+  const [resumedOrderId, setResumedOrderId] = React.useState<string | null>(resumed?.id ?? null);
   /** True once the kitchen has been notified (printedCount > 0). Locks the
    * Send KOT button — a separate Reprint button covers the anti-leakage flow. */
   const initialKotSent =
@@ -249,9 +254,14 @@ export function BillingScreen({
         variant: li.variantName ? { id: `v-${li.orderItemId}`, name: li.variantName, price: li.price } : undefined,
         addons,
         unitPrice: li.price,
+        sentInRound: 1, // existing lines were punched on the original KOT
       };
     });
   });
+  // Track which round is "next" — used to flip the button label to Round N.
+  const [currentRound, setCurrentRound] = React.useState<number>(
+    resumed?.kots?.length ? resumed.kots.length : 0
+  );
   const [pickerItem, setPickerItem] = React.useState<Item | null>(null);
 
   // ─── Stage 3: settle ──────────────────────────────────────────────────────
@@ -557,39 +567,76 @@ export function BillingScreen({
   const [kotSent, setKotSent] = React.useState<{ invoiceNo: string; reprintCount?: number } | null>(initialKotSent);
 
   // ─── KOT send / reprint (TASK 2 + audit improvement) ─────────────────────
-  // Idempotent — once `kotSent` is set the Send button is locked client-side
-  // AND the server's `sendKotForOrder` no-ops if printedCount > 0.
+  // First round → uses `holdOrder` (creates the Order + initial KitchenTicket).
+  // Subsequent rounds → uses `addRoundKot` which appends NEW lines to the
+  // existing Order and creates a fresh KitchenTicket. Lines that already went
+  // out are marked with `sentInRound` so the engine doesn't re-fire them.
+  const unsentCart = cart.filter((l) => !l.sentInRound);
   const sendKot = () => {
-    if (kotSent || cart.length === 0) return;
+    if (unsentCart.length === 0) return;
     startTransition(async () => {
       try {
-        const res = await holdOrder(commonOrderInput());
-        // Tell the kitchen — KDS push if enabled, local print otherwise.
-        if (kdsEnabled) {
-          fetch("/api/print/kot", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              orderId: res.id,
-              kotNo: res.invoiceNo,
-              station: "MAIN",
-              lines: linesPayload(),
-            }),
-          }).catch(() => {});
-        } else {
-          // Open a new tab to print the receipt-style KOT.
-          window.open(`/orders/kot/${res.id}/print`, "_blank");
+        // Round 1 — no order exists yet, holdOrder creates it.
+        if (!kotSent && !resumedOrderId) {
+          const res = await holdOrder(commonOrderInput());
+          if (kdsEnabled) {
+            fetch("/api/print/kot", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                orderId: res.id,
+                kotNo: res.invoiceNo,
+                station: "MAIN",
+                lines: linesPayload(),
+              }),
+            }).catch(() => {});
+          } else {
+            window.open(`/orders/kot/${res.id}/print`, "_blank");
+          }
+          setKotSent({ invoiceNo: res.invoiceNo });
+          // Mark every cart line as sent in round 1.
+          setCart((c) => c.map((l) => ({ ...l, sentInRound: 1 })));
+          setCurrentRound(1);
+          setResumedOrderId(res.id);
+          window.history.replaceState({}, "", `/billing?resume=${res.id}`);
+          toast({
+            variant: "success",
+            title: kdsEnabled ? "KOT sent to kitchen" : "KOT sent to printer",
+            description: `${res.invoiceNo} · add more items any time, then send another round.`,
+          });
+          return;
         }
-        setKotSent({ invoiceNo: res.invoiceNo });
+
+        // Subsequent rounds — call addRoundKot with the unsent lines only.
+        const orderId = resumedOrderId; // set on first send via history.replaceState
+        if (!orderId) throw new Error("Order id missing for round KOT.");
+        const newLines = unsentCart.map((l) => ({
+          itemId: l.item.id,
+          qty: l.qty,
+          unitPrice: l.unitPrice,
+          variantName: l.variant?.name,
+          addons: l.addons.map((a) => ({ name: a.name, priceDelta: a.priceDelta })),
+        }));
+        const res = await addRoundKot({ orderId, lines: newLines });
+        if (kdsEnabled) {
+          for (const k of res.kots) {
+            fetch("/api/print/kot", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ orderId, kotNo: k.kotNo, station: k.station, lines: newLines }),
+            }).catch(() => {});
+          }
+        } else {
+          window.open(`/orders/kot/${orderId}/print`, "_blank");
+        }
+        // Mark the just-sent lines with the new round.
+        setCart((c) => c.map((l) => (l.sentInRound ? l : { ...l, sentInRound: res.roundIndex })));
+        setCurrentRound(res.roundIndex);
         toast({
           variant: "success",
-          title: kdsEnabled ? "KOT sent to kitchen" : "KOT sent to printer",
-          description: `${res.invoiceNo} · button now locked. Use Reprint with a reason if you need another copy.`,
+          title: `Round ${res.roundIndex} KOT sent`,
+          description: `${unsentCart.length} new line(s) → ${res.kots.map((k) => k.kotNo).join(", ")}`,
         });
-        // Optional client URL update so refreshes keep the resumed view.
-        if (!resumedOrderId) {
-          window.history.replaceState({}, "", `/billing?resume=${res.id}`);
-        }
       } catch (e) {
         toast({ variant: "destructive", title: "Couldn't send KOT", description: String(e) });
       }
@@ -703,6 +750,8 @@ export function BillingScreen({
           onReprintKot={reprintKotAction}
           kdsEnabled={kdsEnabled}
           kotSent={kotSent}
+          unsentCount={unsentCart.length}
+          currentRound={currentRound}
           captainMode={captainMode}
           sub={sub}
           tax={tax}
@@ -1198,6 +1247,8 @@ function MenuStep(props: {
   onReprintKot: (reason: string) => Promise<void>;
   kdsEnabled: boolean;
   kotSent: { invoiceNo: string; reprintCount?: number } | null;
+  unsentCount: number;
+  currentRound: number;
   captainMode: boolean;
   pending: boolean;
   sub: number;
@@ -1230,6 +1281,8 @@ function MenuStep(props: {
     onReprintKot,
     kdsEnabled,
     kotSent,
+    unsentCount,
+    currentRound,
     captainMode,
     pending,
     sub,
@@ -1361,6 +1414,16 @@ function MenuStep(props: {
                         {isClaimed && (
                           <Badge variant="success" className="ml-1.5 text-[9px]">FREE · Member</Badge>
                         )}
+                        {l.sentInRound && (
+                          <Badge variant="outline" className="ml-1.5 text-[9px] border-emerald-400 text-emerald-700">
+                            ✓ R{l.sentInRound}
+                          </Badge>
+                        )}
+                        {!l.sentInRound && kotSent && (
+                          <Badge variant="outline" className="ml-1.5 text-[9px] border-amber-400 text-amber-700">
+                            NEW
+                          </Badge>
+                        )}
                       </div>
                       {l.addons.length > 0 && (
                         <div className="text-[11px] text-muted-foreground">
@@ -1425,25 +1488,30 @@ function MenuStep(props: {
             </div>
           )}
 
-          {/* Send KOT — primary action between Menu and Settle (audit TASK 2).
-              Once generated, the button locks. Reprint requires a separate
-              click + reason (idempotent + anti-leakage). */}
-          {!kotSent ? (
+          {/* KOT controls — primary action between Menu and Settle.
+              • If there are unsent lines → Send Round N KOT (Round 1 first time)
+              • If everything sent → "All items punched" disabled + Reprint
+              • Audit-trail safe: reprint requires a reason. */}
+          {unsentCount > 0 ? (
             <Button
               type="button"
               onClick={onSendKot}
-              disabled={cart.length === 0 || pending}
+              disabled={pending}
               className="w-full"
               size="lg"
             >
               <ChefHat className="h-4 w-4" />
-              {kdsEnabled ? "Send KOT to kitchen" : "Print KOT"}
+              {kotSent
+                ? `${kdsEnabled ? "Send" : "Print"} Round ${currentRound + 1} KOT (${unsentCount} item${unsentCount === 1 ? "" : "s"})`
+                : kdsEnabled
+                  ? "Send KOT to kitchen"
+                  : "Print KOT"}
             </Button>
           ) : (
             <div className="grid grid-cols-[1fr_auto] gap-2">
               <Button type="button" disabled variant="outline" size="lg" className="w-full">
                 <Check className="h-4 w-4 text-emerald-600" />
-                KOT generated
+                All items punched (Round {currentRound})
               </Button>
               <ReprintKotInlineButton
                 onConfirm={async (reason) => {
