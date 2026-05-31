@@ -38,6 +38,7 @@ model Outlet {
   tierGoldMult    Float    @default(2.0)   // earn multiplier at Gold
   storeOpen       Boolean  @default(true)  // master switch — closed gates online orders
   kdsEnabled      Boolean  @default(true)  // when false the POS prints KOTs locally instead of pushing to /kds
+  serviceChargePct Float   @default(10)    // default service charge % at Settle; set 0 to disable by default
   active          Boolean  @default(true)  // soft-delete
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -80,6 +81,8 @@ model Outlet {
   invSettings       InventorySetting[]
   reportNotifications ReportNotification[]
   rolePermissions   RolePermission[]
+  fixedAssets       FixedAsset[]
+  assetAudits       AssetAudit[]
 }
 
 model ActivityLog {
@@ -1153,4 +1156,61 @@ model RolePermission {
 
   @@unique([outletId, role, pageId])
   @@index([outletId])
+}
+
+// ─────────── Fixed Assets register + periodic audit ───────────
+// Captures non-purchasable items (tables, chairs, sofas, fans, fridges …) the
+// outlet owns. These don't flow through Purchase Orders — the owner just logs
+// what's there and then audits periodically. Variance between expected and
+// found quantity surfaces as an anti-theft signal.
+
+model FixedAsset {
+  id           String   @id @default(cuid())
+  name         String
+  category     String   // FURNITURE | KITCHEN | ELECTRONICS | DECOR | OTHER
+  location     String?  // e.g. "Hall A", "Kitchen", "Storeroom"
+  qty          Int      @default(1)
+  unitValue    Float    @default(0)  // ₹ per unit at acquisition (optional)
+  condition    String   @default("GOOD") // GOOD | FAIR | DAMAGED | DISCARDED
+  purchasedAt  DateTime?
+  notes        String?
+  active       Boolean  @default(true)
+  outletId     String
+  outlet       Outlet   @relation(fields: [outletId], references: [id])
+  auditLines   AssetAuditLine[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([outletId, category])
+  @@index([outletId, active])
+}
+
+model AssetAudit {
+  id           String   @id @default(cuid())
+  outletId     String
+  outlet       Outlet   @relation(fields: [outletId], references: [id])
+  auditedById  String?
+  auditedAt    DateTime @default(now())
+  /// Total lines with variance > 0 — surfaced as anti-theft signal.
+  varianceLines Int     @default(0)
+  notes        String?
+  lines        AssetAuditLine[]
+  createdAt    DateTime @default(now())
+
+  @@index([outletId, auditedAt])
+}
+
+model AssetAuditLine {
+  id              String      @id @default(cuid())
+  auditId         String
+  audit           AssetAudit  @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  assetId         String
+  asset           FixedAsset  @relation(fields: [assetId], references: [id])
+  expectedQty     Int
+  foundQty        Int
+  variance        Int         // foundQty - expectedQty (negative = missing)
+  conditionAfter  String?     // optional update during audit
+  note            String?
+
+  @@index([auditId])
 }

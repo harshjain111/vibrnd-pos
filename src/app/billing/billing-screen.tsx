@@ -137,6 +137,7 @@ export function BillingScreen({
   upiVpa = null,
   outletName = "",
   kdsEnabled = true,
+  serviceChargePct = 10,
   resumed = null,
 }: {
   categories: Category[];
@@ -155,6 +156,8 @@ export function BillingScreen({
   outletName?: string;
   /** When false, "Send KOT" becomes "Print KOT" (local printer instead of KDS push). */
   kdsEnabled?: boolean;
+  /** Default service-charge percentage. 0 = disabled. Cashier can toggle off on customer request. */
+  serviceChargePct?: number;
   /** When set, rehydrates from this held bill instead of starting fresh. */
   resumed?: {
     id: string;
@@ -273,6 +276,8 @@ export function BillingScreen({
   const [redeemPoints, setRedeemPoints] = React.useState<number>(0);
   const [tip, setTip] = React.useState<number>(0);
   const [autoDiscount, setAutoDiscount] = React.useState<{ code: string; name: string; amount: number } | null>(null);
+  /** Service charge toggle — default ON when the outlet has a non-zero %. */
+  const [serviceChargeOn, setServiceChargeOn] = React.useState<boolean>(serviceChargePct > 0);
 
   // Subtotal used by the auto-discount engine — computed inline so we don't
   // depend on `sub` (declared further below).
@@ -468,7 +473,13 @@ export function BillingScreen({
   const cappedRedeem = Math.min(redeemPoints, customerBalance);
   const redeemRupees = Math.round(cappedRedeem * loyaltyRedeemRupees);
   const totalDiscount = (discount || 0) + redeemRupees;
-  const grand = Math.max(0, Math.round(sub + tax - totalDiscount + (tip || 0)));
+  // Service charge: 10% (or outlet-configured) of sub, applied ON by default.
+  // Cashier can flip it off at Settle on customer request.
+  const serviceChargeAmt =
+    serviceChargeOn && serviceChargePct > 0
+      ? Math.round((sub * serviceChargePct) / 100)
+      : 0;
+  const grand = Math.max(0, Math.round(sub + tax - totalDiscount + serviceChargeAmt + (tip || 0)));
   const willEarn = customerPhone ? Math.round(Math.floor(grand / Math.max(1, loyaltyEarnPer)) * earnMult) : 0;
 
   // ─── Settle helpers ───────────────────────────────────────────────────────
@@ -788,6 +799,10 @@ export function BillingScreen({
           cappedRedeem={cappedRedeem}
           redeemRupees={redeemRupees}
           willEarn={willEarn}
+          serviceChargePct={serviceChargePct}
+          serviceChargeOn={serviceChargeOn}
+          setServiceChargeOn={setServiceChargeOn}
+          serviceChargeAmt={serviceChargeAmt}
           tip={tip}
           setTip={setTip}
           paymentMode={paymentMode}
@@ -1340,20 +1355,49 @@ function MenuStep(props: {
             const hasMods = it.variants.length > 0 || it.addons.length > 0;
             const minPrice = it.variants.length ? Math.min(...it.variants.map((v) => v.price)) : it.price;
             const benefitMatch = memberships.some((m) => m.benefits.some((b) => b.itemId === it.id));
+            // Find the simplest matching cart line for this item so the inline
+            // [-] / [+] controls can target it. Items with variants/addons may
+            // exist in multiple lines — the +/- on the tile drives the first
+            // matching line; the cart sidebar can still edit each variant
+            // separately.
+            const firstLineForThisItem = cart.find((l) => l.item.id === it.id);
             return (
-              <button
+              <div
                 key={it.id}
                 onClick={() => onTapItem(it)}
-                className={`relative text-left border rounded-lg p-3 transition-all ${
+                role="button"
+                tabIndex={0}
+                className={`relative text-left border rounded-lg p-3 transition-all cursor-pointer ${
                   inCart
                     ? "border-primary bg-primary/10 ring-2 ring-primary/30 shadow-sm"
                     : "bg-card hover:border-primary hover:shadow-sm hover:bg-accent/30"
                 }`}
               >
-                {inCart && (
-                  <span className="absolute -top-2 -right-2 h-6 min-w-6 px-1.5 rounded-full bg-primary text-primary-foreground text-xs font-bold grid place-items-center shadow">
-                    {qty}
-                  </span>
+                {/* Inline +/- counter when item is in cart — sticks out of the
+                    top-right of the tile so it never overlaps text. */}
+                {inCart && firstLineForThisItem && (
+                  <div
+                    className="absolute -top-3 -right-3 flex items-center gap-0 bg-primary text-primary-foreground rounded-full shadow-md border-2 border-background"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => decLine(firstLineForThisItem.key)}
+                      className="h-7 w-7 grid place-items-center hover:bg-primary/80 rounded-l-full"
+                      title="Decrease"
+                    >
+                      <Minus className="h-3 w-3" />
+                    </button>
+                    <span className="min-w-[1.75rem] text-center text-xs font-bold px-1">{qty}</span>
+                    <button
+                      type="button"
+                      onClick={() => incLine(firstLineForThisItem.key)}
+                      className="h-7 w-7 grid place-items-center hover:bg-primary/80 rounded-r-full"
+                      title="Increase"
+                    >
+                      <Plus className="h-3 w-3" />
+                    </button>
+                  </div>
                 )}
                 {benefitMatch && (
                   <span className="absolute -top-2 -left-2 h-5 w-5 rounded-full bg-emerald-600 text-white grid place-items-center shadow" title="Eligible for membership benefit">
@@ -1379,7 +1423,7 @@ function MenuStep(props: {
                     </span>
                   )}
                 </div>
-              </button>
+              </div>
             );
           })}
           {filtered.length === 0 && (
@@ -1687,6 +1731,10 @@ function SettleStep(props: {
   cappedRedeem: number;
   redeemRupees: number;
   willEarn: number;
+  serviceChargePct: number;
+  serviceChargeOn: boolean;
+  setServiceChargeOn: (v: boolean) => void;
+  serviceChargeAmt: number;
   tip: number;
   setTip: (n: number) => void;
   paymentMode: "CASH" | "CARD" | "UPI" | "ONLINE" | "DUE";
@@ -1726,6 +1774,10 @@ function SettleStep(props: {
     cappedRedeem,
     redeemRupees,
     willEarn,
+    serviceChargePct,
+    serviceChargeOn,
+    setServiceChargeOn,
+    serviceChargeAmt,
     tip,
     setTip,
     paymentMode,
@@ -1924,6 +1976,25 @@ function SettleStep(props: {
                 <span>Discount</span>
                 <span>−{inr(totalDiscount)}</span>
               </div>
+            )}
+            {/* Service charge — ON by default, click to toggle for this bill. */}
+            {serviceChargePct > 0 && (
+              <button
+                type="button"
+                onClick={() => setServiceChargeOn(!serviceChargeOn)}
+                className="w-full flex items-center justify-between hover:bg-accent/50 rounded px-1 -mx-1 py-0.5"
+                title={serviceChargeOn ? "Remove service charge on customer request" : "Re-apply service charge"}
+              >
+                <span className={`inline-flex items-center gap-1 ${serviceChargeOn ? "" : "line-through text-muted-foreground"}`}>
+                  Service charge ({serviceChargePct}%)
+                  {!serviceChargeOn && (
+                    <Badge variant="outline" className="text-[9px] ml-1">waived</Badge>
+                  )}
+                </span>
+                <span className={serviceChargeOn ? "" : "line-through text-muted-foreground"}>
+                  {serviceChargeOn ? inr(serviceChargeAmt) : inr(Math.round((sub * serviceChargePct) / 100))}
+                </span>
+              </button>
             )}
             {tip > 0 && <Row label="Tip" value={inr(tip)} />}
             <div className="flex items-center justify-between text-base font-semibold pt-1.5 border-t">

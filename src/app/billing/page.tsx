@@ -58,6 +58,7 @@ export default async function BillingPage({
       <BillingScreen
         captainMode={isCaptain}
         kdsEnabled={(outlet as any).kdsEnabled ?? true}
+        serviceChargePct={(outlet as any).serviceChargePct ?? 10}
         resumed={resumed}
         upiVpa={(outlet as any).upiVpa ?? null}
         outletName={outlet.name}

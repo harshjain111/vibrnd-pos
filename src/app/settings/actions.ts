@@ -71,9 +71,11 @@ export async function setTaxInclusive(fd: FormData) {
   const outlet = await db.outlet.findFirstOrThrow();
   const enabled = fd.get("taxInclusive") === "on";
   const kdsEnabled = fd.get("kdsEnabled") === "on";
+  const rawPct = Number(fd.get("serviceChargePct") ?? "");
+  const serviceChargePct = Number.isFinite(rawPct) && rawPct >= 0 && rawPct <= 30 ? rawPct : 10;
   await db.outlet.update({
     where: { id: outlet.id },
-    data: { taxInclusive: enabled, kdsEnabled },
+    data: { taxInclusive: enabled, kdsEnabled, serviceChargePct },
   });
   revalidatePath("/settings");
   revalidatePath("/billing");

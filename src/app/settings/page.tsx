@@ -182,6 +182,24 @@ export default async function SettingsPage() {
                     </div>
                     <input type="checkbox" name="taxInclusive" defaultChecked={outlet.taxInclusive} className="h-4 w-4" />
                   </label>
+                  <label className="flex items-center justify-between gap-3 pt-2 border-t">
+                    <div>
+                      <div>Default service charge %</div>
+                      <div className="text-xs text-muted-foreground">
+                        Applied on the cart subtotal at Settle. Cashier can waive on customer request.
+                        Set 0 to never apply.
+                      </div>
+                    </div>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      max="30"
+                      name="serviceChargePct"
+                      defaultValue={(outlet as any).serviceChargePct ?? 10}
+                      className="h-9 w-20 rounded-md border bg-background px-2 text-right text-sm"
+                    />
+                  </label>
                   <label className="flex items-center justify-between gap-3 cursor-pointer pt-2 border-t">
                     <div>
                       <div>Use Kitchen Display (KDS)</div>

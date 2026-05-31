@@ -26,6 +26,7 @@ import {
   UtensilsCrossed,
   Store,
   Ruler,
+  Sofa,
   Settings as SettingsIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -94,6 +95,16 @@ const GROUPS: Group[] = [
       { label: "Recipes", href: "/inventory/recipes" },
       { label: "Suppliers", href: "/inventory/suppliers" },
       { label: "Units", href: "/inventory/units" },
+    ],
+  },
+  {
+    id: "assets",
+    label: "Fixed Assets",
+    icon: Sofa,
+    items: [
+      { label: "Register", href: "/inventory/assets" },
+      { label: "Audits", href: "/inventory/assets/audits" },
+      { label: "New audit", href: "/inventory/assets/audits/new" },
     ],
   },
   {
