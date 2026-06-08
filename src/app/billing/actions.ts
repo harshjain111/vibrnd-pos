@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { nextInvoiceNo, inr } from "@/lib/utils";
+import { nextInvoiceNo, nextKotNo, inr } from "@/lib/utils";
 import { logActivity } from "@/lib/audit";
 import { moveStock } from "@/lib/stock";
 import { recordLoyalty, pointsEarned, redeemValue, tierFor, earnMultiplier } from "@/lib/loyalty";
@@ -133,8 +133,19 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
   const mult = earnMultiplier(tier, tierCfg);
   const earned = customerId ? Math.round(pointsEarned(grand, outlet.loyaltyEarnPer) * mult) : 0;
 
-  const count = await db.order.count({ where: { outletId: outlet.id } });
-  const invoiceNo = nextInvoiceNo(count + 1);
+  // Per-outlet sequence + collision retry — guards against two captains
+  // submitting at the same instant (rare but possible) and against legacy
+  // pre-namespace invoice numbers that may already occupy a slot.
+  let invoiceNo = "";
+  {
+    const count = await db.order.count({ where: { outletId: outlet.id } });
+    for (let attempt = 0; attempt < 5; attempt++) {
+      invoiceNo = nextInvoiceNo(count + 1 + attempt, outlet.code);
+      const clash = await db.order.findUnique({ where: { invoiceNo } });
+      if (!clash) break;
+    }
+    if (!invoiceNo) throw new Error("Could not allocate an invoice number");
+  }
 
   const order = await db.order.create({
     data: {
@@ -657,8 +668,14 @@ export async function addRoundKot(input: z.infer<typeof RoundKotInput>) {
   }
   const kotsCreated: { kotNo: string; station: string }[] = [];
   for (const [station, ls] of linesByStation) {
-    const kotCount = await db.kitchenTicket.count({ where: { outletId: outlet.id } });
-    const kotNo = `KOT-${String(kotCount + 1).padStart(6, "0")}-R${roundIndex}`;
+    let kotCount = await db.kitchenTicket.count({ where: { outletId: outlet.id } });
+    let kotNo = "";
+    for (let attempt = 0; attempt < 5; attempt++) {
+      kotNo = nextKotNo(kotCount + 1 + attempt, outlet.code, `R${roundIndex}`);
+      const clash = await db.kitchenTicket.findUnique({ where: { kotNo } });
+      if (!clash) break;
+    }
+    if (!kotNo) throw new Error("Could not allocate a KOT number");
     const k = await db.kitchenTicket.create({
       data: {
         kotNo,
@@ -731,8 +748,14 @@ export async function sendKotForOrder(orderId: string) {
     return { alreadySent: false as const, kotNo: o.kots[0].kotNo };
   }
   // Fallback — order exists but no KOT row yet. Create one.
-  const kotCount = await db.kitchenTicket.count({ where: { outletId: outlet.id } });
-  const kotNo = `KOT-${String(kotCount + 1).padStart(6, "0")}`;
+  let kotCount = await db.kitchenTicket.count({ where: { outletId: outlet.id } });
+  let kotNo = "";
+  for (let attempt = 0; attempt < 5; attempt++) {
+    kotNo = nextKotNo(kotCount + 1 + attempt, outlet.code);
+    const clash = await db.kitchenTicket.findUnique({ where: { kotNo } });
+    if (!clash) break;
+  }
+  if (!kotNo) throw new Error("Could not allocate a KOT number");
   const k = await db.kitchenTicket.create({
     data: {
       kotNo,
@@ -904,8 +927,16 @@ export async function holdOrder(input: z.infer<typeof HoldInput>): Promise<{ id:
     customerId = c.id;
   }
 
-  const count = await db.order.count({ where: { outletId: outlet.id } });
-  const invoiceNo = nextInvoiceNo(count + 1);
+  // Generate a per-outlet sequence; loop on the unlikely race collision so
+  // two captains hitting Send KOT simultaneously don't both fail.
+  let invoiceNo = "";
+  let count = await db.order.count({ where: { outletId: outlet.id } });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    invoiceNo = nextInvoiceNo(count + 1 + attempt, outlet.code);
+    const clash = await db.order.findUnique({ where: { invoiceNo } });
+    if (!clash) break;
+  }
+  if (!invoiceNo) throw new Error("Could not allocate an invoice number");
 
   const order = await db.order.create({
     data: {
@@ -954,9 +985,18 @@ export async function holdOrder(input: z.infer<typeof HoldInput>): Promise<{ id:
   let kotCount = await db.kitchenTicket.count({ where: { outletId: outlet.id } });
   for (const [station, ls] of linesByStation) {
     kotCount += 1;
+    // Loop on the rare clash with a legacy `KOT-000123` row from before
+    // outlet-scoped numbering landed.
+    let kotNo = "";
+    for (let attempt = 0; attempt < 5; attempt++) {
+      kotNo = nextKotNo(kotCount + attempt, outlet.code);
+      const clash = await db.kitchenTicket.findUnique({ where: { kotNo } });
+      if (!clash) break;
+    }
+    if (!kotNo) throw new Error("Could not allocate a KOT number");
     await db.kitchenTicket.create({
       data: {
-        kotNo: `KOT-${String(kotCount).padStart(6, "0")}`,
+        kotNo,
         orderId: order.id,
         outletId: outlet.id,
         station,
