@@ -1,5 +1,45 @@
 "use client";
 import * as React from "react";
+
+/**
+ * Trigger the browser's print dialog for a KOT WITHOUT navigating the
+ * current tab. We append a hidden iframe pointing at the print page; once
+ * it loads we call its `window.print()`. This keeps the captain on the
+ * Menu step so they can immediately add more items / send another round.
+ *
+ * Why not `window.open(url, "_blank")`? Browsers block popups opened from
+ * inside an async transition (a few ms after the user click), and when
+ * the popup is blocked they fall back to navigating the current tab —
+ * which is exactly the redirect-to-404 the user reported.
+ */
+function printKotInline(orderId: string) {
+  const id = `kot-print-${orderId}-${Date.now()}`;
+  const existing = document.getElementById(id);
+  if (existing) existing.remove();
+  const iframe = document.createElement("iframe");
+  iframe.id = id;
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "0";
+  iframe.style.height = "0";
+  iframe.style.border = "0";
+  iframe.style.opacity = "0";
+  iframe.src = `/orders/kot/${orderId}/print`;
+  iframe.onload = () => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } catch {
+      // Print dialog blocked / cross-origin — last-resort fallback.
+      window.open(`/orders/kot/${orderId}/print`, "_blank", "noopener");
+    }
+    // Tear down after a generous delay so the print dialog has time to read.
+    setTimeout(() => iframe.remove(), 60_000);
+  };
+  document.body.appendChild(iframe);
+}
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -602,7 +642,7 @@ export function BillingScreen({
               }),
             }).catch(() => {});
           } else {
-            window.open(`/orders/kot/${res.id}/print`, "_blank");
+            printKotInline(res.id);
           }
           setKotSent({ invoiceNo: res.invoiceNo });
           // Mark every cart line as sent in round 1.
@@ -638,7 +678,7 @@ export function BillingScreen({
             }).catch(() => {});
           }
         } else {
-          window.open(`/orders/kot/${orderId}/print`, "_blank");
+          printKotInline(orderId);
         }
         // Mark the just-sent lines with the new round.
         setCart((c) => c.map((l) => (l.sentInRound ? l : { ...l, sentInRound: res.roundIndex })));
@@ -666,7 +706,7 @@ export function BillingScreen({
       const r = await reprintKot(id, reason);
       setKotSent({ invoiceNo: r.kotNo, reprintCount: r.reprintCount });
       if (!kdsEnabled) {
-        window.open(`/orders/kot/${id}/print`, "_blank");
+        printKotInline(id);
       }
       toast({ variant: "success", title: "KOT re-printed", description: `Reason logged: ${reason}` });
     } catch (e) {

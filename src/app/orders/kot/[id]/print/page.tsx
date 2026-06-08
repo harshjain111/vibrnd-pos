@@ -11,10 +11,19 @@ export const dynamic = "force-dynamic";
 export default async function KotPrintPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const outlet = await getActiveOutlet();
-  const ticket = await db.kitchenTicket.findFirst({
+  // Accept either a KitchenTicket id OR an Order id — billing routes use the
+  // order id since that's what holdOrder returns. If neither matches, 404.
+  let ticket = await db.kitchenTicket.findFirst({
     where: { id, outletId: outlet.id },
     include: { lines: true, order: { include: { table: true, customer: true } } },
   });
+  if (!ticket) {
+    ticket = await db.kitchenTicket.findFirst({
+      where: { orderId: id, outletId: outlet.id },
+      include: { lines: true, order: { include: { table: true, customer: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+  }
   if (!ticket) return notFound();
 
   return (
