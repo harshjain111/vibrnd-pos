@@ -4,10 +4,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { Clock, ChefHat, CheckCheck, AlertTriangle } from "lucide-react";
+import { Clock, ChefHat, CheckCheck, AlertTriangle, Printer } from "lucide-react";
 import { Empty } from "@/components/ui/empty";
 import { AutoRefresh } from "./auto-refresh";
 import { AdvanceButton, CancelButton } from "./ticket-actions";
+import { KdsToggle } from "./kds-toggle";
 
 export const dynamic = "force-dynamic";
 
@@ -73,13 +74,43 @@ export default async function KdsPage({ searchParams }: { searchParams: Promise<
   const readyCount = allActive.filter((t) => t.status === "READY").length;
   const overdueCount = allActive.filter((t) => minutesAgo(t.createdAt) >= 15 && t.status !== "READY").length;
 
+  const kdsEnabled = (outlet as any).kdsEnabled ?? true;
+
   return (
     <div className="-mb-4 md:-mb-6">
       <PageHeader
         title="Kitchen Display"
-        description={`${tickets.length} active · ${station === "ALL" ? "all stations" : station.toLowerCase() + " station"}`}
-        actions={<AutoRefresh seconds={20} activeCount={tickets.length} />}
+        description={
+          kdsEnabled
+            ? `${tickets.length} active · ${station === "ALL" ? "all stations" : station.toLowerCase() + " station"}`
+            : "KDS is OFF — new KOTs are printing at the station, not routing here"
+        }
+        actions={
+          <>
+            <KdsToggle enabled={kdsEnabled} />
+            <AutoRefresh seconds={20} activeCount={tickets.length} />
+          </>
+        }
       />
+
+      {/* When KDS is off, show a prominent banner so it's impossible to miss
+          why the screen looks quiet. In-flight tickets still render below so
+          the kitchen can finish anything already in progress. */}
+      {!kdsEnabled && (
+        <div className="mb-3 rounded-lg border-2 border-rose-300 bg-rose-50 p-4 flex items-start gap-3">
+          <Printer className="h-5 w-5 text-rose-700 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <div className="font-semibold text-rose-900">
+              Print-only mode — new KOTs are not routing to this screen
+            </div>
+            <div className="text-sm text-rose-800 mt-0.5">
+              The POS is printing KOTs at the station instead. Existing tickets below stay until
+              you serve or cancel them. Click <strong>KDS OFF</strong> above to switch back when the
+              kitchen tablet is ready.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Bird's-eye KPI strip */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
