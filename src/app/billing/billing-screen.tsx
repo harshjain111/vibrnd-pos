@@ -1,44 +1,6 @@
 "use client";
 import * as React from "react";
 
-/**
- * Trigger the browser's print dialog for a KOT WITHOUT navigating the
- * current tab. We append a hidden iframe pointing at the print page; once
- * it loads we call its `window.print()`. This keeps the captain on the
- * Menu step so they can immediately add more items / send another round.
- *
- * Why not `window.open(url, "_blank")`? Browsers block popups opened from
- * inside an async transition (a few ms after the user click), and when
- * the popup is blocked they fall back to navigating the current tab —
- * which is exactly the redirect-to-404 the user reported.
- */
-function printKotInline(orderId: string) {
-  const id = `kot-print-${orderId}-${Date.now()}`;
-  const existing = document.getElementById(id);
-  if (existing) existing.remove();
-  const iframe = document.createElement("iframe");
-  iframe.id = id;
-  iframe.style.position = "fixed";
-  iframe.style.right = "0";
-  iframe.style.bottom = "0";
-  iframe.style.width = "0";
-  iframe.style.height = "0";
-  iframe.style.border = "0";
-  iframe.style.opacity = "0";
-  iframe.src = `/orders/kot/${orderId}/print`;
-  iframe.onload = () => {
-    try {
-      iframe.contentWindow?.focus();
-      iframe.contentWindow?.print();
-    } catch {
-      // Print dialog blocked / cross-origin — last-resort fallback.
-      window.open(`/orders/kot/${orderId}/print`, "_blank", "noopener");
-    }
-    // Tear down after a generous delay so the print dialog has time to read.
-    setTimeout(() => iframe.remove(), 60_000);
-  };
-  document.body.appendChild(iframe);
-}
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -630,20 +592,21 @@ export function BillingScreen({
         // Round 1 — no order exists yet, holdOrder creates it.
         if (!kotSent && !resumedOrderId) {
           const res = await holdOrder(commonOrderInput());
-          if (kdsEnabled) {
-            fetch("/api/print/kot", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                orderId: res.id,
-                kotNo: res.invoiceNo,
-                station: "MAIN",
-                lines: linesPayload(),
-              }),
-            }).catch(() => {});
-          } else {
-            printKotInline(res.id);
-          }
+          // Notify the local print-agent (no-op stub today, real printer
+          // hook tomorrow). No UI redirect / preview either way — the
+          // captain stays on this page and can click "View KOT" in the
+          // success banner below if they want to see the receipt.
+          fetch("/api/print/kot", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              orderId: res.id,
+              kotNo: res.invoiceNo,
+              station: "MAIN",
+              lines: linesPayload(),
+              auto: kdsEnabled ? "kds" : "print",
+            }),
+          }).catch(() => {});
           setKotSent({ invoiceNo: res.invoiceNo });
           // Mark every cart line as sent in round 1.
           setCart((c) => c.map((l) => ({ ...l, sentInRound: 1 })));
@@ -669,16 +632,20 @@ export function BillingScreen({
           addons: l.addons.map((a) => ({ name: a.name, priceDelta: a.priceDelta })),
         }));
         const res = await addRoundKot({ orderId, lines: newLines });
-        if (kdsEnabled) {
-          for (const k of res.kots) {
-            fetch("/api/print/kot", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ orderId, kotNo: k.kotNo, station: k.station, lines: newLines }),
-            }).catch(() => {});
-          }
-        } else {
-          printKotInline(orderId);
+        // Fire-and-forget print-agent hook for every new KOT in this round.
+        // Same behaviour for KDS-on or print-only mode — no UI redirect.
+        for (const k of res.kots) {
+          fetch("/api/print/kot", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              orderId,
+              kotNo: k.kotNo,
+              station: k.station,
+              lines: newLines,
+              auto: kdsEnabled ? "kds" : "print",
+            }),
+          }).catch(() => {});
         }
         // Mark the just-sent lines with the new round.
         setCart((c) => c.map((l) => (l.sentInRound ? l : { ...l, sentInRound: res.roundIndex })));
@@ -705,9 +672,7 @@ export function BillingScreen({
     try {
       const r = await reprintKot(id, reason);
       setKotSent({ invoiceNo: r.kotNo, reprintCount: r.reprintCount });
-      if (!kdsEnabled) {
-        printKotInline(id);
-      }
+      // No preview popup — user can click "View KOT" in the banner if needed.
       toast({ variant: "success", title: "KOT re-printed", description: `Reason logged: ${reason}` });
     } catch (e) {
       toast({ variant: "destructive", title: "Reprint failed", description: String(e) });
@@ -801,6 +766,7 @@ export function BillingScreen({
           onReprintKot={reprintKotAction}
           kdsEnabled={kdsEnabled}
           kotSent={kotSent}
+          resumedOrderId={resumedOrderId}
           unsentCount={unsentCart.length}
           currentRound={currentRound}
           captainMode={captainMode}
@@ -1302,6 +1268,8 @@ function MenuStep(props: {
   onReprintKot: (reason: string) => Promise<void>;
   kdsEnabled: boolean;
   kotSent: { invoiceNo: string; reprintCount?: number } | null;
+  /** Order id once the first round of KOT has been sent — powers the optional "View KOT" link. */
+  resumedOrderId: string | null;
   unsentCount: number;
   currentRound: number;
   captainMode: boolean;
@@ -1336,6 +1304,7 @@ function MenuStep(props: {
     onReprintKot,
     kdsEnabled,
     kotSent,
+    resumedOrderId,
     unsentCount,
     currentRound,
     captainMode,
@@ -1559,11 +1528,26 @@ function MenuStep(props: {
           {/* KOT-sent banner — appears after the kitchen receives the order. */}
           {kotSent && (
             <div className="rounded-md border border-emerald-300 bg-emerald-50/70 p-2.5 text-xs text-emerald-900">
-              <div className="font-semibold inline-flex items-center gap-1.5">
-                <Check className="h-3.5 w-3.5" />
-                KOT generated · {kotSent.invoiceNo}
-                {typeof kotSent.reprintCount === "number" && kotSent.reprintCount > 0 && (
-                  <span className="ml-1 text-amber-700">({kotSent.reprintCount}× re-printed)</span>
+              <div className="flex items-start justify-between gap-2">
+                <div className="font-semibold inline-flex items-center gap-1.5">
+                  <Check className="h-3.5 w-3.5" />
+                  KOT generated · {kotSent.invoiceNo}
+                  {typeof kotSent.reprintCount === "number" && kotSent.reprintCount > 0 && (
+                    <span className="ml-1 text-amber-700">({kotSent.reprintCount}× re-printed)</span>
+                  )}
+                </div>
+                {/* Optional preview — real <a> tag with target="_blank" so the
+                    browser treats it as a user-initiated navigation and never
+                    redirects this tab. Only renders if we have an order id. */}
+                {resumedOrderId && (
+                  <a
+                    href={`/orders/kot/${resumedOrderId}/print`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] underline-offset-2 hover:underline text-emerald-800 shrink-0"
+                  >
+                    View KOT
+                  </a>
                 )}
               </div>
               <div className="text-emerald-800/80 mt-0.5">
