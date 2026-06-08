@@ -1,32 +1,29 @@
 /**
- * Demo data seed — idempotent. Run with `npm run db:demo`.
+ * Demo data seed — idempotent, multi-outlet safe.
+ * Run with `npm run db:demo` or `npm run db:demo -- <OUTLET_CODE>`.
  *
- * Populates every module with realistic test data so the user can click through
- * the app and see populated screens:
- *   • Customers + loyalty wallets + tags + allergies + birthdays
- *   • Menu (categories + items + variants + addons) — extends the base seed
- *   • Raw materials + suppliers + a sample purchase
- *   • Settled orders across the last 14 days with KOTs + items + payments
- *   • Live (RUNNING) orders so KDS + Live Orders aren't empty
- *   • Online orders from Swiggy / Zomato
- *   • Held bills
- *   • Cash drawer entries (opening + sales + expenses)
- *   • Expenses (mix of approved + pending)
- *   • Discounts + gift cards + memberships
- *   • Feedback (mix of resolved + open)
- *   • Tasks (open + overdue + done)
- *   • Notifications (low stock + online order)
- *   • Fixed assets register + a past audit with variance
+ * • Targets the FIRST active outlet (so data lands where you're actually
+ *   browsing). Pass a code to override: `npm run db:demo -- 23456`.
+ * • All stable ids are namespaced by outlet code so re-seeding into a
+ *   different outlet never collides.
+ * • Uses DIRECT_URL (port 5432) instead of the pgbouncer-pooled DATABASE_URL
+ *   (which caps at connection_limit=1) so bulk inserts aren't throttled.
+ * • Bulk inserts via createMany — ~200 orders + 600 items + 200 payments
+ *   land in ~3 round-trips total.
  *
- * Safe to re-run — uses upserts on deterministic IDs and skips creating
- * orders if more than 200 already exist (to avoid runaway growth on repeat).
+ * Populates: 5 users (one per role), 10 tables, 6 categories / 20 items
+ * (with variants + addons), 6 customers (loyalty + allergies + birthdays),
+ * 3 suppliers, 10 raw materials (incl. low/critical stock), 3 discounts,
+ * 14 days of settled orders (POS + Swiggy + Zomato), 3 live RUNNING orders
+ * with KOTs, 2 incoming online orders, cash drawer entries, 8 expenses,
+ * 3 gift cards, membership plan + 2 active memberships, 5 feedback, 4
+ * tasks, low-stock + online-order notifications, 30 fixed assets across
+ * 5 categories, 1 past audit with 3 variance lines (anti-theft demo).
  */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
-// Use the DIRECT_URL (port 5432, no pgbouncer pooling) — the pooled URL caps
-// at connection_limit=1 which throttles bulk inserts to a crawl. Fall back
-// to DATABASE_URL if DIRECT_URL is unset.
+// Use DIRECT_URL (no pgbouncer pooling cap) so bulk inserts aren't throttled.
 const seedUrl = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
 const db = new PrismaClient({ datasources: { db: { url: seedUrl } } });
 
@@ -46,42 +43,49 @@ function daysAgo(n: number, hour = 12, min = 0) {
 async function main() {
   console.log("─── Demo seed starting ───");
 
-  // ── 1. Outlet (reuse base) ─────────────────────────────────────────────
-  const outlet = await db.outlet.upsert({
-    where: { code: "SMOKZY-01" },
-    update: {},
-    create: {
-      name: "Smokzy",
-      code: "SMOKZY-01",
-      address: "MG Road, Bangalore",
-      phone: "+91 90000 00000",
-      email: "smokzy@example.com",
-      gstin: "29ABCDE1234F1Z5",
-      fssai: "10012345000123",
-      upiVpa: "smokzy@hdfcbank",
-    },
-  });
-  console.log(`✓ outlet ${outlet.name}`);
+  // ── 1. Pick the target outlet ─────────────────────────────────────────
+  const overrideCode = process.argv[2];
+  let outlet = overrideCode
+    ? await db.outlet.findUnique({ where: { code: overrideCode } })
+    : await db.outlet.findFirst({ where: { active: true }, orderBy: { createdAt: "asc" } });
+  if (!outlet) {
+    outlet = await db.outlet.upsert({
+      where: { code: "SMOKZY-01" },
+      update: { active: true },
+      create: {
+        name: "Smokzy",
+        code: "SMOKZY-01",
+        address: "MG Road, Bangalore",
+        phone: "+91 90000 00000",
+        email: "smokzy@example.com",
+        gstin: "29ABCDE1234F1Z5",
+        fssai: "10012345000123",
+        upiVpa: "smokzy@hdfcbank",
+        active: true,
+      },
+    });
+  }
+  // Namespace stable ids by outlet so seeding multiple outlets doesn't collide.
+  const NS = outlet.code.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const nid = (s: string) => `${NS}-${s}`;
+  console.log(`✓ outlet ${outlet.name} (${outlet.code}) — namespace "${NS}"`);
 
   // ── 2. Users for each role (so RBAC can be tested) ─────────────────────
   const passHash = await bcrypt.hash("password123", 10);
   const userSpecs: { id: string; name: string; email: string; role: string }[] = [
-    { id: "u-owner", name: "Vignesh Chettiar", email: "owner@smokzy.com", role: "OWNER" },
-    { id: "u-manager", name: "Anand Manager", email: "manager@smokzy.com", role: "MANAGER" },
-    { id: "u-biller", name: "Suresh Biller", email: "biller@smokzy.com", role: "BILLER" },
-    { id: "u-captain1", name: "Karthik Captain", email: "captain@smokzy.com", role: "CAPTAIN" },
-    { id: "u-captain2", name: "Priya Captain", email: "captain2@smokzy.com", role: "CAPTAIN" },
+    { id: nid("u-owner"), name: "Vignesh Chettiar", email: "owner@smokzy.com", role: "OWNER" },
+    { id: nid("u-manager"), name: "Anand Manager", email: "manager@smokzy.com", role: "MANAGER" },
+    { id: nid("u-biller"), name: "Suresh Biller", email: "biller@smokzy.com", role: "BILLER" },
+    { id: nid("u-captain1"), name: "Karthik Captain", email: "captain@smokzy.com", role: "CAPTAIN" },
+    { id: nid("u-captain2"), name: "Priya Captain", email: "captain2@smokzy.com", role: "CAPTAIN" },
   ];
   for (const u of userSpecs) {
-    // Upsert by email (the unique key); keep id stable so cross-refs (createdById etc.) work.
     const existing = await db.user.findUnique({ where: { email: u.email } });
     if (existing) {
       await db.user.update({
         where: { id: existing.id },
         data: { name: u.name, role: u.role, outletId: outlet.id, active: true },
       });
-      // Patch the spec id so downstream relations use the existing user id.
-      u.id = existing.id;
     } else {
       await db.user.create({
         data: { ...u, passwordHash: passHash, outletId: outlet.id, active: true },
@@ -90,7 +94,6 @@ async function main() {
   }
   console.log(`✓ users (${userSpecs.length})`);
 
-  // Look up real DB ids for users — upsert-by-email may have reassigned them.
   const userByEmail = new Map(
     (await db.user.findMany({ where: { email: { in: userSpecs.map((u) => u.email) } } }))
       .map((u) => [u.email, u.id] as const)
@@ -102,18 +105,18 @@ async function main() {
   const U_CAPTAIN1 = uid("captain@smokzy.com");
   const U_CAPTAIN2 = uid("captain2@smokzy.com");
 
-  // ── 3. Tables (10 across 2 areas) ──────────────────────────────────────
+  // ── 3. Tables ──────────────────────────────────────────────────────────
   const tableSpecs = [
-    { id: "tbl-a1", name: "A1", area: "Hall A", capacity: 2 },
-    { id: "tbl-a2", name: "A2", area: "Hall A", capacity: 4 },
-    { id: "tbl-a3", name: "A3", area: "Hall A", capacity: 4 },
-    { id: "tbl-a4", name: "A4", area: "Hall A", capacity: 6 },
-    { id: "tbl-b1", name: "B1", area: "Hall B", capacity: 4 },
-    { id: "tbl-b2", name: "B2", area: "Hall B", capacity: 4 },
-    { id: "tbl-b3", name: "B3", area: "Hall B", capacity: 6 },
-    { id: "tbl-p1", name: "P1", area: "Patio", capacity: 4 },
-    { id: "tbl-p2", name: "P2", area: "Patio", capacity: 4 },
-    { id: "tbl-p3", name: "P3", area: "Patio", capacity: 2 },
+    { id: nid("tbl-a1"), name: "A1", area: "Hall A", capacity: 2 },
+    { id: nid("tbl-a2"), name: "A2", area: "Hall A", capacity: 4 },
+    { id: nid("tbl-a3"), name: "A3", area: "Hall A", capacity: 4 },
+    { id: nid("tbl-a4"), name: "A4", area: "Hall A", capacity: 6 },
+    { id: nid("tbl-b1"), name: "B1", area: "Hall B", capacity: 4 },
+    { id: nid("tbl-b2"), name: "B2", area: "Hall B", capacity: 4 },
+    { id: nid("tbl-b3"), name: "B3", area: "Hall B", capacity: 6 },
+    { id: nid("tbl-p1"), name: "P1", area: "Patio", capacity: 4 },
+    { id: nid("tbl-p2"), name: "P2", area: "Patio", capacity: 4 },
+    { id: nid("tbl-p3"), name: "P3", area: "Patio", capacity: 2 },
   ];
   for (const t of tableSpecs) {
     await db.diningTable.upsert({
@@ -124,14 +127,14 @@ async function main() {
   }
   console.log(`✓ tables (${tableSpecs.length})`);
 
-  // ── 4. Categories + items (extends base) ───────────────────────────────
+  // ── 4. Categories + items ──────────────────────────────────────────────
   const catSpecs = [
-    { id: "cat-starters", name: "Starters", rank: 1 },
-    { id: "cat-main-course", name: "Main Course", rank: 2 },
-    { id: "cat-breads", name: "Breads", rank: 3 },
-    { id: "cat-rice-biryani", name: "Rice & Biryani", rank: 4 },
-    { id: "cat-beverages", name: "Beverages", rank: 5 },
-    { id: "cat-desserts", name: "Desserts", rank: 6 },
+    { id: nid("cat-starters"), name: "Starters", rank: 1 },
+    { id: nid("cat-main-course"), name: "Main Course", rank: 2 },
+    { id: nid("cat-breads"), name: "Breads", rank: 3 },
+    { id: nid("cat-rice-biryani"), name: "Rice & Biryani", rank: 4 },
+    { id: nid("cat-beverages"), name: "Beverages", rank: 5 },
+    { id: nid("cat-desserts"), name: "Desserts", rank: 6 },
   ];
   for (const c of catSpecs) {
     await db.category.upsert({
@@ -142,32 +145,26 @@ async function main() {
   }
 
   const itemSpecs = [
-    // Starters
-    { id: "item-paneer-tikka", name: "Paneer Tikka", price: 280, taxRate: 5, categoryId: "cat-starters", isVeg: true },
-    { id: "item-chicken-65", name: "Chicken 65", price: 320, taxRate: 5, categoryId: "cat-starters", isVeg: false },
-    { id: "item-veg-manchurian", name: "Veg Manchurian", price: 220, taxRate: 5, categoryId: "cat-starters", isVeg: true },
-    { id: "item-tandoori-chicken", name: "Tandoori Chicken (Half)", price: 380, taxRate: 5, categoryId: "cat-starters", isVeg: false },
-    // Main course
-    { id: "item-butter-chicken", name: "Butter Chicken", price: 380, taxRate: 5, categoryId: "cat-main-course", isVeg: false },
-    { id: "item-paneer-butter-masala", name: "Paneer Butter Masala", price: 320, taxRate: 5, categoryId: "cat-main-course", isVeg: true },
-    { id: "item-dal-makhani", name: "Dal Makhani", price: 240, taxRate: 5, categoryId: "cat-main-course", isVeg: true },
-    { id: "item-kadhai-paneer", name: "Kadhai Paneer", price: 300, taxRate: 5, categoryId: "cat-main-course", isVeg: true },
-    // Rice & Biryani
-    { id: "item-veg-biryani", name: "Veg Biryani", price: 260, taxRate: 5, categoryId: "cat-rice-biryani", isVeg: true },
-    { id: "item-chicken-biryani", name: "Chicken Biryani", price: 320, taxRate: 5, categoryId: "cat-rice-biryani", isVeg: false },
-    { id: "item-jeera-rice", name: "Jeera Rice", price: 180, taxRate: 5, categoryId: "cat-rice-biryani", isVeg: true },
-    // Breads
-    { id: "item-butter-naan", name: "Butter Naan", price: 60, taxRate: 5, categoryId: "cat-breads", isVeg: true },
-    { id: "item-garlic-naan", name: "Garlic Naan", price: 70, taxRate: 5, categoryId: "cat-breads", isVeg: true },
-    { id: "item-tandoori-roti", name: "Tandoori Roti", price: 40, taxRate: 5, categoryId: "cat-breads", isVeg: true },
-    // Beverages
-    { id: "item-masala-chai", name: "Masala Chai", price: 50, taxRate: 5, categoryId: "cat-beverages", isVeg: true },
-    { id: "item-fresh-lime-soda", name: "Fresh Lime Soda", price: 80, taxRate: 5, categoryId: "cat-beverages", isVeg: true },
-    { id: "item-cold-coffee", name: "Cold Coffee", price: 140, taxRate: 18, categoryId: "cat-beverages", isVeg: true },
-    { id: "item-mango-lassi", name: "Mango Lassi", price: 120, taxRate: 5, categoryId: "cat-beverages", isVeg: true },
-    // Desserts
-    { id: "item-gulab-jamun", name: "Gulab Jamun (2 pc)", price: 90, taxRate: 5, categoryId: "cat-desserts", isVeg: true },
-    { id: "item-ras-malai", name: "Ras Malai", price: 120, taxRate: 5, categoryId: "cat-desserts", isVeg: true },
+    { id: nid("item-paneer-tikka"), name: "Paneer Tikka", price: 280, taxRate: 5, categoryId: nid("cat-starters"), isVeg: true },
+    { id: nid("item-chicken-65"), name: "Chicken 65", price: 320, taxRate: 5, categoryId: nid("cat-starters"), isVeg: false },
+    { id: nid("item-veg-manchurian"), name: "Veg Manchurian", price: 220, taxRate: 5, categoryId: nid("cat-starters"), isVeg: true },
+    { id: nid("item-tandoori-chicken"), name: "Tandoori Chicken (Half)", price: 380, taxRate: 5, categoryId: nid("cat-starters"), isVeg: false },
+    { id: nid("item-butter-chicken"), name: "Butter Chicken", price: 380, taxRate: 5, categoryId: nid("cat-main-course"), isVeg: false },
+    { id: nid("item-paneer-butter-masala"), name: "Paneer Butter Masala", price: 320, taxRate: 5, categoryId: nid("cat-main-course"), isVeg: true },
+    { id: nid("item-dal-makhani"), name: "Dal Makhani", price: 240, taxRate: 5, categoryId: nid("cat-main-course"), isVeg: true },
+    { id: nid("item-kadhai-paneer"), name: "Kadhai Paneer", price: 300, taxRate: 5, categoryId: nid("cat-main-course"), isVeg: true },
+    { id: nid("item-veg-biryani"), name: "Veg Biryani", price: 260, taxRate: 5, categoryId: nid("cat-rice-biryani"), isVeg: true },
+    { id: nid("item-chicken-biryani"), name: "Chicken Biryani", price: 320, taxRate: 5, categoryId: nid("cat-rice-biryani"), isVeg: false },
+    { id: nid("item-jeera-rice"), name: "Jeera Rice", price: 180, taxRate: 5, categoryId: nid("cat-rice-biryani"), isVeg: true },
+    { id: nid("item-butter-naan"), name: "Butter Naan", price: 60, taxRate: 5, categoryId: nid("cat-breads"), isVeg: true },
+    { id: nid("item-garlic-naan"), name: "Garlic Naan", price: 70, taxRate: 5, categoryId: nid("cat-breads"), isVeg: true },
+    { id: nid("item-tandoori-roti"), name: "Tandoori Roti", price: 40, taxRate: 5, categoryId: nid("cat-breads"), isVeg: true },
+    { id: nid("item-masala-chai"), name: "Masala Chai", price: 50, taxRate: 5, categoryId: nid("cat-beverages"), isVeg: true },
+    { id: nid("item-fresh-lime-soda"), name: "Fresh Lime Soda", price: 80, taxRate: 5, categoryId: nid("cat-beverages"), isVeg: true },
+    { id: nid("item-cold-coffee"), name: "Cold Coffee", price: 140, taxRate: 18, categoryId: nid("cat-beverages"), isVeg: true },
+    { id: nid("item-mango-lassi"), name: "Mango Lassi", price: 120, taxRate: 5, categoryId: nid("cat-beverages"), isVeg: true },
+    { id: nid("item-gulab-jamun"), name: "Gulab Jamun (2 pc)", price: 90, taxRate: 5, categoryId: nid("cat-desserts"), isVeg: true },
+    { id: nid("item-ras-malai"), name: "Ras Malai", price: 120, taxRate: 5, categoryId: nid("cat-desserts"), isVeg: true },
   ];
   for (const i of itemSpecs) {
     await db.item.upsert({
@@ -178,11 +175,10 @@ async function main() {
   }
   console.log(`✓ menu: ${catSpecs.length} cats / ${itemSpecs.length} items`);
 
-  // Variants on biryani + tandoori chicken (absolute price)
   const variantSpecs = [
-    { id: "var-biryani-half", itemId: "item-chicken-biryani", name: "Half", price: 240 },
-    { id: "var-biryani-full", itemId: "item-chicken-biryani", name: "Full", price: 320 },
-    { id: "var-tandoori-full", itemId: "item-tandoori-chicken", name: "Full", price: 700 },
+    { id: nid("var-biryani-half"), itemId: nid("item-chicken-biryani"), name: "Half", price: 240 },
+    { id: nid("var-biryani-full"), itemId: nid("item-chicken-biryani"), name: "Full", price: 320 },
+    { id: nid("var-tandoori-full"), itemId: nid("item-tandoori-chicken"), name: "Full", price: 700 },
   ];
   for (const v of variantSpecs) {
     await db.itemVariant.upsert({
@@ -192,8 +188,8 @@ async function main() {
     });
   }
   const addonSpecs = [
-    { id: "addon-extra-cheese", itemId: "item-paneer-butter-masala", name: "Extra Cheese", priceDelta: 40 },
-    { id: "addon-extra-raita", itemId: "item-chicken-biryani", name: "Extra Raita", priceDelta: 25 },
+    { id: nid("addon-extra-cheese"), itemId: nid("item-paneer-butter-masala"), name: "Extra Cheese", priceDelta: 40 },
+    { id: nid("addon-extra-raita"), itemId: nid("item-chicken-biryani"), name: "Extra Raita", priceDelta: 25 },
   ];
   for (const a of addonSpecs) {
     await db.addon.upsert({
@@ -203,71 +199,21 @@ async function main() {
     });
   }
 
-  // ── 5. Customers with loyalty + profile fields ─────────────────────────
+  // ── 5. Customers ───────────────────────────────────────────────────────
   const customerSpecs = [
-    {
-      id: "cust-rahul",
-      name: "Rahul Sharma",
-      phone: "+919812345670",
-      email: "rahul@example.com",
-      tags: "VIP,REGULAR",
-      allergies: "Peanuts",
-      birthday: new Date("1990-06-15"),
-      loyaltyPoints: 420,
-    },
-    {
-      id: "cust-priya",
-      name: "Priya Iyer",
-      phone: "+919812345671",
-      email: "priya@example.com",
-      tags: "REGULAR",
-      birthday: new Date("1988-11-23"),
-      anniversary: new Date("2015-02-14"),
-      loyaltyPoints: 180,
-    },
-    {
-      id: "cust-akash",
-      name: "Akash Patel",
-      phone: "+919812345672",
-      loyaltyPoints: 60,
-    },
-    {
-      id: "cust-neha",
-      name: "Neha Gupta",
-      phone: "+919812345673",
-      tags: "VIP,GOLD",
-      allergies: "Lactose intolerant",
-      birthday: new Date("1992-03-08"),
-      loyaltyPoints: 2150,
-    },
-    {
-      id: "cust-arjun",
-      name: "Arjun Reddy",
-      phone: "+919812345674",
-      email: "arjun.r@example.com",
-      tags: "REGULAR",
-      loyaltyPoints: 95,
-    },
-    {
-      id: "cust-meera",
-      name: "Meera Kapoor",
-      phone: "+919812345675",
-      tags: "SILVER",
-      birthday: new Date("1985-09-30"),
-      loyaltyPoints: 720,
-    },
+    { id: nid("cust-rahul"), name: "Rahul Sharma", phone: "+919812345670", email: "rahul@example.com", tags: "VIP,REGULAR", allergies: "Peanuts", birthday: new Date("1990-06-15"), loyaltyPoints: 420 },
+    { id: nid("cust-priya"), name: "Priya Iyer", phone: "+919812345671", email: "priya@example.com", tags: "REGULAR", birthday: new Date("1988-11-23"), anniversary: new Date("2015-02-14"), loyaltyPoints: 180 },
+    { id: nid("cust-akash"), name: "Akash Patel", phone: "+919812345672", loyaltyPoints: 60 },
+    { id: nid("cust-neha"), name: "Neha Gupta", phone: "+919812345673", tags: "VIP,GOLD", allergies: "Lactose intolerant", birthday: new Date("1992-03-08"), loyaltyPoints: 2150 },
+    { id: nid("cust-arjun"), name: "Arjun Reddy", phone: "+919812345674", email: "arjun.r@example.com", tags: "REGULAR", loyaltyPoints: 95 },
+    { id: nid("cust-meera"), name: "Meera Kapoor", phone: "+919812345675", tags: "SILVER", birthday: new Date("1985-09-30"), loyaltyPoints: 720 },
   ];
   for (const c of customerSpecs) {
     await db.customer.upsert({
       where: { id: c.id },
       update: {
-        name: c.name,
-        phone: c.phone,
-        email: c.email,
-        tags: c.tags,
-        allergies: c.allergies,
-        birthday: c.birthday,
-        anniversary: c.anniversary,
+        name: c.name, phone: c.phone, email: c.email, tags: c.tags,
+        allergies: c.allergies, birthday: c.birthday, anniversary: c.anniversary,
         loyaltyPoints: c.loyaltyPoints,
       },
       create: { ...c, outletId: outlet.id },
@@ -275,49 +221,49 @@ async function main() {
   }
   console.log(`✓ customers (${customerSpecs.length})`);
 
-  // ── 6. Suppliers + raw materials + a sample purchase ───────────────────
+  // ── 6. Suppliers + raw materials ───────────────────────────────────────
   const suppliers = [
-    { id: "sup-bigbasket", name: "BigBasket Foods Pvt Ltd", phone: "+918012345678", gstin: "29SUPPL1234A1Z5" },
-    { id: "sup-fresh-veg", name: "Fresh Veg Market", phone: "+918012345679" },
-    { id: "sup-poultry", name: "Sunrise Poultry", phone: "+918012345680" },
+    { id: nid("sup-bigbasket"), name: "BigBasket Foods Pvt Ltd", phone: "+918012345678", gstin: "29SUPPL1234A1Z5" },
+    { id: nid("sup-fresh-veg"), name: "Fresh Veg Market", phone: "+918012345679" },
+    { id: nid("sup-poultry"), name: "Sunrise Poultry", phone: "+918012345680" },
   ];
   for (const s of suppliers) {
-    await db.supplier.upsert({ where: { id: s.id }, update: { name: s.name, phone: s.phone, gstin: s.gstin ?? null }, create: s });
+    await db.supplier.upsert({
+      where: { id: s.id },
+      update: { name: s.name, phone: s.phone, gstin: s.gstin ?? null },
+      create: s,
+    });
   }
 
   const rmSpecs = [
-    { id: "rm-paneer", name: "Paneer", unit: "kg", parLevel: 5, minLevel: 1, currentQty: 8, avgCost: 320 },
-    { id: "rm-chicken-breast", name: "Chicken Breast", unit: "kg", parLevel: 10, minLevel: 2, currentQty: 12, avgCost: 280 },
-    { id: "rm-basmati-rice", name: "Basmati Rice", unit: "kg", parLevel: 25, minLevel: 5, currentQty: 30, avgCost: 90 },
-    { id: "rm-onion", name: "Onion", unit: "kg", parLevel: 20, minLevel: 5, currentQty: 4, avgCost: 30 }, // low
-    { id: "rm-tomato", name: "Tomato", unit: "kg", parLevel: 15, minLevel: 3, currentQty: 18, avgCost: 25 },
-    { id: "rm-butter", name: "Butter", unit: "kg", parLevel: 3, minLevel: 1, currentQty: 0.5, avgCost: 500 }, // critical
-    { id: "rm-maida", name: "Maida (flour)", unit: "kg", parLevel: 20, minLevel: 5, currentQty: 22, avgCost: 45 },
-    { id: "rm-milk", name: "Milk", unit: "L", parLevel: 30, minLevel: 5, currentQty: 28, avgCost: 60 },
-    { id: "rm-sugar", name: "Sugar", unit: "kg", parLevel: 10, minLevel: 2, currentQty: 8, avgCost: 45 },
-    { id: "rm-tea-powder", name: "Tea Powder", unit: "kg", parLevel: 5, minLevel: 1, currentQty: 3.5, avgCost: 600 },
+    { id: nid("rm-paneer"), name: "Paneer", unit: "kg", parLevel: 5, minLevel: 1, currentQty: 8, avgCost: 320 },
+    { id: nid("rm-chicken-breast"), name: "Chicken Breast", unit: "kg", parLevel: 10, minLevel: 2, currentQty: 12, avgCost: 280 },
+    { id: nid("rm-basmati-rice"), name: "Basmati Rice", unit: "kg", parLevel: 25, minLevel: 5, currentQty: 30, avgCost: 90 },
+    { id: nid("rm-onion"), name: "Onion", unit: "kg", parLevel: 20, minLevel: 5, currentQty: 4, avgCost: 30 },
+    { id: nid("rm-tomato"), name: "Tomato", unit: "kg", parLevel: 15, minLevel: 3, currentQty: 18, avgCost: 25 },
+    { id: nid("rm-butter"), name: "Butter", unit: "kg", parLevel: 3, minLevel: 1, currentQty: 0.5, avgCost: 500 },
+    { id: nid("rm-maida"), name: "Maida (flour)", unit: "kg", parLevel: 20, minLevel: 5, currentQty: 22, avgCost: 45 },
+    { id: nid("rm-milk"), name: "Milk", unit: "L", parLevel: 30, minLevel: 5, currentQty: 28, avgCost: 60 },
+    { id: nid("rm-sugar"), name: "Sugar", unit: "kg", parLevel: 10, minLevel: 2, currentQty: 8, avgCost: 45 },
+    { id: nid("rm-tea-powder"), name: "Tea Powder", unit: "kg", parLevel: 5, minLevel: 1, currentQty: 3.5, avgCost: 600 },
   ];
   for (const r of rmSpecs) {
     await db.rawMaterial.upsert({
       where: { id: r.id },
       update: {
-        name: r.name,
-        unit: r.unit,
-        parLevel: r.parLevel,
-        minLevel: r.minLevel,
-        currentQty: r.currentQty,
-        avgCost: r.avgCost,
+        name: r.name, unit: r.unit, parLevel: r.parLevel, minLevel: r.minLevel,
+        currentQty: r.currentQty, avgCost: r.avgCost,
       },
-      create: { ...r, outletId: outlet.id, supplierId: "sup-bigbasket" },
+      create: { ...r, outletId: outlet.id, supplierId: nid("sup-bigbasket") },
     });
   }
   console.log(`✓ raw materials (${rmSpecs.length})`);
 
   // ── 7. Discounts ───────────────────────────────────────────────────────
   const discountSpecs = [
-    { id: "disc-welcome10", code: "WELCOME10", name: "Welcome 10% off", type: "PERCENT", value: 10, minOrder: 500 },
-    { id: "disc-flat50", code: "FLAT50", name: "₹50 off above ₹400", type: "FLAT", value: 50, minOrder: 400 },
-    { id: "disc-weekend20", code: "WEEKEND20", name: "Weekend 20% off", type: "PERCENT", value: 20, minOrder: 1000, isAuto: true, daysOfWeek: "SAT,SUN" },
+    { id: nid("disc-welcome10"), code: `WELCOME10-${NS}`, name: "Welcome 10% off", type: "PERCENT", value: 10, minOrder: 500 },
+    { id: nid("disc-flat50"), code: `FLAT50-${NS}`, name: "₹50 off above ₹400", type: "FLAT", value: 50, minOrder: 400 },
+    { id: nid("disc-weekend20"), code: `WEEKEND20-${NS}`, name: "Weekend 20% off", type: "PERCENT", value: 20, minOrder: 1000, isAuto: true, daysOfWeek: "SAT,SUN" },
   ];
   for (const d of discountSpecs) {
     await db.discount.upsert({
@@ -327,7 +273,7 @@ async function main() {
     });
   }
 
-  // ── 8. Settled orders across last 14 days (BATCHED via createMany) ────
+  // ── 8. Settled orders across last 14 days (BATCHED) ───────────────────
   const existingOrderCount = await db.order.count({ where: { outletId: outlet.id } });
   if (existingOrderCount < 100) {
     const items = await db.item.findMany({ where: { outletId: outlet.id } });
@@ -346,30 +292,9 @@ async function main() {
     const startSeq = existingOrderCount + 1;
     let seq = startSeq;
 
-    // Build everything in memory first.
-    type OrderRow = {
-      id: string;
-      invoiceNo: string;
-      orderType: string;
-      channel: string;
-      status: string;
-      subTotal: number;
-      taxTotal: number;
-      grandTotal: number;
-      amountPaid: number;
-      paymentMode: string;
-      customerId: string | null;
-      tableId: string | null;
-      captainId: string | null;
-      outletId: string;
-      createdAt: Date;
-      closedAt: Date;
-      locality: string | null;
-      aggregatorOrderId: string | null;
-    };
-    const orderRows: OrderRow[] = [];
-    const itemRows: { orderId: string; itemId: string; name: string; price: number; qty: number; taxRate: number }[] = [];
-    const paymentRows: { orderId: string; mode: string; amount: number; outletId: string; createdAt: Date }[] = [];
+    const orderRows: any[] = [];
+    const itemRows: any[] = [];
+    const paymentRows: any[] = [];
 
     function cuid() {
       return "c" + Math.random().toString(36).slice(2, 12) + Date.now().toString(36).slice(-8);
@@ -396,7 +321,7 @@ async function main() {
         const orderId = cuid();
         orderRows.push({
           id: orderId,
-          invoiceNo: `INV-${pad(seq++)}`,
+          invoiceNo: `${NS.toUpperCase()}-${pad(seq++)}`,
           orderType: channel.orderType,
           channel: channel.channel,
           status: "PAID",
@@ -415,22 +340,13 @@ async function main() {
           aggregatorOrderId: channel.channel !== "POS" ? `${channel.channel.slice(0, 3)}-${Math.floor(100000 + Math.random() * 900000)}` : null,
         });
         for (const l of cart) {
-          itemRows.push({
-            orderId,
-            itemId: l.item.id,
-            name: l.item.name,
-            price: l.item.price,
-            qty: l.qty,
-            taxRate: l.item.taxRate,
-          });
+          itemRows.push({ orderId, itemId: l.item.id, name: l.item.name, price: l.item.price, qty: l.qty, taxRate: l.item.taxRate });
         }
         paymentRows.push({ orderId, mode: pm, amount: grand, outletId: outlet.id, createdAt: ts });
       }
     }
 
-    // Bulk insert — three round-trips total instead of N×3.
     await db.order.createMany({ data: orderRows, skipDuplicates: true });
-    // OrderItem/Payment don't allow extra ids in createMany — fine, db assigns.
     await db.orderItem.createMany({ data: itemRows });
     await db.payment.createMany({ data: paymentRows });
     console.log(`✓ ${orderRows.length} settled orders across 14 days (bulk)`);
@@ -438,14 +354,14 @@ async function main() {
     console.log(`⏭  settled orders (already ${existingOrderCount} present)`);
   }
 
-  // ── 9. Live RUNNING orders (so KDS + Live Orders aren't empty) ────────
+  // ── 9. Live RUNNING orders ────────────────────────────────────────────
   const liveCount = await db.order.count({ where: { outletId: outlet.id, status: "RUNNING" } });
   if (liveCount < 3) {
     const items = await db.item.findMany({ where: { outletId: outlet.id } });
     const liveSpecs = [
-      { tableId: "tbl-a2", captainId: U_CAPTAIN1, picks: ["item-butter-chicken", "item-butter-naan", "item-butter-naan", "item-jeera-rice"] },
-      { tableId: "tbl-b1", captainId: U_CAPTAIN2, picks: ["item-paneer-tikka", "item-veg-biryani", "item-mango-lassi"] },
-      { tableId: "tbl-p1", captainId: U_CAPTAIN1, picks: ["item-tandoori-chicken", "item-garlic-naan", "item-fresh-lime-soda"] },
+      { tableId: nid("tbl-a2"), captainId: U_CAPTAIN1, picks: [nid("item-butter-chicken"), nid("item-butter-naan"), nid("item-butter-naan"), nid("item-jeera-rice")] },
+      { tableId: nid("tbl-b1"), captainId: U_CAPTAIN2, picks: [nid("item-paneer-tikka"), nid("item-veg-biryani"), nid("item-mango-lassi")] },
+      { tableId: nid("tbl-p1"), captainId: U_CAPTAIN1, picks: [nid("item-tandoori-chicken"), nid("item-garlic-naan"), nid("item-fresh-lime-soda")] },
     ];
     let seq = (await db.order.count()) + 1;
     for (const spec of liveSpecs) {
@@ -454,7 +370,7 @@ async function main() {
       const tax = Math.round(cart.reduce((s, it) => s + it.price * (it.taxRate / 100), 0));
       const order = await db.order.create({
         data: {
-          invoiceNo: `INV-${pad(seq++)}`,
+          invoiceNo: `${NS.toUpperCase()}-${pad(seq++)}`,
           orderType: "DINE_IN",
           channel: "POS",
           status: "RUNNING",
@@ -472,16 +388,9 @@ async function main() {
           data: { orderId: order.id, itemId: it.id, name: it.name, price: it.price, qty: 1, taxRate: it.taxRate },
         });
       }
-      // One KOT marked NEW so KDS lights up.
       const kotNo = `KOT-${pad(seq, 5)}-${Math.floor(Math.random() * 100)}`;
       const kot = await db.kitchenTicket.create({
-        data: {
-          kotNo,
-          orderId: order.id,
-          status: "NEW",
-          station: "MAIN",
-          outletId: outlet.id,
-        },
+        data: { kotNo, orderId: order.id, status: "NEW", station: "MAIN", outletId: outlet.id },
       });
       for (const it of cart) {
         await db.kitchenTicketLine.create({
@@ -494,7 +403,7 @@ async function main() {
     console.log(`⏭  live orders (already ${liveCount} present)`);
   }
 
-  // ── 10. Online orders inbox (Swiggy/Zomato PLACED) ────────────────────
+  // ── 10. Online orders inbox ───────────────────────────────────────────
   const placedCount = await db.order.count({ where: { outletId: outlet.id, status: "PLACED" } });
   if (placedCount < 2) {
     const items = await db.item.findMany({ where: { outletId: outlet.id } });
@@ -505,7 +414,7 @@ async function main() {
       const tax = Math.round(picks.reduce((s, i) => s + i.price * (i.taxRate / 100), 0));
       await db.order.create({
         data: {
-          invoiceNo: `INV-${pad(seq++)}`,
+          invoiceNo: `${NS.toUpperCase()}-${pad(seq++)}`,
           orderType: "DELIVERY",
           channel: ch,
           status: "PLACED",
@@ -519,13 +428,7 @@ async function main() {
           locality: ch === "SWIGGY" ? "Indiranagar" : "Koramangala",
           outletId: outlet.id,
           items: {
-            create: picks.map((i) => ({
-              itemId: i.id,
-              name: i.name,
-              price: i.price,
-              qty: 1,
-              taxRate: i.taxRate,
-            })),
+            create: picks.map((i) => ({ itemId: i.id, name: i.name, price: i.price, qty: 1, taxRate: i.taxRate })),
           },
         },
       });
@@ -550,7 +453,7 @@ async function main() {
     console.log(`✓ cash drawer entries`);
   }
 
-  // ── 12. Expenses (mix of pending + approved) ──────────────────────────
+  // ── 12. Expenses ──────────────────────────────────────────────────────
   const expenseCount = await db.expense.count({ where: { outletId: outlet.id } });
   if (expenseCount < 10) {
     const expenseSpecs = [
@@ -588,9 +491,9 @@ async function main() {
   const giftCardCount = await db.giftCard.count({ where: { outletId: outlet.id } });
   if (giftCardCount === 0) {
     const cards = [
-      { code: "GC-BIRTHDAY-001", initialAmount: 1000, balance: 750, customerId: "cust-rahul" },
-      { code: "GC-WEDDING-002", initialAmount: 2000, balance: 2000, customerId: "cust-priya" },
-      { code: "GC-LOYALTY-003", initialAmount: 500, balance: 0, customerId: "cust-neha" },
+      { code: `GC-BIRTHDAY-${NS}-001`, initialAmount: 1000, balance: 750, customerId: nid("cust-rahul") },
+      { code: `GC-WEDDING-${NS}-002`, initialAmount: 2000, balance: 2000, customerId: nid("cust-priya") },
+      { code: `GC-LOYALTY-${NS}-003`, initialAmount: 500, balance: 0, customerId: nid("cust-neha") },
     ];
     for (const c of cards) {
       const card = await db.giftCard.create({
@@ -617,23 +520,17 @@ async function main() {
   const planCount = await db.membershipPlan.count({ where: { outletId: outlet.id } });
   if (planCount === 0) {
     const plan = await db.membershipPlan.create({
-      data: {
-        name: "Smokzy Gold Annual",
-        price: 999,
-        durationDays: 365,
-        outletId: outlet.id,
-      },
+      data: { name: "Smokzy Gold Annual", price: 999, durationDays: 365, outletId: outlet.id },
     });
     await db.membershipBenefit.createMany({
       data: [
-        { planId: plan.id, name: "Free Masala Chai daily", itemId: "item-masala-chai", qtyPerDay: 1 },
-        { planId: plan.id, name: "Free Gulab Jamun on birthday", itemId: "item-gulab-jamun", qtyPerDay: 2 },
+        { planId: plan.id, name: "Free Masala Chai daily", itemId: nid("item-masala-chai"), qtyPerDay: 1 },
+        { planId: plan.id, name: "Free Gulab Jamun on birthday", itemId: nid("item-gulab-jamun"), qtyPerDay: 2 },
       ],
     });
-    // Issue membership to Neha + Rahul
     await db.membership.create({
       data: {
-        customerId: "cust-neha",
+        customerId: nid("cust-neha"),
         planId: plan.id,
         startsAt: daysAgo(60),
         expiresAt: new Date(Date.now() + 305 * 24 * 60 * 60 * 1000),
@@ -642,7 +539,7 @@ async function main() {
     });
     await db.membership.create({
       data: {
-        customerId: "cust-rahul",
+        customerId: nid("cust-rahul"),
         planId: plan.id,
         startsAt: daysAgo(120),
         expiresAt: new Date(Date.now() + 245 * 24 * 60 * 60 * 1000),
@@ -656,11 +553,11 @@ async function main() {
   const feedbackCount = await db.feedback.count({ where: { outletId: outlet.id } });
   if (feedbackCount === 0) {
     const fb = [
-      { category: "FOOD", rating: 5, text: "Butter chicken was top notch!", resolved: true, daysOld: 2, customerId: "cust-rahul" },
-      { category: "SERVICE", rating: 2, text: "Waited 30 minutes for our order", resolved: false, daysOld: 1, customerId: "cust-priya" },
-      { category: "AMBIANCE", rating: 4, text: "Cosy but a bit loud", resolved: true, daysOld: 3, customerId: "cust-akash" },
+      { category: "FOOD", rating: 5, text: "Butter chicken was top notch!", resolved: true, daysOld: 2, customerId: nid("cust-rahul") },
+      { category: "SERVICE", rating: 2, text: "Waited 30 minutes for our order", resolved: false, daysOld: 1, customerId: nid("cust-priya") },
+      { category: "AMBIANCE", rating: 4, text: "Cosy but a bit loud", resolved: true, daysOld: 3, customerId: nid("cust-akash") },
       { category: "DELIVERY", rating: 1, text: "Delivery arrived cold", resolved: false, daysOld: 0, customerId: null },
-      { category: "FOOD", rating: 5, text: "Best biryani in Bangalore", resolved: true, daysOld: 5, customerId: "cust-neha" },
+      { category: "FOOD", rating: 5, text: "Best biryani in Bangalore", resolved: true, daysOld: 5, customerId: nid("cust-neha") },
     ];
     for (const f of fb) {
       await db.feedback.create({
@@ -684,80 +581,29 @@ async function main() {
   if (taskCount === 0) {
     await db.task.createMany({
       data: [
-        {
-          title: "Clean exhaust hood",
-          type: "RECURRING",
-          status: "OPEN",
-          assignedRole: "MANAGER",
-          dueAt: daysAgo(-1, 18, 0),
-          outletId: outlet.id,
-        },
-        {
-          title: "Order onions — running low",
-          type: "ADHOC",
-          status: "OPEN",
-          assignedRole: "MANAGER",
-          dueAt: daysAgo(-1, 12, 0),
-          outletId: outlet.id,
-        },
-        {
-          title: "Replenish butter — critical",
-          type: "ADHOC",
-          status: "OVERDUE",
-          assignedRole: "MANAGER",
-          dueAt: daysAgo(1, 18, 0),
-          outletId: outlet.id,
-        },
-        {
-          title: "Verify cash drawer",
-          type: "RECURRING",
-          status: "DONE",
-          assignedRole: "BILLER",
-          assignedToId: U_BILLER,
-          dueAt: daysAgo(0, 23, 0),
-          completedAt: daysAgo(0, 22, 45),
-          outletId: outlet.id,
-        },
+        { title: "Clean exhaust hood", type: "RECURRING", status: "OPEN", assignedRole: "MANAGER", dueAt: daysAgo(-1, 18, 0), outletId: outlet.id },
+        { title: "Order onions — running low", type: "ADHOC", status: "OPEN", assignedRole: "MANAGER", dueAt: daysAgo(-1, 12, 0), outletId: outlet.id },
+        { title: "Replenish butter — critical", type: "ADHOC", status: "OVERDUE", assignedRole: "MANAGER", dueAt: daysAgo(1, 18, 0), outletId: outlet.id },
+        { title: "Verify cash drawer", type: "RECURRING", status: "DONE", assignedRole: "BILLER", assignedToId: U_BILLER, dueAt: daysAgo(0, 23, 0), completedAt: daysAgo(0, 22, 45), outletId: outlet.id },
       ],
     });
     console.log(`✓ tasks (4)`);
   }
 
-  // ── 17. Notifications (anti-theft + low stock + new online order) ─────
+  // ── 17. Notifications ────────────────────────────────────────────────
   const notifCount = await db.notification.count({ where: { outletId: outlet.id } });
   if (notifCount < 3) {
     await db.notification.createMany({
       data: [
-        {
-          kind: "LOW_STOCK",
-          title: "Butter critically low",
-          body: "Only 0.5 kg left (min 1 kg). Consider raising a PO.",
-          link: "/inventory",
-          outletId: outlet.id,
-          createdAt: daysAgo(0, 9, 0),
-        },
-        {
-          kind: "LOW_STOCK",
-          title: "Onion below par",
-          body: "4 kg in stock; par level is 20 kg.",
-          link: "/inventory",
-          outletId: outlet.id,
-          createdAt: daysAgo(0, 10, 30),
-        },
-        {
-          kind: "ONLINE_ORDER",
-          title: "New Swiggy order",
-          body: "3 items · ₹720 · Indiranagar",
-          link: "/orders/online",
-          outletId: outlet.id,
-          createdAt: daysAgo(0, 13, 0),
-        },
+        { kind: "LOW_STOCK", title: "Butter critically low", body: "Only 0.5 kg left (min 1 kg). Consider raising a PO.", link: "/inventory", outletId: outlet.id, createdAt: daysAgo(0, 9, 0) },
+        { kind: "LOW_STOCK", title: "Onion below par", body: "4 kg in stock; par level is 20 kg.", link: "/inventory", outletId: outlet.id, createdAt: daysAgo(0, 10, 30) },
+        { kind: "ONLINE_ORDER", title: "New Swiggy order", body: "3 items · ₹720 · Indiranagar", link: "/orders/online", outletId: outlet.id, createdAt: daysAgo(0, 13, 0) },
       ],
     });
     console.log(`✓ notifications`);
   }
 
-  // ── 18. Fixed Assets register + a past audit with variance ────────────
+  // ── 18. Fixed Assets + past audit ─────────────────────────────────────
   const assetCount = await db.fixedAsset.count({ where: { outletId: outlet.id } });
   if (assetCount === 0) {
     const assets = [
@@ -797,34 +643,30 @@ async function main() {
       { name: "Fire extinguisher", category: "OTHER", location: "Kitchen + halls", qty: 4, unitValue: 2500, condition: "GOOD" },
       { name: "First aid kit", category: "OTHER", location: "Cashier + Kitchen", qty: 2, unitValue: 800, condition: "GOOD" },
     ];
-    const created: { id: string; name: string; qty: number }[] = [];
-    for (const a of assets) {
-      const row = await db.fixedAsset.create({
-        data: {
-          name: a.name,
-          category: a.category,
-          location: a.location,
-          qty: a.qty,
-          unitValue: a.unitValue,
-          condition: a.condition,
-          active: true,
-          outletId: outlet.id,
-          purchasedAt: daysAgo(120 + Math.floor(Math.random() * 200)),
-        },
-      });
-      created.push({ id: row.id, name: row.name, qty: row.qty });
+    // Bulk insert assets with ids we generate so we can build audit lines without round-tripping.
+    function cuid() {
+      return "c" + Math.random().toString(36).slice(2, 12) + Date.now().toString(36).slice(-8);
     }
+    const assetRows = assets.map((a) => ({
+      id: cuid(),
+      name: a.name,
+      category: a.category,
+      location: a.location,
+      qty: a.qty,
+      unitValue: a.unitValue,
+      condition: a.condition,
+      active: true,
+      outletId: outlet.id,
+      purchasedAt: daysAgo(120 + Math.floor(Math.random() * 200)),
+    }));
+    await db.fixedAsset.createMany({ data: assetRows });
     console.log(`✓ ${assets.length} fixed assets`);
 
-    // Past audit — most match, a few have variance (simulates a real audit
-    // catching theft / damage / miscounted earlier).
-    const auditLines = created.map((a, idx) => {
-      // Inject variance on three specific lines so the demo shows variance
-      // badges; rest match.
+    const auditLines = assetRows.map((a, idx) => {
       let foundQty = a.qty;
-      if (idx === 4) foundQty = a.qty - 2; // 2 chairs missing
-      else if (idx === 14) foundQty = a.qty - 1; // 1 fridge unaccounted
-      else if (idx === 27) foundQty = a.qty - 3; // 3 plants damaged/lost
+      if (idx === 4) foundQty = a.qty - 2;
+      else if (idx === 14) foundQty = a.qty - 1;
+      else if (idx === 27) foundQty = a.qty - 3;
       const variance = foundQty - a.qty;
       return {
         assetId: a.id,
@@ -836,19 +678,20 @@ async function main() {
       };
     });
     const varianceLines = auditLines.filter((l) => l.variance !== 0).length;
-    await db.assetAudit.create({
+    const audit = await db.assetAudit.create({
       data: {
         outletId: outlet.id,
         auditedById: U_MANAGER,
         auditedAt: daysAgo(7, 11, 0),
         varianceLines,
         notes: "Quarterly audit — conducted with manager + auditor. CCTV being reviewed for missing items.",
-        lines: { create: auditLines },
       },
+    });
+    await db.assetAuditLine.createMany({
+      data: auditLines.map((l) => ({ ...l, auditId: audit.id })),
     });
     console.log(`✓ past audit with ${varianceLines} variance lines`);
 
-    // Notification for the variance
     await db.notification.create({
       data: {
         kind: "INFO",
@@ -864,16 +707,16 @@ async function main() {
   console.log("─── Demo seed complete ───");
   const counts = await Promise.all([
     db.outlet.count(),
-    db.user.count(),
-    db.item.count(),
-    db.customer.count(),
-    db.order.count(),
-    db.fixedAsset.count(),
-    db.assetAudit.count(),
-    db.feedback.count(),
-    db.task.count(),
+    db.user.count({ where: { outletId: outlet.id } }),
+    db.item.count({ where: { outletId: outlet.id } }),
+    db.customer.count({ where: { outletId: outlet.id } }),
+    db.order.count({ where: { outletId: outlet.id } }),
+    db.fixedAsset.count({ where: { outletId: outlet.id } }),
+    db.assetAudit.count({ where: { outletId: outlet.id } }),
+    db.feedback.count({ where: { outletId: outlet.id } }),
+    db.task.count({ where: { outletId: outlet.id } }),
   ]);
-  console.log(`Totals — outlets:${counts[0]} users:${counts[1]} items:${counts[2]} customers:${counts[3]} orders:${counts[4]} assets:${counts[5]} audits:${counts[6]} feedback:${counts[7]} tasks:${counts[8]}`);
+  console.log(`Totals on '${outlet.code}' — users:${counts[1]} items:${counts[2]} customers:${counts[3]} orders:${counts[4]} assets:${counts[5]} audits:${counts[6]} feedback:${counts[7]} tasks:${counts[8]}`);
 }
 
 main()
