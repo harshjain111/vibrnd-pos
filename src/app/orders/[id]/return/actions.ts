@@ -46,8 +46,23 @@ export async function processReturn(input: z.infer<typeof ReturnInput>) {
 
   const amount = Math.round(returns.reduce((s, r) => s + r.item.price * r.qty, 0));
 
-  const count = await db.salesReturn.count({ where: { outletId: order.outletId } });
-  const returnNo = `RET-${String(count + 1).padStart(6, "0")}`;
+  // SalesReturn.returnNo is @unique globally — namespace by outlet code +
+  // small retry loop. Same fix pattern as PO / invoice / KOT numbers.
+  const outletForCode = await db.outlet.findUnique({ where: { id: order.outletId }, select: { code: true } });
+  const outletCode = outletForCode?.code ?? "X";
+  let returnNo = "";
+  {
+    const count = await db.salesReturn.count({ where: { outletId: order.outletId } });
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = `RET-${outletCode}-${String(count + 1 + attempt).padStart(6, "0")}`;
+      const clash = await db.salesReturn.findUnique({ where: { returnNo: candidate } });
+      if (!clash) {
+        returnNo = candidate;
+        break;
+      }
+    }
+    if (!returnNo) throw new Error("Could not allocate a return number");
+  }
 
   const ret = await db.salesReturn.create({
     data: {

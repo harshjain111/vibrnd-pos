@@ -21,9 +21,24 @@ const POInput = z.object({
   lines: z.array(LineInput).min(1),
 });
 
-async function nextPoNo(outletId: string) {
+/**
+ * Allocate the next per-outlet PO number. The schema marks `poNo @unique`
+ * globally, so a simple per-outlet count would inevitably collide with
+ * another outlet's POs and Prisma would reject with P2002 — which Next.js
+ * in production masks as the cryptic "Server Components render" digest.
+ *
+ * Fix: scope the number with the outlet code AND retry on the rare clash
+ * (legacy unprefixed PO-000001 numbers, two managers hitting Save at the
+ * same instant, etc).
+ */
+async function nextPoNo(outletId: string, outletCode: string) {
   const count = await db.purchaseOrder.count({ where: { outletId } });
-  return `PO-${String(count + 1).padStart(6, "0")}`;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const candidate = `PO-${outletCode}-${String(count + 1 + attempt).padStart(6, "0")}`;
+    const clash = await db.purchaseOrder.findUnique({ where: { poNo: candidate } });
+    if (!clash) return candidate;
+  }
+  throw new Error("Could not allocate a PO number");
 }
 
 export async function createPO(input: z.infer<typeof POInput>): Promise<{ id: string; poNo: string }> {
@@ -32,7 +47,7 @@ export async function createPO(input: z.infer<typeof POInput>): Promise<{ id: st
   const sub = data.lines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
   const tax = 0; // simplification — no tax on POs in v1
   const grand = Math.round(sub + tax);
-  const poNo = await nextPoNo(outlet.id);
+  const poNo = await nextPoNo(outlet.id, outlet.code);
 
   const po = await db.purchaseOrder.create({
     data: {
