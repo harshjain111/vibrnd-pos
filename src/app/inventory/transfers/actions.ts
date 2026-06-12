@@ -102,25 +102,73 @@ export async function receiveTransfer(input: z.infer<typeof Receive>) {
   if (transfer.receiverOutletId !== outlet.id) throw new Error("Only the receiving outlet can confirm");
   if (transfer.status !== "SENT") throw new Error(`Transfer already ${transfer.status.toLowerCase()}`);
 
+  // Receiver's STORE department — every incoming chain transfer lands here.
+  const storeDept = await db.department.findFirst({
+    where: { outletId: outlet.id, kind: "STORE", active: true },
+  });
+
   for (const l of data.lines) {
     const line = transfer.lines.find((tl) => tl.id === l.id);
     if (!line) continue;
+    if (l.qtyReceived <= 0) continue;
+
     await db.transferLine.update({ where: { id: line.id }, data: { qtyReceived: l.qtyReceived } });
-    // Increment receiver stock. Note: receiver outlet's RawMaterial must already exist
-    // (or we'd need to create one). For prototype simplicity we increment by name match.
-    const myRm = await db.rawMaterial.findFirst({
+
+    // Look up receiver's matching RawMaterial by NAME. If it doesn't exist
+    // (chain transfer of a produced good never carried before — e.g. cooked
+    // dal arriving at a new outlet for the first time), auto-create it
+    // mirroring the source RM's core attributes so the catalog "just works".
+    let myRm = await db.rawMaterial.findFirst({
       where: { outletId: outlet.id, name: line.rawMaterial.name },
     });
-    if (myRm) {
-      await moveStock({
-        rawMaterialId: myRm.id,
-        delta: l.qtyReceived,
-        reason: "TRANSFER_IN",
-        refType: "Transfer",
-        refId: transfer.id,
-        note: `Received from outlet ${transfer.senderOutletId}`,
+    if (!myRm) {
+      myRm = await db.rawMaterial.create({
+        data: {
+          name: line.rawMaterial.name,
+          unit: line.rawMaterial.unit,
+          purchaseUnit: line.rawMaterial.purchaseUnit,
+          consumptionUnit: line.rawMaterial.consumptionUnit,
+          conversionFactor: line.rawMaterial.conversionFactor,
+          parLevel: line.rawMaterial.parLevel,
+          minLevel: line.rawMaterial.minLevel,
+          currentQty: 0,
+          avgCost: line.priceAtTransfer || line.rawMaterial.avgCost || 0,
+          taxType: line.rawMaterial.taxType,
+          taxPct: line.rawMaterial.taxPct,
+          categoryName: line.rawMaterial.categoryName,
+          subCategory: line.rawMaterial.subCategory,
+          // Mark as PRODUCED — these RMs came from a chain transfer, not from
+          // a vendor PO at this outlet.
+          source: line.rawMaterial.source === "PURCHASED" ? "PURCHASED" : line.rawMaterial.source,
+          outletId: outlet.id,
+          active: true,
+        },
       });
     }
+
+    // Weighted-average cost roll-forward against the carried transfer price.
+    if (line.priceAtTransfer > 0 && l.qtyReceived > 0) {
+      const before = myRm.currentQty;
+      const after = before + l.qtyReceived;
+      const newAvg =
+        after > 0
+          ? (before * myRm.avgCost + l.qtyReceived * line.priceAtTransfer) / after
+          : line.priceAtTransfer;
+      await db.rawMaterial.update({
+        where: { id: myRm.id },
+        data: { avgCost: newAvg },
+      });
+    }
+
+    await moveStock({
+      rawMaterialId: myRm.id,
+      delta: l.qtyReceived,
+      reason: transfer.kind === "CHAIN" ? "CHAIN_TRANSFER" : "TRANSFER_IN",
+      refType: "Transfer",
+      refId: transfer.id,
+      departmentId: storeDept?.id ?? null,
+      note: `Received from outlet ${transfer.senderOutletId}`,
+    });
   }
 
   await db.transfer.update({
@@ -135,4 +183,6 @@ export async function receiveTransfer(input: z.infer<typeof Receive>) {
     outletId: outlet.id,
   });
   revalidatePath("/inventory/transfers");
+  revalidatePath("/inventory");
+  revalidatePath("/inventory/available");
 }

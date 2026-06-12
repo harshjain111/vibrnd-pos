@@ -450,6 +450,15 @@ export async function fulfilRequisition(fd: FormData) {
       }
     }
 
+    // BK markup — when the supplier outlet is a BASE_KITCHEN and the
+    // applyBKMarkupOnTransfer toggle is on, bake the % markup into the
+    // priceAtTransfer that gets carried to the receiver's avg-cost roll.
+    const supplierKind = (outlet as any).kind ?? "OUTLET";
+    const applyMarkup =
+      supplierKind === "BASE_KITCHEN" && (outlet as any).applyBKMarkupOnTransfer === true;
+    const markupPct = applyMarkup ? Number((outlet as any).bkMarkupPercent ?? 0) : 0;
+    const markupFactor = 1 + markupPct / 100;
+
     const challanNo = `${req.reqNo}-C`;
     await db.$transaction(async (tx) => {
       await tx.transfer.create({
@@ -464,16 +473,19 @@ export async function fulfilRequisition(fd: FormData) {
           kind: "CHAIN",
           requisitionId: req.id,
           sentById: user.id,
-          notes: `Chain fulfilment of ${req.reqNo}`,
+          notes: applyMarkup
+            ? `Chain fulfilment of ${req.reqNo} (BK markup ${markupPct}% applied)`
+            : `Chain fulfilment of ${req.reqNo}`,
           lines: {
             create: linesToMove.map((l) => {
               const srm = supplierRmByName.get(l.rawMaterial.name)!;
+              const baseCost = srm.avgCost ?? 0;
               return {
                 rawMaterialId: srm.id, // supplier's RM id on the transfer line
                 qtySent: l.qtyApproved,
                 qtyReceived: 0,
                 unit: l.unit,
-                priceAtTransfer: srm.avgCost ?? 0,
+                priceAtTransfer: baseCost * markupFactor,
               };
             }),
           },
