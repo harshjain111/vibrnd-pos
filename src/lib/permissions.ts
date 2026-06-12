@@ -31,6 +31,14 @@ export type PageId =
   | "menu.taxes"
   // Inventory
   | "inventory.dashboard"
+  | "inventory.departments"
+  | "inventory.requisitions"
+  | "inventory.requisitions.approve"
+  | "inventory.purchase.approve"
+  | "inventory.grn"
+  | "inventory.invoices"
+  | "inventory.payments"
+  | "inventory.production"
   // CRM
   | "customers"
   | "feedback"
@@ -95,8 +103,18 @@ export const PAGES: PageDef[] = [
   { id: "menu.discounts", label: "Discounts", category: "Menu", defaultRoles: ["MANAGER", "OWNER"] },
   { id: "menu.taxes", label: "Tax masters", category: "Menu", defaultRoles: ["MANAGER", "OWNER"] },
 
-  // Inventory — managers and owners only
-  { id: "inventory.dashboard", label: "Inventory", category: "Inventory", defaultRoles: ["MANAGER", "OWNER"] },
+  // Inventory — managers + owners + the 7 new inventory roles
+  { id: "inventory.dashboard", label: "Inventory", category: "Inventory", defaultRoles: ["STORE_MANAGER", "COST_CONTROLLER", "CHEF_HOD", "BARTENDER_HOD", "HOUSEKEEPING_HOD", "ACCOUNTANT", "PRODUCTION_MANAGER", "MANAGER", "OWNER"] },
+
+  // Chain inventory (Prompt 1) — fine-grained pages per workflow
+  { id: "inventory.departments", label: "Departments", category: "Inventory", defaultRoles: ["MANAGER", "OWNER"] },
+  { id: "inventory.requisitions", label: "Requisitions", category: "Inventory", defaultRoles: ["CHEF_HOD", "BARTENDER_HOD", "HOUSEKEEPING_HOD", "STORE_MANAGER", "MANAGER", "OWNER"] },
+  { id: "inventory.requisitions.approve", label: "Approve requisitions", category: "Inventory", defaultRoles: ["STORE_MANAGER", "MANAGER", "OWNER"] },
+  { id: "inventory.purchase.approve", label: "Approve POs", category: "Inventory", defaultRoles: ["COST_CONTROLLER", "OWNER"] },
+  { id: "inventory.grn", label: "Goods received notes", category: "Inventory", defaultRoles: ["STORE_MANAGER", "ACCOUNTANT", "MANAGER", "OWNER"] },
+  { id: "inventory.invoices", label: "Vendor invoices", category: "Inventory", defaultRoles: ["ACCOUNTANT", "OWNER"] },
+  { id: "inventory.payments", label: "Vendor payments", category: "Inventory", defaultRoles: ["ACCOUNTANT", "OWNER"] },
+  { id: "inventory.production", label: "Production", category: "Inventory", defaultRoles: ["PRODUCTION_MANAGER", "MANAGER", "OWNER"] },
 
   // CRM
   { id: "customers", label: "Customers", category: "CRM", defaultRoles: ["CAPTAIN", "BILLER", "MANAGER", "OWNER"] },
