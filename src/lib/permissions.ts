@@ -39,6 +39,9 @@ export type PageId =
   | "inventory.invoices"
   | "inventory.payments"
   | "inventory.production"
+  | "inventory.reports.chain-stock"
+  | "inventory.reports.requisition-variance"
+  | "inventory.reports.procurement-cockpit"
   // CRM
   | "customers"
   | "feedback"
@@ -115,6 +118,9 @@ export const PAGES: PageDef[] = [
   { id: "inventory.invoices", label: "Vendor invoices", category: "Inventory", defaultRoles: ["ACCOUNTANT", "OWNER"] },
   { id: "inventory.payments", label: "Vendor payments", category: "Inventory", defaultRoles: ["ACCOUNTANT", "OWNER"] },
   { id: "inventory.production", label: "Production", category: "Inventory", defaultRoles: ["PRODUCTION_MANAGER", "MANAGER", "OWNER"] },
+  { id: "inventory.reports.chain-stock", label: "Chain stock matrix", category: "Inventory", defaultRoles: ["MANAGER", "OWNER"] },
+  { id: "inventory.reports.requisition-variance", label: "Requisition variance", category: "Inventory", defaultRoles: ["MANAGER", "OWNER", "STORE_MANAGER"] },
+  { id: "inventory.reports.procurement-cockpit", label: "Procurement cockpit", category: "Inventory", defaultRoles: ["COST_CONTROLLER", "OWNER", "MANAGER"] },
 
   // CRM
   { id: "customers", label: "Customers", category: "CRM", defaultRoles: ["CAPTAIN", "BILLER", "MANAGER", "OWNER"] },
