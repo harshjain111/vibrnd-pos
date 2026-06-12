@@ -11,30 +11,88 @@ import { Plus, ArrowLeft } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
-const STATUS_TONE: Record<string, "secondary" | "info" | "success" | "destructive"> = {
+const STATUS_TONE: Record<string, "secondary" | "info" | "success" | "destructive" | "warning"> = {
   DRAFT: "secondary",
+  PENDING_CC_APPROVAL: "warning",
+  APPROVED: "info",
+  REJECTED: "destructive",
   SENT: "info",
-  RECEIVED: "success",
+  PARTIALLY_RECEIVED: "warning",
+  CLOSED: "success",
+  RECEIVED: "success", // legacy
   CANCELLED: "destructive",
 };
 
-export default async function POListPage() {
+const STATUS_LABEL: Record<string, string> = {
+  DRAFT: "Draft",
+  PENDING_CC_APPROVAL: "Pending CC",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
+  SENT: "Sent",
+  PARTIALLY_RECEIVED: "Partial GRN",
+  CLOSED: "Closed",
+  RECEIVED: "Received",
+  CANCELLED: "Cancelled",
+};
+
+const TABS = [
+  { key: "ALL", label: "All", filter: null as null | string[] },
+  { key: "PENDING_CC", label: "Pending CC", filter: ["PENDING_CC_APPROVAL"] },
+  { key: "READY_TO_SEND", label: "Approved", filter: ["APPROVED"] },
+  { key: "OPEN", label: "Sent / Receiving", filter: ["SENT", "PARTIALLY_RECEIVED"] },
+  { key: "DRAFT", label: "Draft", filter: ["DRAFT"] },
+  { key: "CLOSED", label: "Closed", filter: ["CLOSED", "RECEIVED"] },
+] as const;
+
+type TabKey = (typeof TABS)[number]["key"];
+
+export default async function POListPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string; tab?: TabKey }>;
+}) {
+  const sp = await searchParams;
+  // Backwards-compat: ?status=pending-cc lands on the CC queue (used by the
+  // CC role's post-login redirect).
+  const tab: TabKey =
+    sp.status === "pending-cc" ? "PENDING_CC" : ((sp.tab as TabKey) ?? "ALL");
+  const activeTab = TABS.find((t) => t.key === tab) ?? TABS[0];
   const outlet = await getActiveOutlet();
-  const pos = await db.purchaseOrder.findMany({
-    where: { outletId: outlet.id },
-    include: { supplier: true, lines: true },
-    orderBy: { createdAt: "desc" },
-    take: 100,
-  });
+  const where = {
+    outletId: outlet.id,
+    ...(activeTab.filter ? { status: { in: activeTab.filter as unknown as string[] } } : {}),
+  };
+  const [pos, counts] = await Promise.all([
+    db.purchaseOrder.findMany({
+      where,
+      include: { supplier: true, lines: true },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    }),
+    Promise.all(
+      TABS.map(async (t) => ({
+        key: t.key,
+        n: await db.purchaseOrder.count({
+          where: {
+            outletId: outlet.id,
+            ...(t.filter ? { status: { in: t.filter as unknown as string[] } } : {}),
+          },
+        }),
+      }))
+    ),
+  ]);
+  const countByKey = Object.fromEntries(counts.map((c) => [c.key, c.n]));
 
   const draftValue = pos.filter((p) => p.status === "DRAFT").reduce((s, p) => s + p.grandTotal, 0);
-  const receivedValue = pos.filter((p) => p.status === "RECEIVED").reduce((s, p) => s + p.grandTotal, 0);
+  const inFlightValue = pos
+    .filter((p) => ["SENT", "PARTIALLY_RECEIVED", "APPROVED"].includes(p.status))
+    .reduce((s, p) => s + p.grandTotal, 0);
 
   return (
     <div>
       <PageHeader
         title="Purchase orders"
-        description={`${pos.length} POs · ${inr(receivedValue)} received · ${inr(draftValue)} in draft`}
+        description={`${inr(inFlightValue)} in flight · ${inr(draftValue)} in draft`}
         actions={
           <>
             <Button variant="ghost" size="sm" asChild>
@@ -52,6 +110,28 @@ export default async function POListPage() {
           </>
         }
       />
+
+      {/* Status tabs */}
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {TABS.map((t) => {
+          const active = t.key === activeTab.key;
+          const n = countByKey[t.key] ?? 0;
+          return (
+            <Link
+              key={t.key}
+              href={t.key === "ALL" ? "/inventory/purchase" : `/inventory/purchase?tab=${t.key}`}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
+                active ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
+              }`}
+            >
+              {t.label}
+              <Badge variant="outline" className="text-[10px] bg-background/50">
+                {n}
+              </Badge>
+            </Link>
+          );
+        })}
+      </div>
 
       <Card>
         <CardContent className="p-0">
@@ -85,7 +165,9 @@ export default async function POListPage() {
                     <TableCell className="text-right">{p.lines.length}</TableCell>
                     <TableCell className="text-right font-medium">{inr(p.grandTotal)}</TableCell>
                     <TableCell>
-                      <Badge variant={STATUS_TONE[p.status] ?? "secondary"}>{p.status}</Badge>
+                      <Badge variant={STATUS_TONE[p.status] ?? "secondary"}>
+                        {STATUS_LABEL[p.status] ?? p.status}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="sm" asChild>
