@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { FileText, AlertCircle } from "lucide-react";
+import { FileText, AlertCircle, Plus } from "lucide-react";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { inr } from "@/lib/utils";
@@ -74,6 +74,14 @@ export default async function VendorInvoicesPage({
       <PageHeader
         title="Vendor invoices"
         description="Accounts payable — invoices from suppliers against GRNs received"
+        actions={
+          <Button asChild size="sm">
+            <Link href="/inventory/invoices/new">
+              <Plus className="h-4 w-4" />
+              New invoice
+            </Link>
+          </Button>
+        }
       />
 
       {/* Aging strip */}
