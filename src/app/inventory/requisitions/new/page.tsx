@@ -26,19 +26,41 @@ export default async function NewRequisitionPage() {
     orderBy: { name: "asc" },
   });
 
+  // Chain sources — surface BS / BK only when this outlet has them linked
+  // AND the user isn't a HOD (HODs only do internal requisitions to their
+  // own outlet's store).
+  const bsId = (outlet as any).baseStoreOutletId as string | null;
+  const bkId = (outlet as any).baseKitchenOutletId as string | null;
+  const chainSources: { id: string; name: string; kindBadge: string }[] = [];
+  if (!hodKind) {
+    if (bsId) {
+      const bs = await db.outlet.findUnique({ where: { id: bsId }, select: { id: true, name: true } });
+      if (bs) chainSources.push({ id: bs.id, name: bs.name, kindBadge: "BS" });
+    }
+    if (bkId) {
+      const bk = await db.outlet.findUnique({ where: { id: bkId }, select: { id: true, name: true } });
+      if (bk) chainSources.push({ id: bk.id, name: bk.name, kindBadge: "BK" });
+    }
+  }
+
   return (
     <div>
       <PageHeader
         title="New requisition"
-        description="Request raw materials from the outlet's store"
+        description={
+          chainSources.length > 0
+            ? "Request stock from your own store, Base Store, or Base Kitchen"
+            : "Request raw materials from the outlet's store"
+        }
       />
       <Card className="mb-3">
         <CardHeader className="pb-2">
           <CardTitle className="text-base">How this works</CardTitle>
           <CardDescription>
-            Pick the items + qty you need. On submit it goes to the Store Manager — they can
-            approve in full, partial-approve (with a reason per line), or decline. Once approved
-            you'll get a notification with what's been transferred.
+            Pick the items + qty you need. Internal requisitions go to your outlet's Store
+            Manager. Chain requisitions go to the Base Store / Base Kitchen's Store Manager —
+            on approve, a chain-transfer is shipped to your store and you confirm receipt
+            from /inventory/transfers.
           </CardDescription>
         </CardHeader>
       </Card>
@@ -48,6 +70,7 @@ export default async function NewRequisitionPage() {
             departments={depts.map((d) => ({ id: d.id, name: d.name, kind: d.kind }))}
             defaultDepartmentId={defaultDept?.id ?? null}
             lockDepartment={!!hodKind}
+            chainSources={chainSources}
             rawMaterials={rms.map((r) => ({
               id: r.id,
               name: r.name,

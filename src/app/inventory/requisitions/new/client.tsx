@@ -16,16 +16,22 @@ function newLine(): Line {
   return { key: Math.random().toString(36).slice(2), rawMaterialId: "", qty: "" };
 }
 
+type ChainSource = { id: string; name: string; kindBadge: string };
+
 export function NewRequisitionForm({
   departments,
   defaultDepartmentId,
   lockDepartment,
+  chainSources,
   rawMaterials,
 }: {
   departments: Dept[];
   defaultDepartmentId: string | null;
   /** True for HOD roles — they can only raise FROM their owned dept. */
   lockDepartment: boolean;
+  /** Chain locations the active outlet can pull from (BS / BK). Empty for
+   *  HOD roles + outlets without chain linkage. */
+  chainSources?: ChainSource[];
   rawMaterials: Rm[];
 }) {
   const { toast } = useToast();
@@ -33,6 +39,9 @@ export function NewRequisitionForm({
   const [fromDepartmentId, setFromDepartmentId] = React.useState(defaultDepartmentId ?? "");
   const [notes, setNotes] = React.useState("");
   const [lines, setLines] = React.useState<Line[]>([newLine()]);
+  /** "" = internal (own outlet's store), otherwise the supplier outlet id. */
+  const [toOutletId, setToOutletId] = React.useState<string>("");
+  const isChain = toOutletId !== "";
 
   const rmById = React.useMemo(() => new Map(rawMaterials.map((r) => [r.id, r])), [rawMaterials]);
 
@@ -61,7 +70,8 @@ export function NewRequisitionForm({
     startTransition(async () => {
       try {
         await createRequisition({
-          fromDepartmentId,
+          fromDepartmentId: isChain ? undefined : fromDepartmentId,
+          toOutletId: isChain ? toOutletId : undefined,
           notes: notes || undefined,
           lines: Array.from(merged).map(([rawMaterialId, qty]) => {
             const rm = rmById.get(rawMaterialId);
@@ -77,7 +87,53 @@ export function NewRequisitionForm({
 
   return (
     <div className="space-y-4">
-      {/* Department picker */}
+      {/* Source picker — only when chain links exist */}
+      {chainSources && chainSources.length > 0 && (
+        <div>
+          <Label>Pull supplies from</Label>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-1">
+            <label
+              className={`flex flex-col items-start gap-0.5 p-2 rounded-md border cursor-pointer ${
+                toOutletId === "" ? "border-primary bg-primary/5" : "hover:bg-accent"
+              }`}
+            >
+              <input
+                type="radio"
+                checked={toOutletId === ""}
+                onChange={() => setToOutletId("")}
+                className="sr-only"
+              />
+              <span className="font-medium text-sm">Own outlet's store</span>
+              <span className="text-[10px] text-muted-foreground">Internal — same outlet, dept → store</span>
+            </label>
+            {chainSources.map((s) => (
+              <label
+                key={s.id}
+                className={`flex flex-col items-start gap-0.5 p-2 rounded-md border cursor-pointer ${
+                  toOutletId === s.id ? "border-primary bg-primary/5" : "hover:bg-accent"
+                }`}
+              >
+                <input
+                  type="radio"
+                  checked={toOutletId === s.id}
+                  onChange={() => setToOutletId(s.id)}
+                  className="sr-only"
+                />
+                <div className="flex items-center gap-1.5">
+                  <span className="font-medium text-sm">{s.name}</span>
+                  <Badge variant="info" className="text-[9px]">{s.kindBadge}</Badge>
+                </div>
+                <span className="text-[10px] text-muted-foreground">
+                  Chain — ships via transfer, confirm receipt
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Department picker — only for internal requisitions */}
+      {!isChain && (
       <div className="max-w-md">
         <Label>Requesting department</Label>
         {lockDepartment ? (
@@ -100,6 +156,7 @@ export function NewRequisitionForm({
           </select>
         )}
       </div>
+      )}
 
       {/* Line builder */}
       <div className="space-y-2">

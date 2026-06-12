@@ -37,16 +37,28 @@ export default async function RequisitionsListPage({
   const activeTab = STATUS_TABS.find((t) => t.key === tab) ?? STATUS_TABS[0];
 
   // HODs only see requisitions raised by THEIR department; everyone else
-  // (SM / Manager / Owner) sees the full outlet queue.
+  // (SM / Manager / Owner) sees the full outlet queue PLUS inbound chain
+  // requisitions targeting this outlet's STORE (when this outlet is a
+  // BASE_STORE / BASE_KITCHEN).
   const hodKind = user ? ownedDepartmentKind(user.role) : null;
   const hodDept = hodKind
     ? await db.department.findFirst({ where: { outletId: outlet.id, kind: hodKind, active: true } })
     : null;
+  const ownStoreDept = await db.department.findFirst({
+    where: { outletId: outlet.id, kind: "STORE", active: true },
+  });
 
-  const where = {
-    outletId: outlet.id,
-    ...(activeTab.filter ? { status: { in: activeTab.filter as unknown as string[] } } : {}),
-    ...(hodDept ? { fromDepartmentId: hodDept.id } : {}),
+  const baseWhere = activeTab.filter
+    ? { status: { in: activeTab.filter as unknown as string[] } }
+    : {};
+  const where: any = {
+    ...baseWhere,
+    OR: [
+      // outbound — raised by this outlet
+      { outletId: outlet.id, ...(hodDept ? { fromDepartmentId: hodDept.id } : {}) },
+      // inbound — targeting this outlet's STORE from a different outlet
+      ...(ownStoreDept && !hodDept ? [{ toDepartmentId: ownStoreDept.id, NOT: { outletId: outlet.id } }] : []),
+    ],
   };
 
   const [counts, rows] = await Promise.all([
@@ -55,9 +67,11 @@ export default async function RequisitionsListPage({
         key: t.key,
         n: await db.requisition.count({
           where: {
-            outletId: outlet.id,
             ...(t.filter ? { status: { in: t.filter as unknown as string[] } } : {}),
-            ...(hodDept ? { fromDepartmentId: hodDept.id } : {}),
+            OR: [
+              { outletId: outlet.id, ...(hodDept ? { fromDepartmentId: hodDept.id } : {}) },
+              ...(ownStoreDept && !hodDept ? [{ toDepartmentId: ownStoreDept.id, NOT: { outletId: outlet.id } }] : []),
+            ],
           },
         }),
       }))
@@ -65,8 +79,9 @@ export default async function RequisitionsListPage({
     db.requisition.findMany({
       where,
       include: {
-        fromDepartment: { select: { name: true, kind: true } },
-        toDepartment: { select: { name: true } },
+        outlet: { select: { name: true } },
+        fromDepartment: { select: { name: true, kind: true, outletId: true } },
+        toDepartment: { select: { name: true, outletId: true } },
         lines: { select: { id: true } },
       },
       orderBy: { createdAt: "desc" },
@@ -134,35 +149,54 @@ export default async function RequisitionsListPage({
               <TableHeader>
                 <TableRow>
                   <TableHead>Req #</TableHead>
-                  <TableHead>From</TableHead>
+                  <TableHead>Direction</TableHead>
+                  <TableHead>From → To</TableHead>
                   <TableHead className="text-right">Lines</TableHead>
                   <TableHead>Raised</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((r) => (
-                  <TableRow key={r.id} className="cursor-pointer hover:bg-accent/40">
-                    <TableCell>
-                      <Link href={`/inventory/requisitions/${r.id}`} className="font-mono text-xs hover:underline">
-                        {r.reqNo}
-                      </Link>
-                    </TableCell>
-                    <TableCell className="text-sm">{r.fromDepartment.name}</TableCell>
-                    <TableCell className="text-right text-sm">{r.lines.length}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {r.createdAt.toLocaleString("en-IN", {
-                        day: "2-digit",
-                        month: "short",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={r.status} />
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {rows.map((r) => {
+                  const isInbound = r.outletId !== outlet.id;
+                  const isCrossOutlet = r.fromDepartment.outletId !== r.toDepartment.outletId;
+                  return (
+                    <TableRow key={r.id} className="cursor-pointer hover:bg-accent/40">
+                      <TableCell>
+                        <Link href={`/inventory/requisitions/${r.id}`} className="font-mono text-xs hover:underline">
+                          {r.reqNo}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        {isInbound ? (
+                          <Badge variant="info" className="text-[10px]">Inbound · chain</Badge>
+                        ) : isCrossOutlet ? (
+                          <Badge variant="warning" className="text-[10px]">Outbound · chain</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px]">Internal</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {isInbound && (
+                          <span className="font-medium text-foreground">{r.outlet.name}: </span>
+                        )}
+                        {r.fromDepartment.name} → {r.toDepartment.name}
+                      </TableCell>
+                      <TableCell className="text-right text-sm">{r.lines.length}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {r.createdAt.toLocaleString("en-IN", {
+                          day: "2-digit",
+                          month: "short",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge status={r.status} />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}

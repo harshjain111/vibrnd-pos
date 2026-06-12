@@ -24,7 +24,7 @@ import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
 import { getSessionUser } from "@/lib/session";
 import { logActivity } from "@/lib/audit";
-import { postInternalTransferMovement, stockAtDepartment } from "@/lib/stock";
+import { postInternalTransferMovement, stockAtDepartment, moveStock } from "@/lib/stock";
 import { ownedDepartmentKind } from "@/lib/rbac";
 
 const LineInput = z.object({
@@ -38,6 +38,11 @@ const CreateInput = z.object({
    *  required from the form (Manager / Owner can raise on behalf of any
    *  department). */
   fromDepartmentId: z.string().optional(),
+  /** Optional cross-outlet target. When set, the requisition targets the
+   *  STORE dept of THAT outlet (typically the active outlet's linked BS
+   *  or BK). When null, the requisition is internal (within the current
+   *  outlet, fromDept → own STORE). */
+  toOutletId: z.string().optional(),
   notes: z.string().optional(),
   lines: z.array(LineInput).min(1, "At least one item is required"),
 });
@@ -84,19 +89,46 @@ async function getStoreDept(outletId: string) {
   return store;
 }
 
+/** Validate that the active outlet is allowed to raise a cross-outlet
+ *  requisition to `targetOutletId` — only its linked BS or BK qualifies. */
+async function assertChainLink(activeOutlet: any, targetOutletId: string) {
+  const linked =
+    activeOutlet.baseStoreOutletId === targetOutletId ||
+    activeOutlet.baseKitchenOutletId === targetOutletId;
+  if (!linked) {
+    throw new Error("Target outlet isn't your linked Base Store or Base Kitchen");
+  }
+}
+
 export async function createRequisition(input: z.infer<typeof CreateInput>) {
   const user = await requireUser(); // any logged-in user; specific roles filtered by canAccess on the page
   const outlet = await getActiveOutlet();
   const data = CreateInput.parse(input);
 
+  const isCrossOutlet = data.toOutletId && data.toOutletId !== outlet.id;
+
+  // Resolve from-department. For cross-outlet requisitions the requester is
+  // by convention the outlet's own STORE (the Store Manager is the one who
+  // raises requests to chain locations).
   const hodKind = ownedDepartmentKind(user.role);
-  const fromDepartmentId = await resolveFromDepartment(outlet.id, hodKind, data.fromDepartmentId);
-  const toDept = await getStoreDept(outlet.id);
-  if (fromDepartmentId === toDept.id) {
-    throw new Error("Store cannot raise a requisition to itself");
+  const fromDepartmentId = isCrossOutlet
+    ? (await getStoreDept(outlet.id)).id
+    : await resolveFromDepartment(outlet.id, hodKind, data.fromDepartmentId);
+
+  // Resolve to-department.
+  let toDept;
+  if (isCrossOutlet) {
+    await assertChainLink(outlet as any, data.toOutletId!);
+    toDept = await getStoreDept(data.toOutletId!);
+  } else {
+    toDept = await getStoreDept(outlet.id);
+    if (fromDepartmentId === toDept.id) {
+      throw new Error("Store cannot raise a requisition to itself");
+    }
   }
 
-  // Validate every raw material belongs to this outlet.
+  // Validate every raw material belongs to the REQUESTING outlet (you can
+  // only ask for items already in your catalog).
   const rms = await db.rawMaterial.findMany({
     where: { id: { in: data.lines.map((l) => l.rawMaterialId) }, outletId: outlet.id },
   });
@@ -135,13 +167,17 @@ export async function createRequisition(input: z.infer<typeof CreateInput>) {
     outletId: outlet.id,
   });
 
-  // Notify the Store Manager that there's a new requisition waiting for review.
+  // Notify the recipient's Store Manager that there's a new requisition
+  // waiting for review. For cross-outlet, the notification fires at the
+  // SUPPLIER outlet (the BS / BK) so its SM sees the inbound queue light up.
   await db.notification.create({
     data: {
-      outletId: outlet.id,
+      outletId: isCrossOutlet ? data.toOutletId! : outlet.id,
       kind: "INFO",
       title: `New requisition · ${reqNo}`,
-      body: `${data.lines.length} item(s) requested by ${user.name}. Open to review.`,
+      body: isCrossOutlet
+        ? `Inbound from ${outlet.name} — ${data.lines.length} item(s). Open to review.`
+        : `${data.lines.length} item(s) requested by ${user.name}. Open to review.`,
       link: `/inventory/requisitions/${req.id}`,
     },
   });
@@ -275,19 +311,49 @@ export async function reviewRequisition(input: z.infer<typeof ReviewInput>) {
 }
 
 /**
- * Fulfil an APPROVED or PARTIAL requisition by spawning an internal Transfer.
- * Validates that the STORE actually has enough stock per line (using the
- * ledger sum) before moving. Atomic across Transfer create + line stock
- * movements + requisition status update.
+ * Fulfil an APPROVED or PARTIAL requisition by spawning a Transfer.
+ *
+ * Two modes:
+ *   • INTERNAL (same outlet, dept → dept) — single-shot, status RECEIVED
+ *     immediately. Ledger moves via postInternalTransferMovement (no change
+ *     to RawMaterial.currentQty since stock didn't leave the outlet).
+ *   • CHAIN (cross-outlet — sender's BS/BK → receiver outlet's STORE)
+ *     — two-step. Transfer is created at SENT status, supplier stock is
+ *     decremented now, receiver receives later via the standard
+ *     /inventory/transfers receive workflow. This lets the receiver
+ *     confirm what actually arrived vs what was shipped.
+ *
+ * Cross-outlet flow runs at the SUPPLIER outlet (the BS / BK) — that's
+ * the active outlet for the user clicking "Transfer to requester".
  */
 export async function fulfilRequisition(fd: FormData) {
   const user = await requireUser();
   const id = String(fd.get("id") ?? "");
   if (!id) throw new Error("Requisition id is required");
   const outlet = await getActiveOutlet();
+
+  // For cross-outlet, the requisition lives at the REQUESTING outlet, so
+  // we need to look it up via the toDepartment's outlet (= active outlet
+  // when the user is the supplier-side SM) OR via outletId (when same outlet).
+  const supplierStoreDept = await db.department.findFirst({
+    where: { outletId: outlet.id, kind: "STORE", active: true },
+  });
+  if (!supplierStoreDept) throw new Error("No STORE department for this outlet");
+
   const req = await db.requisition.findFirst({
-    where: { id, outletId: outlet.id },
-    include: { lines: { include: { rawMaterial: true } }, transfer: true },
+    where: {
+      id,
+      OR: [
+        { outletId: outlet.id }, // internal — req lives at active outlet
+        { toDepartmentId: supplierStoreDept.id }, // cross-outlet — supplier acting
+      ],
+    },
+    include: {
+      lines: { include: { rawMaterial: true } },
+      transfer: true,
+      toDepartment: true,
+      fromDepartment: true,
+    },
   });
   if (!req) throw new Error("Requisition not found");
   if (req.status !== "APPROVED" && req.status !== "PARTIAL") {
@@ -300,86 +366,157 @@ export async function fulfilRequisition(fd: FormData) {
   const linesToMove = req.lines.filter((l) => l.qtyApproved > 0);
   if (linesToMove.length === 0) throw new Error("Nothing to transfer — every line is declined");
 
-  // Validate stock at STORE for every line.
-  for (const l of linesToMove) {
-    const onHand = await stockAtDepartment(l.rawMaterialId, req.toDepartmentId);
-    if (onHand < l.qtyApproved) {
-      throw new Error(
-        `Insufficient stock of ${l.rawMaterial.name} at STORE (have ${onHand}, need ${l.qtyApproved})`
-      );
-    }
+  const isCrossOutlet = req.toDepartment.outletId !== req.fromDepartment.outletId;
+  const supplierOutletId = req.toDepartment.outletId;
+  const receiverOutletId = req.fromDepartment.outletId;
+
+  // Validate the active user is at the supplier outlet.
+  if (outlet.id !== supplierOutletId) {
+    throw new Error("Switch to the supplier outlet before fulfilling this requisition");
   }
 
-  // Build challan number — reuses the requisition number with a -T suffix
-  // so the paper trail is obvious ("REQ-23456-000001 → REQ-23456-000001-T").
-  const challanNo = `${req.reqNo}-T`;
-
-  await db.$transaction(async (tx) => {
-    const transfer = await tx.transfer.create({
-      data: {
-        challanNo,
-        transferDate: new Date(),
-        status: "RECEIVED", // internal — same outlet, single-shot
-        senderOutletId: outlet.id,
-        receiverOutletId: outlet.id,
-        fromDepartmentId: req.toDepartmentId, // STORE
-        toDepartmentId: req.fromDepartmentId, // HOD's dept
-        kind: "INTERNAL",
-        requisitionId: req.id,
-        sentById: user.id,
-        receivedById: user.id,
-        receivedAt: new Date(),
-        notes: `Auto-fulfilment of ${req.reqNo}`,
-        lines: {
-          create: linesToMove.map((l) => ({
-            rawMaterialId: l.rawMaterialId,
-            qtySent: l.qtyApproved,
-            qtyReceived: l.qtyApproved,
-            unit: l.unit,
-            priceAtTransfer: 0,
-          })),
+  if (!isCrossOutlet) {
+    // ─── INTERNAL flow (Prompt 2 — unchanged) ───────────────────────────
+    for (const l of linesToMove) {
+      const onHand = await stockAtDepartment(l.rawMaterialId, req.toDepartmentId);
+      if (onHand < l.qtyApproved) {
+        throw new Error(
+          `Insufficient stock of ${l.rawMaterial.name} at STORE (have ${onHand}, need ${l.qtyApproved})`
+        );
+      }
+    }
+    const challanNo = `${req.reqNo}-T`;
+    await db.$transaction(async (tx) => {
+      await tx.transfer.create({
+        data: {
+          challanNo,
+          transferDate: new Date(),
+          status: "RECEIVED",
+          senderOutletId: outlet.id,
+          receiverOutletId: outlet.id,
+          fromDepartmentId: req.toDepartmentId,
+          toDepartmentId: req.fromDepartmentId,
+          kind: "INTERNAL",
+          requisitionId: req.id,
+          sentById: user.id,
+          receivedById: user.id,
+          receivedAt: new Date(),
+          notes: `Auto-fulfilment of ${req.reqNo}`,
+          lines: {
+            create: linesToMove.map((l) => ({
+              rawMaterialId: l.rawMaterialId,
+              qtySent: l.qtyApproved,
+              qtyReceived: l.qtyApproved,
+              unit: l.unit,
+              priceAtTransfer: 0,
+            })),
+          },
         },
-      },
+      });
+      await tx.requisition.update({ where: { id: req.id }, data: { status: "FULFILLED" } });
+    });
+    for (const l of linesToMove) {
+      await postInternalTransferMovement({
+        rawMaterialId: l.rawMaterialId,
+        qty: l.qtyApproved,
+        fromDepartmentId: req.toDepartmentId,
+        toDepartmentId: req.fromDepartmentId,
+        refType: "Requisition",
+        refId: req.id,
+        note: `${req.reqNo} fulfilment`,
+      });
+    }
+  } else {
+    // ─── CHAIN flow (cross-outlet, new in Prompt 4.2) ───────────────────
+    // The requisition lines reference the REQUESTER's RawMaterial ids. We
+    // need to find the matching RMs at the supplier outlet (the active one)
+    // by name + decrement stock there.
+    const lineNames = linesToMove.map((l) => l.rawMaterial.name);
+    const supplierRms = await db.rawMaterial.findMany({
+      where: { outletId: outlet.id, name: { in: lineNames } },
+    });
+    const supplierRmByName = new Map(supplierRms.map((r) => [r.name, r]));
+
+    // Validate supplier has stock for every line.
+    for (const l of linesToMove) {
+      const srm = supplierRmByName.get(l.rawMaterial.name);
+      if (!srm) {
+        throw new Error(`${l.rawMaterial.name} doesn't exist at the supplier outlet — catalog mismatch`);
+      }
+      if (srm.currentQty < l.qtyApproved) {
+        throw new Error(
+          `Insufficient stock of ${l.rawMaterial.name} at this BS/BK (have ${srm.currentQty}, need ${l.qtyApproved})`
+        );
+      }
+    }
+
+    const challanNo = `${req.reqNo}-C`;
+    await db.$transaction(async (tx) => {
+      await tx.transfer.create({
+        data: {
+          challanNo,
+          transferDate: new Date(),
+          status: "SENT", // CHAIN — receiver confirms separately
+          senderOutletId: supplierOutletId,
+          receiverOutletId: receiverOutletId,
+          fromDepartmentId: req.toDepartmentId,
+          toDepartmentId: req.fromDepartmentId,
+          kind: "CHAIN",
+          requisitionId: req.id,
+          sentById: user.id,
+          notes: `Chain fulfilment of ${req.reqNo}`,
+          lines: {
+            create: linesToMove.map((l) => {
+              const srm = supplierRmByName.get(l.rawMaterial.name)!;
+              return {
+                rawMaterialId: srm.id, // supplier's RM id on the transfer line
+                qtySent: l.qtyApproved,
+                qtyReceived: 0,
+                unit: l.unit,
+                priceAtTransfer: srm.avgCost ?? 0,
+              };
+            }),
+          },
+        },
+      });
+      await tx.requisition.update({ where: { id: req.id }, data: { status: "FULFILLED" } });
     });
 
-    await tx.requisition.update({
-      where: { id: req.id },
-      data: { status: "FULFILLED" },
-    });
-
-    // Stock ledger moves OUTSIDE the transaction — postInternalTransferMovement
-    // does its own writes. We accept the small risk window between transfer
-    // commit and ledger entries; ledger reconstruct can always replay.
-    return transfer;
-  });
-
-  for (const l of linesToMove) {
-    await postInternalTransferMovement({
-      rawMaterialId: l.rawMaterialId,
-      qty: l.qtyApproved,
-      fromDepartmentId: req.toDepartmentId,
-      toDepartmentId: req.fromDepartmentId,
-      refType: "Requisition",
-      refId: req.id,
-      note: `${req.reqNo} fulfilment`,
-    });
+    // Decrement supplier stock now (TRANSFER_OUT). Receiver TRANSFER_IN
+    // happens via the standard receiveTransfer action.
+    for (const l of linesToMove) {
+      const srm = supplierRmByName.get(l.rawMaterial.name)!;
+      await moveStock({
+        rawMaterialId: srm.id,
+        delta: -l.qtyApproved,
+        reason: "CHAIN_TRANSFER",
+        refType: "Requisition",
+        refId: req.id,
+        departmentId: supplierStoreDept.id,
+        note: `${req.reqNo} → outlet ${receiverOutletId}`,
+      });
+    }
   }
 
   await logActivity({
     action: "UPDATE",
     entity: "RawMaterial",
     entityId: req.id,
-    summary: `Requisition ${req.reqNo} fulfilled — ${linesToMove.length} item(s) transferred`,
+    summary: `Requisition ${req.reqNo} fulfilled — ${linesToMove.length} item(s) ${
+      isCrossOutlet ? "shipped (chain)" : "transferred"
+    }`,
     outletId: outlet.id,
   });
 
   if (req.requestedById) {
     await db.notification.create({
       data: {
-        outletId: outlet.id,
+        outletId: receiverOutletId,
         kind: "INFO",
-        title: `Requisition ${req.reqNo} delivered`,
-        body: `${linesToMove.length} item(s) moved to your department.`,
+        title: `Requisition ${req.reqNo} ${isCrossOutlet ? "shipped" : "delivered"}`,
+        body: isCrossOutlet
+          ? `${linesToMove.length} item(s) en route. Confirm receipt at /inventory/transfers.`
+          : `${linesToMove.length} item(s) moved to your department.`,
         link: `/inventory/requisitions/${req.id}`,
       },
     });
