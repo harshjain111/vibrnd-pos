@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { logActivity } from "@/lib/audit";
-import { moveStock } from "@/lib/stock";
+import { moveStock, applyRecipeStock } from "@/lib/stock";
 import { assertOrderEditable } from "@/lib/day-close";
 import { requireUser } from "@/lib/rbac";
 
@@ -32,24 +32,28 @@ export async function cancelOrder(input: z.infer<typeof CancelInput>) {
     data: { status: "CANCELLED" },
   });
 
-  // Reverse stock decrement if a recipe consumed it
+  // Reverse stock decrement via the recipe (variant + addon aware).
   const items = await db.orderItem.findMany({ where: { orderId: id } });
   for (const li of items) {
-    const recipe = await db.recipe.findUnique({
-      where: { itemId: li.itemId },
-      include: { ingredients: true },
+    const addons: { name: string }[] = li.addonsJson
+      ? (() => {
+          try {
+            return JSON.parse(li.addonsJson) as { name: string }[];
+          } catch {
+            return [];
+          }
+        })()
+      : [];
+    await applyRecipeStock({
+      itemId: li.itemId,
+      variantName: li.variantName ?? null,
+      qty: li.qty,
+      addons,
+      refId: id,
+      refType: "Order",
+      reverse: true,
+      note: `Reverse ${o.invoiceNo} · ${li.name} ×${li.qty}`,
     });
-    if (!recipe) continue;
-    for (const ing of recipe.ingredients) {
-      await moveStock({
-        rawMaterialId: ing.rawMaterialId,
-        delta: ing.qty * li.qty,
-        reason: "CANCEL_REVERSE",
-        refType: "Order",
-        refId: id,
-        note: `Reverse ${o.invoiceNo} · ${li.name} ×${li.qty}`,
-      });
-    }
   }
 
   await logActivity({

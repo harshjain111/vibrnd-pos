@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/rbac";
-import { moveStock } from "@/lib/stock";
+import { moveStock, applyRecipeStock } from "@/lib/stock";
 import { logActivity } from "@/lib/audit";
 import { getSessionUser } from "@/lib/session";
 import { inr } from "@/lib/utils";
@@ -85,23 +85,27 @@ export async function processReturn(input: z.infer<typeof ReturnInput>) {
     },
   });
 
-  // Reverse stock per recipe for returned qty
+  // Reverse stock per recipe for returned qty — variant + addon aware.
   for (const r of returns) {
-    const recipe = await db.recipe.findUnique({
-      where: { itemId: r.item.itemId },
-      include: { ingredients: true },
+    const addons: { name: string }[] = r.item.addonsJson
+      ? (() => {
+          try {
+            return JSON.parse(r.item.addonsJson) as { name: string }[];
+          } catch {
+            return [];
+          }
+        })()
+      : [];
+    await applyRecipeStock({
+      itemId: r.item.itemId,
+      variantName: r.item.variantName ?? null,
+      qty: r.qty,
+      addons,
+      refId: ret.id,
+      refType: "SalesReturn",
+      reverse: true,
+      note: `${returnNo} ← ${order.invoiceNo} · ${r.item.name} ×${r.qty}`,
     });
-    if (!recipe) continue;
-    for (const ing of recipe.ingredients) {
-      await moveStock({
-        rawMaterialId: ing.rawMaterialId,
-        delta: ing.qty * r.qty,
-        reason: "CANCEL_REVERSE",
-        refType: "SalesReturn",
-        refId: ret.id,
-        note: `${returnNo} ← ${order.invoiceNo} · ${r.item.name} ×${r.qty}`,
-      });
-    }
   }
 
   await logActivity({

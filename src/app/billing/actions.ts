@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { nextInvoiceNo, nextKotNo, inr } from "@/lib/utils";
 import { logActivity } from "@/lib/audit";
-import { moveStock } from "@/lib/stock";
+import { moveStock, applyRecipeStock } from "@/lib/stock";
 import { recordLoyalty, pointsEarned, redeemValue, tierFor, earnMultiplier } from "@/lib/loyalty";
 import { requireUser } from "@/lib/rbac";
 
@@ -253,23 +253,17 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
     });
   }
 
-  // Stock auto-consumption (best-effort) — every move is logged
+  // Stock auto-consumption — variant + addon aware via applyRecipeStock.
   for (const l of data.lines) {
-    const recipe = await db.recipe.findUnique({
-      where: { itemId: l.itemId },
-      include: { ingredients: true },
+    await applyRecipeStock({
+      itemId: l.itemId,
+      variantName: l.variantName ?? null,
+      qty: l.qty,
+      addons: l.addons ?? [],
+      refId: order.id,
+      refType: "Order",
+      note: `${invoiceNo} · ${itemMap.get(l.itemId)?.name ?? "item"}${l.variantName ? ` (${l.variantName})` : ""} ×${l.qty}`,
     });
-    if (!recipe) continue;
-    for (const ing of recipe.ingredients) {
-      await moveStock({
-        rawMaterialId: ing.rawMaterialId,
-        delta: -(ing.qty * l.qty),
-        reason: "SALE",
-        refType: "Order",
-        refId: order.id,
-        note: `${invoiceNo} · ${itemMap.get(l.itemId)?.name ?? "item"} ×${l.qty}`,
-      });
-    }
   }
 
   // Loyalty bookkeeping

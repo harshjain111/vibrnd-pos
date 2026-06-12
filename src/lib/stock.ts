@@ -143,6 +143,79 @@ export async function postInternalTransferMovement(input: {
 }
 
 /**
+ * Look up the (item, variant) recipe and apply its ingredient deltas to
+ * stock — variant + addon aware (per the recipes redesign).
+ *
+ * Used by:
+ *   • placeOrder (consume)      reverse=false
+ *   • cancelOrder (refund)      reverse=true
+ *   • editOrder.removeLine      reverse=true
+ *   • createSalesReturn         reverse=true
+ *
+ * Rules:
+ *   1. No variantName → no-op (recipes are per item+variant).
+ *   2. Variant must exist on the item, recipe must exist.
+ *   3. Base ingredients (addonId IS NULL) consume × itemQty.
+ *   4. For each customer-selected addon (passed in `addons`), look up
+ *      that addon by name and consume its ingredients × itemQty.
+ *
+ * "addons" is the JSON-snapshotted list of selected addons on the order
+ * line — same shape as OrderItem.addonsJson: [{name, priceDelta}].
+ *
+ * Best-effort — failures are logged but don't roll back the caller.
+ */
+export async function applyRecipeStock(input: {
+  itemId: string;
+  variantName: string | null;
+  qty: number;
+  addons: { name: string }[];
+  refId: string;
+  refType: string;
+  note?: string;
+  /** When true, the delta sign is flipped (refund / sales-return / cancel). */
+  reverse?: boolean;
+}): Promise<void> {
+  if (!input.variantName) return;
+
+  const variant = await db.itemVariant.findFirst({
+    where: { itemId: input.itemId, name: input.variantName },
+  });
+  if (!variant) return;
+
+  const recipe = await db.recipe.findFirst({
+    where: { itemId: input.itemId, itemVariantId: variant.id },
+    include: { ingredients: true },
+  });
+  if (!recipe) return;
+
+  const selectedAddonIds = new Set<string>();
+  if (input.addons && input.addons.length > 0) {
+    const names = input.addons.map((a) => a.name);
+    const found = await db.addon.findMany({
+      where: { itemId: input.itemId, name: { in: names } },
+      select: { id: true },
+    });
+    for (const a of found) selectedAddonIds.add(a.id);
+  }
+
+  const sign = input.reverse ? 1 : -1;
+  const reason: StockReason = input.reverse ? "CANCEL_REVERSE" : "SALE";
+
+  for (const ing of recipe.ingredients) {
+    const include = ing.addonId === null || selectedAddonIds.has(ing.addonId);
+    if (!include) continue;
+    await moveStock({
+      rawMaterialId: ing.rawMaterialId,
+      delta: sign * ing.qty * input.qty,
+      reason,
+      refType: input.refType,
+      refId: input.refId,
+      note: input.note,
+    });
+  }
+}
+
+/**
  * Compute how much of `rawMaterialId` currently sits at `departmentId`.
  *
  * Two cases:

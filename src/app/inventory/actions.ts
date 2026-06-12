@@ -64,29 +64,112 @@ export async function saveSupplier(fd: FormData) {
   revalidatePath("/inventory/suppliers");
 }
 
-const Recipe = z.object({
+const RecipeIngredientInput = z.object({
+  rawMaterialId: z.string(),
+  qty: z.coerce.number().positive(),
+  unit: z.string(),
+});
+const AddonGroupInput = z.object({
+  addonId: z.string(),
+  ingredients: z.array(RecipeIngredientInput),
+});
+const RecipeInput = z.object({
   itemId: z.string(),
-  ingredients: z.array(
-    z.object({ rawMaterialId: z.string(), qty: z.coerce.number().positive(), unit: z.string() })
-  ),
+  itemVariantId: z.string(),
+  /** Always-consumed ingredients for this (item, variant). */
+  base: z.array(RecipeIngredientInput),
+  /** Per-addon ingredients — only consumed when the customer picks that
+   *  specific addon on the bill. Each addon configured per-variant so e.g.
+   *  Extra Cheese on Burger Veg can pull different qty than on Chicken. */
+  addons: z.array(AddonGroupInput).default([]),
 });
 
-export async function saveRecipe(input: z.infer<typeof Recipe>) {
-  const parsed = Recipe.parse(input);
-  await db.recipe.upsert({
-    where: { itemId: parsed.itemId },
-    update: {
-      ingredients: {
-        deleteMany: {},
-        create: parsed.ingredients,
-      },
-    },
-    create: {
-      itemId: parsed.itemId,
-      ingredients: { create: parsed.ingredients },
-    },
-  });
-  revalidatePath("/inventory/recipes");
+export type RecipeActionResult = { ok: true; id: string } | { ok: false; error: string };
+
+/**
+ * Upsert one recipe for a (item, variant) pair. Replaces all existing
+ * ingredients in a single transaction so the saved state always matches
+ * what the form posts.
+ */
+export async function saveRecipe(input: z.infer<typeof RecipeInput>): Promise<RecipeActionResult> {
+  try {
+    const data = RecipeInput.parse(input);
+
+    // Validate the variant belongs to the item.
+    const variant = await db.itemVariant.findFirst({
+      where: { id: data.itemVariantId, itemId: data.itemId },
+    });
+    if (!variant) {
+      return { ok: false, error: "Variant doesn't belong to this item" };
+    }
+
+    // Validate any addonId references belong to the same item.
+    if (data.addons.length > 0) {
+      const addonIds = data.addons.map((a) => a.addonId);
+      const found = await db.addon.findMany({
+        where: { id: { in: addonIds }, itemId: data.itemId },
+      });
+      if (found.length !== addonIds.length) {
+        return { ok: false, error: "One or more addons don't belong to this item" };
+      }
+    }
+
+    // Find-or-create the recipe row, then swap ingredients atomically.
+    const existing = await db.recipe.findFirst({
+      where: { itemId: data.itemId, itemVariantId: data.itemVariantId },
+    });
+    const recipeId = await db.$transaction(async (tx) => {
+      let id: string;
+      if (existing) {
+        id = existing.id;
+        await tx.recipeIngredient.deleteMany({ where: { recipeId: id } });
+      } else {
+        const created = await tx.recipe.create({
+          data: { itemId: data.itemId, itemVariantId: data.itemVariantId },
+        });
+        id = created.id;
+      }
+      const rows = [
+        ...data.base.map((ing) => ({
+          recipeId: id,
+          rawMaterialId: ing.rawMaterialId,
+          qty: ing.qty,
+          unit: ing.unit,
+          addonId: null as string | null,
+        })),
+        ...data.addons.flatMap((grp) =>
+          grp.ingredients.map((ing) => ({
+            recipeId: id,
+            rawMaterialId: ing.rawMaterialId,
+            qty: ing.qty,
+            unit: ing.unit,
+            addonId: grp.addonId,
+          }))
+        ),
+      ];
+      if (rows.length > 0) {
+        await tx.recipeIngredient.createMany({ data: rows });
+      }
+      return id;
+    });
+
+    revalidatePath("/inventory/recipes");
+    return { ok: true, id: recipeId };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export async function deleteRecipe(fd: FormData): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const id = String(fd.get("id") ?? "");
+    if (!id) return { ok: false, error: "Recipe id required" };
+    await db.recipe.delete({ where: { id } });
+    revalidatePath("/inventory/recipes");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 export async function adjustStock(fd: FormData) {

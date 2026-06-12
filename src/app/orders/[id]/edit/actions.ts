@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/rbac";
-import { moveStock } from "@/lib/stock";
+import { moveStock, applyRecipeStock } from "@/lib/stock";
 import { logActivity } from "@/lib/audit";
 import { inr } from "@/lib/utils";
 
@@ -102,23 +102,17 @@ export async function appendLines(input: z.infer<typeof AddLineInput>) {
     },
   });
 
-  // Stock consumption for added lines
+  // Stock consumption for added lines — variant + addon aware.
   for (const l of data.lines) {
-    const recipe = await db.recipe.findUnique({
-      where: { itemId: l.itemId },
-      include: { ingredients: true },
+    await applyRecipeStock({
+      itemId: l.itemId,
+      variantName: l.variantName ?? null,
+      qty: l.qty,
+      addons: l.addons ?? [],
+      refId: order.id,
+      refType: "Order",
+      note: `Amend ${order.invoiceNo} · ${itemMap.get(l.itemId)?.name} ×${l.qty}`,
     });
-    if (!recipe) continue;
-    for (const ing of recipe.ingredients) {
-      await moveStock({
-        rawMaterialId: ing.rawMaterialId,
-        delta: -(ing.qty * l.qty),
-        reason: "SALE",
-        refType: "Order",
-        refId: order.id,
-        note: `Amend ${order.invoiceNo} · ${itemMap.get(l.itemId)?.name} ×${l.qty}`,
-      });
-    }
   }
 
   const itemSummary = data.lines.map((l) => `${itemMap.get(l.itemId)?.name} ×${l.qty}`).join(", ");
@@ -158,23 +152,26 @@ export async function removeLine(input: z.infer<typeof RemoveInput>) {
   const line = await db.orderItem.findUnique({ where: { id: orderItemId } });
   if (!line || line.orderId !== orderId) throw new Error("Line not found");
 
-  // Reverse stock for this line
-  const recipe = await db.recipe.findUnique({
-    where: { itemId: line.itemId },
-    include: { ingredients: true },
+  // Reverse stock for this line — variant + addon aware.
+  const addons: { name: string }[] = line.addonsJson
+    ? (() => {
+        try {
+          return JSON.parse(line.addonsJson) as { name: string }[];
+        } catch {
+          return [];
+        }
+      })()
+    : [];
+  await applyRecipeStock({
+    itemId: line.itemId,
+    variantName: line.variantName ?? null,
+    qty: line.qty,
+    addons,
+    refId: order.id,
+    refType: "Order",
+    reverse: true,
+    note: `Remove line from ${order.invoiceNo} · ${line.name}`,
   });
-  if (recipe) {
-    for (const ing of recipe.ingredients) {
-      await moveStock({
-        rawMaterialId: ing.rawMaterialId,
-        delta: ing.qty * line.qty,
-        reason: "CANCEL_REVERSE",
-        refType: "Order",
-        refId: order.id,
-        note: `Remove line from ${order.invoiceNo} · ${line.name}`,
-      });
-    }
-  }
 
   // Recompute totals minus this line
   const lineTotal = line.price * line.qty;

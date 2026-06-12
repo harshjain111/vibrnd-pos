@@ -237,7 +237,7 @@ model Item {
   category      Category @relation(fields: [categoryId], references: [id])
   outletId      String
   outlet        Outlet   @relation(fields: [outletId], references: [id])
-  recipe        Recipe?
+  recipes       Recipe[]
   orderItems    OrderItem[]
   kotLines      KitchenTicketLine[]
   variants      ItemVariant[]
@@ -255,15 +255,17 @@ model ItemVariant {
   name      String   // "Half" / "Full" / "Small" / "Medium" / "Large"
   price     Float    // absolute price for this variant
   rank      Int      @default(0)
+  recipes   Recipe[]
 }
 
 model Addon {
-  id          String   @id @default(cuid())
-  itemId      String
-  item        Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  name        String   // "Extra cheese" / "Less spicy" / "No onion"
-  priceDelta  Float    @default(0)
-  rank        Int      @default(0)
+  id                String   @id @default(cuid())
+  itemId            String
+  item              Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  name              String   // "Extra cheese" / "Less spicy" / "No onion"
+  priceDelta        Float    @default(0)
+  rank              Int      @default(0)
+  recipeIngredients RecipeIngredient[]
 }
 
 model Customer {
@@ -616,22 +618,43 @@ model PurchaseOrderLine {
   grnLines      GrnLine[]
 }
 
+/// One recipe per (item, variant) pair. Items WITHOUT variants don't have
+/// recipes in this model — the recipes UI filters to items that have at
+/// least one ItemVariant. Per-variant separation lets Burger (Veg) and
+/// Burger (Chicken) consume completely different raw materials.
 model Recipe {
-  id          String   @id @default(cuid())
-  itemId      String   @unique
-  item        Item     @relation(fields: [itemId], references: [id])
-  ingredients RecipeIngredient[]
-  createdAt   DateTime @default(now())
+  id            String   @id @default(cuid())
+  itemId        String
+  item          Item     @relation(fields: [itemId], references: [id])
+  itemVariantId String
+  itemVariant   ItemVariant @relation(fields: [itemVariantId], references: [id], onDelete: Cascade)
+  ingredients   RecipeIngredient[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([itemId, itemVariantId])
+  @@index([itemVariantId])
 }
 
+/// Ingredient line on a recipe.
+///   • addonId NULL  → part of the BASE recipe (always consumed when the
+///                     item+variant is sold).
+///   • addonId SET   → consumed ONLY when the customer selects that
+///                     addon. Each addon can have its own ingredient set
+///                     per-variant (e.g. Extra Cheese on Burger-Veg may
+///                     pull 30g cheese, on Burger-Chicken may pull 40g).
 model RecipeIngredient {
   id            String      @id @default(cuid())
   recipeId      String
   recipe        Recipe      @relation(fields: [recipeId], references: [id], onDelete: Cascade)
   rawMaterialId String
   rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  addonId       String?
+  addon         Addon?      @relation(fields: [addonId], references: [id], onDelete: Cascade)
   qty           Float
   unit          String
+
+  @@index([recipeId, addonId])
 }
 
 model TaxSlab {
