@@ -11,9 +11,14 @@ export type StockReason =
   | "TRANSFER_IN"
   | "PRODUCTION_IN"
   | "PRODUCTION_OUT"
+  | "PRODUCTION_INPUT"
+  | "PRODUCTION_OUTPUT"
   | "COUNT_ADJUST"
   | "SALES_RETURN"
-  | "PURCHASE_RETURN";
+  | "PURCHASE_RETURN"
+  | "INTERNAL_TRANSFER"
+  | "CHAIN_TRANSFER"
+  | "GRN_RECEIPT";
 
 type MoveInput = {
   rawMaterialId: string;
@@ -22,6 +27,10 @@ type MoveInput = {
   refType?: string;
   refId?: string;
   note?: string;
+  /** Required for chain-inventory flows (requisitions / transfers / GRN /
+   *  production). Optional + null for legacy callers (POS settle, etc.)
+   *  that haven't been migrated to per-dept tracking yet. */
+  departmentId?: string | null;
 };
 
 /**
@@ -49,6 +58,7 @@ export async function moveStock(input: MoveInput) {
         qtyAfter: after.currentQty,
         note: input.note,
         outletId: before.outletId,
+        departmentId: input.departmentId ?? null,
       },
     });
   } catch (err) {
@@ -75,4 +85,81 @@ export async function moveStock(input: MoveInput) {
   } catch (err) {
     console.error("[stock] low-stock notification failed:", err);
   }
+}
+
+/**
+ * Internal department-to-department transfer within the SAME outlet (Store →
+ * Kitchen / Bar / Housekeeping). Logs as TWO ledger entries on the same
+ * RawMaterial — one negative at the source dept, one positive at the
+ * destination dept — without touching `currentQty` (the outlet still has
+ * the same total). Per-dept qty is reconstructed from the ledger via
+ * `stockAtDepartment`.
+ *
+ * Kept here next to moveStock so anything mutating stock goes through one
+ * file we can audit.
+ */
+export async function postInternalTransferMovement(input: {
+  rawMaterialId: string;
+  qty: number; // always positive
+  fromDepartmentId: string;
+  toDepartmentId: string;
+  refType: string; // "Transfer" | "Requisition"
+  refId: string;
+  note?: string;
+}) {
+  const rm = await db.rawMaterial.findUnique({ where: { id: input.rawMaterialId } });
+  if (!rm) throw new Error("Raw material not found");
+  // Two ledger rows — qtyBefore/qtyAfter stay equal to currentQty because
+  // outlet-total didn't change. Per-dept totals are derived from the sum
+  // of all entries with that departmentId.
+  await db.stockMovement.createMany({
+    data: [
+      {
+        rawMaterialId: input.rawMaterialId,
+        delta: -input.qty,
+        reason: "INTERNAL_TRANSFER",
+        refType: input.refType,
+        refId: input.refId,
+        qtyBefore: rm.currentQty,
+        qtyAfter: rm.currentQty,
+        outletId: rm.outletId,
+        departmentId: input.fromDepartmentId,
+        note: input.note,
+      },
+      {
+        rawMaterialId: input.rawMaterialId,
+        delta: input.qty,
+        reason: "INTERNAL_TRANSFER",
+        refType: input.refType,
+        refId: input.refId,
+        qtyBefore: rm.currentQty,
+        qtyAfter: rm.currentQty,
+        outletId: rm.outletId,
+        departmentId: input.toDepartmentId,
+        note: input.note,
+      },
+    ],
+  });
+}
+
+/**
+ * Sum the ledger to compute how much of `rawMaterialId` currently sits in
+ * `departmentId`. We special-case STORE: anything with `departmentId = null`
+ * (legacy un-backfilled rows from before chain inventory landed) counts as
+ * STORE so existing reports stay accurate.
+ *
+ * Called from requisition / transfer flows that need to validate "enough
+ * stock at source dept" before mutating.
+ */
+export async function stockAtDepartment(rawMaterialId: string, departmentId: string): Promise<number> {
+  const dept = await db.department.findUnique({ where: { id: departmentId } });
+  const includeNullForStore = dept?.kind === "STORE";
+  const where = includeNullForStore
+    ? { rawMaterialId, OR: [{ departmentId }, { departmentId: null, outletId: dept!.outletId }] }
+    : { rawMaterialId, departmentId };
+  const agg = await db.stockMovement.aggregate({
+    where,
+    _sum: { delta: true },
+  });
+  return Number(agg._sum.delta ?? 0);
 }

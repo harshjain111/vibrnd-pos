@@ -480,6 +480,8 @@ model RawMaterial {
   productionMastersAsOutput ProductionMaster[] @relation("ProductionOutputRM")
   countLines      StockCountLine[]
   rmSuppliers     RawMaterialSupplier[]
+  requisitionLines RequisitionLine[]
+  grnLines         GrnLine[]
   createdAt       DateTime @default(now())
 }
 
@@ -1418,6 +1420,7 @@ model RequisitionLine {
   requisitionId   String
   requisition     Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
   rawMaterialId   String
+  rawMaterial     RawMaterial @relation(fields: [rawMaterialId], references: [id])
   qtyRequested    Float
   qtyApproved     Float    @default(0)   // SM edits this; defaults to 0 (= declined per-line)
   unit            String
@@ -1464,6 +1467,7 @@ model GrnLine {
   poLineId        String?
   poLine          PurchaseOrderLine? @relation(fields: [poLineId], references: [id])
   rawMaterialId   String
+  rawMaterial     RawMaterial @relation(fields: [rawMaterialId], references: [id])
   qtyReceived     Float
   qtyDamaged      Float    @default(0)
   qtyShort        Float    @default(0)   // expected but didn't arrive
