@@ -4,6 +4,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { createSession, clearSession } from "@/lib/session";
+import { landingPathFor } from "@/lib/role-landing";
 
 const LoginInput = z.object({
   email: z.string().email(),
@@ -31,7 +32,10 @@ export async function signIn(_state: { error?: string } | null, fd: FormData): P
   }
 
   await createSession(user.id);
-  redirect("/");
+  // Role-aware landing — HOD goes to requisitions, SM to approval queue,
+  // CC to pending-PO queue, Accountant to GRNs, etc. POS roles keep going
+  // to /billing; OWNER + MANAGER land on the operations dashboard.
+  redirect(landingPathFor(user.role));
 }
 
 export async function signOut() {

@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/shell/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -5,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { inr } from "@/lib/utils";
 import { getActiveOutlet } from "@/lib/outlet";
 import { dashboardKpis, type RangeKey } from "@/lib/analytics";
+import { getSessionUser } from "@/lib/session";
+import { landingPathFor } from "@/lib/role-landing";
 import {
   ArrowUpRight,
   Banknote,
@@ -22,6 +25,16 @@ import { TrendChart, HourlyChart } from "./_components/charts";
 import { RangePicker } from "./_components/range-picker";
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ range?: RangeKey }> }) {
+  // Role-aware landing — if the signed-in user isn't an OWNER/MANAGER, send
+  // them to their natural work surface (HOD → requisitions, SM → approval
+  // queue, CC → pending POs, Accountant → GRN, etc.). The operations
+  // dashboard below is for OWNER + MANAGER only.
+  const user = await getSessionUser();
+  if (user) {
+    const landing = landingPathFor(user.role);
+    if (landing !== "/") redirect(landing);
+  }
+
   const sp = await searchParams;
   const range = (sp.range ?? "last7") as RangeKey;
   const outlet = await getActiveOutlet();
