@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Building2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -12,13 +12,12 @@ export type DeptOption = {
 
 /**
  * Department switcher pill shown at the top of every /inventory/* page when
- * the active outlet has multiDeptInventoryEnabled = true. Lets a Manager
- * or Owner pivot which department's stock they're viewing without leaving
- * the current page. HOD-scoped users see only their own dept (and the
- * server enforces the scoping anyway).
+ * the active outlet has multiDeptInventoryEnabled = true. Clicking a
+ * department navigates to its per-department stock view at
+ * `/inventory/departments/<id>` — one row per RawMaterial with its qty
+ * AT that department, computed from the ledger.
  *
- * Selection is persisted via the `dept=<id>` querystring so deep links work
- * and so refresh keeps the choice. No cookie, no global state.
+ * HOD-scoped users see only their own dept's pill (server-enforced anyway).
  */
 export function DeptSwitcher({
   departments,
@@ -33,22 +32,41 @@ export function DeptSwitcher({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const sp = useSearchParams();
 
-  const setDept = (id: string) => {
-    const next = new URLSearchParams(sp?.toString() ?? "");
-    next.set("dept", id);
-    router.push(`${pathname}?${next.toString()}`);
+  const navigate = (id: string) => {
+    router.push(`/inventory/departments/${id}`);
   };
+
+  // Detect which dept is "currently" being viewed from the URL.
+  const activeFromUrl = React.useMemo(() => {
+    if (!pathname) return null;
+    const m = pathname.match(/^\/inventory\/departments\/([^/?]+)/);
+    return m?.[1] ?? null;
+  }, [pathname]);
+  const activeDept = currentDeptId ?? activeFromUrl;
 
   if (lockedToKind) {
     const locked = departments.find((d) => d.kind === lockedToKind);
+    if (!locked) {
+      return (
+        <div className="inline-flex items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-xs">
+          <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-muted-foreground">Department</span>
+          <span className="font-semibold">{lockedToKind}</span>
+        </div>
+      );
+    }
     return (
-      <div className="inline-flex items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-xs">
+      <button
+        type="button"
+        onClick={() => navigate(locked.id)}
+        className="inline-flex items-center gap-1.5 rounded-full border bg-card hover:bg-accent px-3 py-1.5 text-xs transition-colors"
+        title={`View ${locked.name} stock`}
+      >
         <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
         <span className="text-muted-foreground">Department</span>
-        <span className="font-semibold">{locked?.name ?? lockedToKind}</span>
-      </div>
+        <span className="font-semibold">{locked.name}</span>
+      </button>
     );
   }
 
@@ -58,17 +76,17 @@ export function DeptSwitcher({
     <div className="inline-flex items-center gap-1 rounded-full border bg-card p-1">
       <Building2 className="h-3.5 w-3.5 text-muted-foreground ml-1.5 mr-0.5" />
       {departments.map((d) => {
-        const active = d.id === currentDeptId;
+        const active = d.id === activeDept;
         return (
           <button
             key={d.id}
             type="button"
-            onClick={() => setDept(d.id)}
+            onClick={() => navigate(d.id)}
             className={cn(
               "rounded-full px-3 py-1 text-xs transition-colors",
               active ? "bg-primary text-primary-foreground" : "hover:bg-accent text-foreground"
             )}
-            title={`Switch to ${d.name}`}
+            title={`View ${d.name} stock`}
           >
             {d.name}
           </button>

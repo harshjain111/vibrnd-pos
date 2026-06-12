@@ -4,21 +4,23 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, ClipboardList, Inbox, CheckCircle2, AlertCircle, XCircle } from "lucide-react";
+import { Plus, ClipboardList, Inbox, CheckCircle2, XCircle } from "lucide-react";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser, ownedDepartmentKind } from "@/lib/rbac";
 import { getSessionUser } from "@/lib/session";
+import { canAccess } from "@/lib/permissions";
+import { stockAtDepartment } from "@/lib/stock";
+import { RequisitionsTable, type Row } from "./list-client";
 
 export const dynamic = "force-dynamic";
 
 const STATUS_TABS = [
-  { key: "PENDING", label: "Pending review", filter: ["NEW"], Icon: Inbox, tone: "amber" },
-  { key: "ACTIVE", label: "Approved / Partial", filter: ["APPROVED", "PARTIAL"], Icon: CheckCircle2, tone: "sky" },
-  { key: "FULFILLED", label: "Fulfilled", filter: ["FULFILLED"], Icon: CheckCircle2, tone: "emerald" },
-  { key: "DECLINED", label: "Declined / Cancelled", filter: ["DECLINED", "CANCELLED"], Icon: XCircle, tone: "rose" },
-  { key: "ALL", label: "All", filter: null, Icon: ClipboardList, tone: "neutral" },
+  { key: "PENDING", label: "Pending review", filter: ["NEW"], Icon: Inbox },
+  { key: "ACTIVE", label: "Approved / Partial", filter: ["APPROVED", "PARTIAL"], Icon: CheckCircle2 },
+  { key: "FULFILLED", label: "Fulfilled", filter: ["FULFILLED"], Icon: CheckCircle2 },
+  { key: "DECLINED", label: "Declined / Cancelled", filter: ["DECLINED", "CANCELLED"], Icon: XCircle },
+  { key: "ALL", label: "All", filter: null, Icon: ClipboardList },
 ] as const;
 
 type TabKey = (typeof STATUS_TABS)[number]["key"];
@@ -33,13 +35,12 @@ export default async function RequisitionsListPage({
   const tab = (sp.tab ?? "PENDING") as TabKey;
   const user = await getSessionUser();
   const outlet = await getActiveOutlet();
+  const canReview = !!user && canAccess(user.role, "inventory.requisitions.approve");
 
   const activeTab = STATUS_TABS.find((t) => t.key === tab) ?? STATUS_TABS[0];
 
-  // HODs only see requisitions raised by THEIR department; everyone else
-  // (SM / Manager / Owner) sees the full outlet queue PLUS inbound chain
-  // requisitions targeting this outlet's STORE (when this outlet is a
-  // BASE_STORE / BASE_KITCHEN).
+  // HODs only see their dept's requisitions; everyone else sees the full
+  // outlet queue + inbound chain reqs targeting this outlet's STORE.
   const hodKind = user ? ownedDepartmentKind(user.role) : null;
   const hodDept = hodKind
     ? await db.department.findFirst({ where: { outletId: outlet.id, kind: hodKind, active: true } })
@@ -54,14 +55,12 @@ export default async function RequisitionsListPage({
   const where: any = {
     ...baseWhere,
     OR: [
-      // outbound — raised by this outlet
       { outletId: outlet.id, ...(hodDept ? { fromDepartmentId: hodDept.id } : {}) },
-      // inbound — targeting this outlet's STORE from a different outlet
       ...(ownStoreDept && !hodDept ? [{ toDepartmentId: ownStoreDept.id, NOT: { outletId: outlet.id } }] : []),
     ],
   };
 
-  const [counts, rows] = await Promise.all([
+  const [counts, reqs] = await Promise.all([
     Promise.all(
       STATUS_TABS.map(async (t) => ({
         key: t.key,
@@ -82,13 +81,63 @@ export default async function RequisitionsListPage({
         outlet: { select: { name: true } },
         fromDepartment: { select: { name: true, kind: true, outletId: true } },
         toDepartment: { select: { name: true, outletId: true } },
-        lines: { select: { id: true } },
+        lines: { include: { rawMaterial: { select: { name: true } } } },
       },
       orderBy: { createdAt: "desc" },
       take: 200,
     }),
   ]);
   const countByKey = Object.fromEntries(counts.map((c) => [c.key, c.n]));
+
+  // Pre-compute STORE on-hand for every line of PENDING requisitions —
+  // surfaces "insufficient stock" hints inline without a per-keystroke
+  // server roundtrip in the review form.
+  const stockHints: Record<string, number> = {};
+  if (canReview && activeTab.key === "PENDING") {
+    for (const r of reqs) {
+      if (r.status !== "NEW") continue;
+      for (const l of r.lines) {
+        stockHints[l.id] = await stockAtDepartment(l.rawMaterialId, r.toDepartmentId);
+      }
+    }
+  }
+
+  // Hydrate requester names for the inline header (shows "Raised by …").
+  const requesterIds = Array.from(
+    new Set(reqs.map((r) => r.requestedById).filter(Boolean))
+  ) as string[];
+  const requesterNames = requesterIds.length
+    ? new Map(
+        (await db.user.findMany({ where: { id: { in: requesterIds } }, select: { id: true, name: true } })).map(
+          (u) => [u.id, u.name]
+        )
+      )
+    : new Map<string, string>();
+
+  const rows: Row[] = reqs.map((r) => {
+    const isInbound = r.outletId !== outlet.id;
+    const isCrossOutlet = r.fromDepartment.outletId !== r.toDepartment.outletId;
+    return {
+      id: r.id,
+      reqNo: r.reqNo,
+      status: r.status,
+      createdAt: r.createdAt.toISOString(),
+      fromLabel: isInbound ? `${r.outlet.name} · ${r.fromDepartment.name}` : r.fromDepartment.name,
+      direction: isInbound ? "INBOUND" : isCrossOutlet ? "OUTBOUND_CHAIN" : "INTERNAL",
+      requesterName: r.requestedById ? requesterNames.get(r.requestedById) ?? null : null,
+      notes: r.notes,
+      declineReason: r.declineReason,
+      lines: r.lines.map((l) => ({
+        id: l.id,
+        name: l.rawMaterial.name,
+        unit: l.unit,
+        qtyRequested: l.qtyRequested,
+        qtyApproved: l.qtyApproved,
+        declineReason: l.declineReason,
+        onHandAtStore: stockHints[l.id] ?? null,
+      })),
+    };
+  });
 
   return (
     <div>
@@ -145,80 +194,10 @@ export default async function RequisitionsListPage({
               }
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Req #</TableHead>
-                  <TableHead>Direction</TableHead>
-                  <TableHead>From → To</TableHead>
-                  <TableHead className="text-right">Lines</TableHead>
-                  <TableHead>Raised</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((r) => {
-                  const isInbound = r.outletId !== outlet.id;
-                  const isCrossOutlet = r.fromDepartment.outletId !== r.toDepartment.outletId;
-                  return (
-                    <TableRow key={r.id} className="cursor-pointer hover:bg-accent/40">
-                      <TableCell>
-                        <Link href={`/inventory/requisitions/${r.id}`} className="font-mono text-xs hover:underline">
-                          {r.reqNo}
-                        </Link>
-                      </TableCell>
-                      <TableCell>
-                        {isInbound ? (
-                          <Badge variant="info" className="text-[10px]">Inbound · chain</Badge>
-                        ) : isCrossOutlet ? (
-                          <Badge variant="warning" className="text-[10px]">Outbound · chain</Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-[10px]">Internal</Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {isInbound && (
-                          <span className="font-medium text-foreground">{r.outlet.name}: </span>
-                        )}
-                        {r.fromDepartment.name} → {r.toDepartment.name}
-                      </TableCell>
-                      <TableCell className="text-right text-sm">{r.lines.length}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {r.createdAt.toLocaleString("en-IN", {
-                          day: "2-digit",
-                          month: "short",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={r.status} />
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+            <RequisitionsTable rows={rows} canReview={canReview} />
           )}
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { variant: any; label: string }> = {
-    NEW: { variant: "warning", label: "Pending" },
-    APPROVED: { variant: "success", label: "Approved" },
-    PARTIAL: { variant: "secondary", label: "Partial" },
-    DECLINED: { variant: "destructive", label: "Declined" },
-    FULFILLED: { variant: "success", label: "Fulfilled" },
-    CANCELLED: { variant: "outline", label: "Cancelled" },
-  };
-  const cfg = map[status] ?? { variant: "outline", label: status };
-  return (
-    <Badge variant={cfg.variant} className="text-[10px]">
-      {cfg.label}
-    </Badge>
   );
 }

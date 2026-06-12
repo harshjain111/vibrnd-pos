@@ -233,11 +233,26 @@ export async function reviewRequisition(input: z.infer<typeof ReviewInput>) {
   const user = await requireUser();
   const data = ReviewInput.parse(input);
   const outlet = await getActiveOutlet();
+
+  // The reviewer is the SUPPLIER outlet's SM. For internal requisitions
+  // that's the same outlet. For cross-outlet ones (Outlet → BS / BK) the
+  // SM is at a different outlet from the requester — so we look up by
+  // either `outletId = active outlet` (internal) OR
+  // `toDepartment.outletId = active outlet` (chain supplier acting).
+  const ownStoreDept = await db.department.findFirst({
+    where: { outletId: outlet.id, kind: "STORE", active: true },
+  });
   const req = await db.requisition.findFirst({
-    where: { id: data.id, outletId: outlet.id },
+    where: {
+      id: data.id,
+      OR: [
+        { outletId: outlet.id },
+        ...(ownStoreDept ? [{ toDepartmentId: ownStoreDept.id }] : []),
+      ],
+    },
     include: { lines: true },
   });
-  if (!req) throw new Error("Requisition not found");
+  if (!req) throw new Error("Requisition not found at this outlet");
   if (req.status !== "NEW") throw new Error(`Cannot review a ${req.status} requisition`);
 
   // Build the merged line state (override qtyApproved from input).
