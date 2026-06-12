@@ -13,6 +13,7 @@
     "db:migrate:status": "prisma migrate status",
     "db:seed": "tsx prisma/seed.ts",
     "db:demo": "tsx prisma/seed-demo.ts",
+    "db:backfill:departments": "tsx prisma/backfill-departments.ts",
     "db:studio": "prisma studio",
     "vercel-build": "prisma migrate deploy && next build",
     "postinstall": "prisma generate"
