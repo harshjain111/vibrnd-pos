@@ -21,6 +21,8 @@ import {
   Building2,
   Star,
   ListTodo,
+  PackageCheck,
+  FileText,
   Shield,
   type LucideIcon,
 } from "lucide-react";
@@ -49,5 +51,7 @@ export const ICONS: Record<IconName, LucideIcon> = {
   Building2,
   Star,
   ListTodo,
+  PackageCheck,
+  FileText,
   Shield,
 };

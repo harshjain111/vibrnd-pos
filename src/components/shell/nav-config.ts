@@ -28,6 +28,8 @@ export type IconName =
   | "Building2"
   | "Star"
   | "ListTodo"
+  | "PackageCheck"
+  | "FileText"
   | "Shield";
 
 export type NavItem = {
@@ -78,6 +80,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { label: "Inventory", href: "/inventory/dashboard", icon: "Boxes", pageId: "inventory.dashboard" },
       { label: "Requisitions", href: "/inventory/requisitions", icon: "ClipboardList", pageId: "inventory.requisitions" },
+      { label: "Goods received", href: "/inventory/grn", icon: "PackageCheck", pageId: "inventory.grn" },
     ],
   },
   {
