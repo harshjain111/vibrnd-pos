@@ -13,6 +13,33 @@ export const dynamic = "force-dynamic";
 
 export default async function TransfersPage() {
   const outlet = await getActiveOutlet();
+  // Approved/partial requisitions this outlet can SUPPLY: either internal
+  // (raised at this outlet, dept→own STORE) or inbound chain (raised at a
+  // child outlet, supplier dept is this outlet's STORE — i.e. this is a
+  // BS/BK acting). Used to prefill the transfer dialog so the SM doesn't
+  // have to re-key lines.
+  const ownStore = await db.department.findFirst({
+    where: { outletId: outlet.id, kind: "STORE", active: true },
+  });
+  const eligibleReqs = await db.requisition.findMany({
+    where: {
+      status: { in: ["APPROVED", "PARTIAL"] },
+      transfer: null,
+      OR: [
+        { outletId: outlet.id },
+        ...(ownStore ? [{ toDepartmentId: ownStore.id }] : []),
+      ],
+    },
+    include: {
+      outlet: { select: { name: true } },
+      fromDepartment: { select: { name: true, outletId: true } },
+      toDepartment: { select: { name: true, outletId: true } },
+      lines: { include: { rawMaterial: { select: { name: true } } } },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+
   const [transfers, otherOutlets, rms, units] = await Promise.all([
     db.transfer.findMany({
       where: { OR: [{ senderOutletId: outlet.id }, { receiverOutletId: outlet.id }] },
@@ -35,6 +62,25 @@ export default async function TransfersPage() {
             outlets={otherOutlets.map((o) => ({ id: o.id, name: o.name }))}
             rawMaterials={rms.map((r) => ({ id: r.id, name: r.name, unit: r.purchaseUnit ?? r.unit, price: r.transferPrice || r.purchasePrice || r.avgCost }))}
             units={units.map((u) => u.name)}
+            requisitions={eligibleReqs.map((r) => {
+              const isCrossOutlet = r.fromDepartment.outletId !== r.toDepartment.outletId;
+              return {
+                id: r.id,
+                reqNo: r.reqNo,
+                kind: isCrossOutlet ? ("CHAIN" as const) : ("INTERNAL" as const),
+                requesterOutletId: r.fromDepartment.outletId,
+                requesterOutletName: r.outlet.name,
+                requesterDeptName: r.fromDepartment.name,
+                lines: r.lines
+                  .filter((l) => l.qtyApproved > 0)
+                  .map((l) => ({
+                    rawMaterialId: l.rawMaterialId,
+                    rawMaterialName: l.rawMaterial.name,
+                    qty: l.qtyApproved,
+                    unit: l.unit,
+                  })),
+              };
+            })}
           >
             <Button size="sm"><Plus className="h-4 w-4" />New transfer</Button>
           </NewTransferDialog>

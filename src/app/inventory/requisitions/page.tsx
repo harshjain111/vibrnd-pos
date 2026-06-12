@@ -89,13 +89,15 @@ export default async function RequisitionsListPage({
   ]);
   const countByKey = Object.fromEntries(counts.map((c) => [c.key, c.n]));
 
-  // Pre-compute STORE on-hand for every line of PENDING requisitions —
-  // surfaces "insufficient stock" hints inline without a per-keystroke
-  // server roundtrip in the review form.
+  // Pre-compute STORE on-hand for every line of reviewable requisitions —
+  // surfaces "insufficient stock" hints + the "Raise PO" shortcut on both
+  // PENDING and APPROVED/PARTIAL tabs without a per-keystroke server
+  // roundtrip in the review form.
   const stockHints: Record<string, number> = {};
-  if (canReview && activeTab.key === "PENDING") {
+  const HINT_STATUSES = new Set(["NEW", "APPROVED", "PARTIAL"]);
+  if (canReview && (activeTab.key === "PENDING" || activeTab.key === "ACTIVE")) {
     for (const r of reqs) {
-      if (r.status !== "NEW") continue;
+      if (!HINT_STATUSES.has(r.status)) continue;
       for (const l of r.lines) {
         stockHints[l.id] = await stockAtDepartment(l.rawMaterialId, r.toDepartmentId);
       }

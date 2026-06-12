@@ -38,6 +38,9 @@ const POInput = z.object({
   supplierId: z.string(),
   notes: z.string().optional(),
   lines: z.array(LineInput).min(1),
+  /** Optional — when raised from an APPROVED req's shortfall the SM picked
+   *  "Raise PO" on the requisition. Recorded for traceability + dashboards. */
+  requisitionId: z.string().optional(),
 });
 
 async function nextPoNo(outletId: string, outletCode: string) {
@@ -73,12 +76,29 @@ export async function createPO(input: z.infer<typeof POInput>): Promise<{ id: st
   const grand = Math.round(sub + tax);
   const poNo = await nextPoNo(outlet.id, outlet.code);
 
+  // If the SM picked a requisition, validate it belongs to this outlet and
+  // is in a state where chasing a PO makes sense (APPROVED / PARTIAL — the
+  // store is short and needs vendor goods to fulfil).
+  if (data.requisitionId) {
+    const req = await db.requisition.findFirst({
+      where: { id: data.requisitionId, outletId: outlet.id },
+      select: { id: true, status: true, reqNo: true },
+    });
+    if (!req) throw new Error("Requisition not found at this outlet");
+    if (!["APPROVED", "PARTIAL", "NEW"].includes(req.status)) {
+      throw new Error(
+        `Cannot raise PO against a ${req.status} requisition — only APPROVED / PARTIAL / NEW`
+      );
+    }
+  }
+
   const po = await db.purchaseOrder.create({
     data: {
       poNo,
       supplierId: data.supplierId,
       outletId: outlet.id,
       departmentId: store.id,
+      requisitionId: data.requisitionId,
       status: "DRAFT",
       subTotal: sub,
       taxTotal: tax,
@@ -100,7 +120,9 @@ export async function createPO(input: z.infer<typeof POInput>): Promise<{ id: st
     action: "CREATE",
     entity: "RawMaterial",
     entityId: po.id,
-    summary: `PO ${poNo} drafted for ${inr(grand)}`,
+    summary: data.requisitionId
+      ? `PO ${poNo} drafted for ${inr(grand)} against requisition shortfall`
+      : `PO ${poNo} drafted for ${inr(grand)}`,
     outletId: outlet.id,
   });
 

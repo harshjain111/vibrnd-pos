@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   ExternalLink,
   Truck,
+  ShoppingCart,
 } from "lucide-react";
 import { reviewRequisition, fulfilRequisition } from "./actions";
 
@@ -59,11 +60,11 @@ export function RequisitionsTable({
   return (
     <div>
       {/* Header row — matches the expanded layout below */}
-      <div className="grid grid-cols-[28px_140px_1fr_80px_120px_110px] gap-2 px-3 py-2 text-xs font-medium border-b bg-muted/40 text-muted-foreground">
+      <div className="grid grid-cols-[24px_minmax(140px,180px)_minmax(0,1fr)_80px_minmax(120px,160px)_110px] gap-3 px-4 py-2.5 text-xs font-medium border-b bg-muted/40 text-muted-foreground">
         <div></div>
         <div>Req #</div>
-        <div>From</div>
-        <div className="text-right">Lines</div>
+        <div>From · raised by</div>
+        <div className="text-right">Items</div>
         <div>Raised</div>
         <div>Status</div>
       </div>
@@ -107,27 +108,32 @@ function RowHeader({
     <button
       type="button"
       onClick={onToggle}
-      className="w-full grid grid-cols-[28px_140px_1fr_80px_120px_110px] gap-2 px-3 py-2.5 text-sm text-left hover:bg-accent/40 transition-colors items-center"
+      className="w-full grid grid-cols-[24px_minmax(140px,180px)_minmax(0,1fr)_80px_minmax(120px,160px)_110px] gap-3 px-4 py-3 text-sm text-left hover:bg-accent/40 transition-colors items-center"
     >
       <Chevron className="h-4 w-4 text-muted-foreground" />
-      <span className="font-mono text-xs">{row.reqNo}</span>
-      <span className="truncate">
-        {row.direction === "INBOUND" && (
-          <Badge variant="info" className="text-[9px] mr-1.5 align-middle">
-            chain
-          </Badge>
+      <span className="font-mono text-xs font-medium">{row.reqNo}</span>
+      <span className="min-w-0">
+        <span className="flex items-center gap-1.5 truncate">
+          {row.direction === "INBOUND" && (
+            <Badge variant="info" className="text-[9px] shrink-0">chain</Badge>
+          )}
+          {row.direction === "OUTBOUND_CHAIN" && (
+            <Badge variant="warning" className="text-[9px] shrink-0">chain</Badge>
+          )}
+          <span className="truncate font-medium">{row.fromLabel}</span>
+        </span>
+        {row.requesterName && (
+          <span className="block text-[11px] text-muted-foreground truncate mt-0.5">
+            by {row.requesterName}
+          </span>
         )}
-        {row.direction === "OUTBOUND_CHAIN" && (
-          <Badge variant="warning" className="text-[9px] mr-1.5 align-middle">
-            chain
-          </Badge>
-        )}
-        {row.fromLabel}
       </span>
-      <span className="text-right text-xs text-muted-foreground tabular-nums">
-        {row.lines.length}
+      <span className="text-right text-xs tabular-nums">
+        <span className="inline-flex items-center justify-center min-w-[28px] h-6 rounded-md bg-muted text-foreground/80 px-2">
+          {row.lines.length}
+        </span>
       </span>
-      <span className="text-xs text-muted-foreground">
+      <span className="text-xs text-muted-foreground tabular-nums">
         {new Date(row.createdAt).toLocaleString("en-IN", {
           day: "2-digit",
           month: "short",
@@ -169,6 +175,14 @@ function ExpandedPanel({
 
   const isReviewable = canReview && row.status === "NEW";
   const isFulfillable = canReview && (row.status === "APPROVED" || row.status === "PARTIAL");
+  // Surface "Raise PO" whenever a store stock hint exists AND at least one line
+  // can't be covered. Lets the SM convert the shortfall into a vendor PO in
+  // one click — items prefill on the next page.
+  const hasShortfall =
+    canReview &&
+    row.lines.some(
+      (l) => l.onHandAtStore !== null && Math.max(l.qtyApproved, l.qtyRequested) > l.onHandAtStore
+    );
 
   const submitReview = (declineAll: boolean) => {
     startTransition(async () => {
@@ -357,6 +371,14 @@ function ExpandedPanel({
                   {pending ? "Saving…" : "Save review"}
                 </Button>
               </>
+            )}
+            {hasShortfall && (
+              <Button asChild type="button" variant="outline" className="border-amber-300 text-amber-800 hover:bg-amber-50">
+                <Link href={`/inventory/purchase/new?req=${row.id}`}>
+                  <ShoppingCart className="h-4 w-4" />
+                  Raise PO for shortfall
+                </Link>
+              </Button>
             )}
             {isFulfillable && (
               <Button type="button" onClick={submitFulfil} disabled={pending}>

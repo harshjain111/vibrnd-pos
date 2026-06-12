@@ -590,6 +590,11 @@ model PurchaseOrder {
   /// Department that raised this PO (typically the outlet's STORE). Nullable
   /// while we backfill; required for newly-created POs once Prompt 1 lands.
   departmentId        String?
+  /// Optional link back to the requisition that triggered this PO — set
+  /// when a store manager raises a PO to cover a shortfall on an APPROVED
+  /// req. 1:N (one req can spawn multiple POs across suppliers).
+  requisitionId       String?
+  requisition         Requisition? @relation(fields: [requisitionId], references: [id])
   outletId     String
   outlet       Outlet              @relation(fields: [outletId], references: [id])
   lines        PurchaseOrderLine[]
@@ -600,6 +605,7 @@ model PurchaseOrder {
   updatedAt    DateTime            @updatedAt
 
   @@index([outletId, status])
+  @@index([requisitionId])
 }
 
 model PurchaseOrderLine {
@@ -1431,6 +1437,9 @@ model Requisition {
   notes           String?
   lines           RequisitionLine[]
   transfer        Transfer? // 1:1 — set after SM clicks "Transfer"
+  /// POs raised by the SM to cover a shortfall on this requisition.
+  /// 1:N — one req can spawn multiple POs across different suppliers.
+  purchaseOrders  PurchaseOrder[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

@@ -14,12 +14,26 @@ type Supplier = { id: string; name: string };
 type Rm = { id: string; name: string; unit: string; avgCost: number; parLevel: number; currentQty: number };
 type Line = { rawMaterialId: string; qty: number; unit: string; unitPrice: number };
 
-export function PoBuilder({ suppliers, rms }: { suppliers: Supplier[]; rms: Rm[] }) {
+export function PoBuilder({
+  suppliers,
+  rms,
+  initialLines,
+  requisitionId,
+}: {
+  suppliers: Supplier[];
+  rms: Rm[];
+  /** Lines pre-filled when ?req=<id> is set — the requisition's shortfall. */
+  initialLines?: { rawMaterialId: string; qty: number; unit: string; unitPrice: number }[];
+  /** When set, the PO is recorded with this parent requisition. */
+  requisitionId?: string | null;
+}) {
   const router = useRouter();
   const { toast } = useToast();
   const [supplierId, setSupplierId] = React.useState<string>(suppliers[0]?.id ?? "");
-  const [notes, setNotes] = React.useState("");
-  const [lines, setLines] = React.useState<Line[]>([]);
+  const [notes, setNotes] = React.useState(
+    requisitionId ? "Covering shortfall against requisition" : ""
+  );
+  const [lines, setLines] = React.useState<Line[]>(initialLines ?? []);
   const [pending, startTransition] = React.useTransition();
 
   const rmById = (id: string) => rms.find((r) => r.id === id);
@@ -59,7 +73,12 @@ export function PoBuilder({ suppliers, rms }: { suppliers: Supplier[]; rms: Rm[]
     }
     startTransition(async () => {
       try {
-        const res = await createPO({ supplierId, notes: notes || undefined, lines });
+        const res = await createPO({
+          supplierId,
+          notes: notes || undefined,
+          lines,
+          requisitionId: requisitionId ?? undefined,
+        });
         toast({ variant: "success", title: `Created ${res.poNo}`, description: "Status: DRAFT" });
         router.push(`/inventory/purchase/${res.id}`);
       } catch (e) {

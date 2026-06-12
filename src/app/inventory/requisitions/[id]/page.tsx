@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Truck, Check, X, AlertCircle } from "lucide-react";
+import { ArrowLeft, Truck, Check, X, AlertCircle, ShoppingCart } from "lucide-react";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser, hasAtLeast } from "@/lib/rbac";
@@ -69,6 +69,17 @@ export default async function RequisitionDetailPage({
     onHand.set(l.rawMaterialId, await stockAtDepartment(l.rawMaterialId, req.toDepartmentId));
   }
 
+  // Show "Raise PO" whenever this req has any shortfall — covers NEW (uses
+  // requested qty) and APPROVED/PARTIAL (uses approved qty).
+  const canRaisePo =
+    !!user &&
+    canAccess(user.role, "inventory.requisitions.approve") &&
+    (req.status === "NEW" || req.status === "APPROVED" || req.status === "PARTIAL") &&
+    req.lines.some((l) => {
+      const want = req.status === "NEW" ? l.qtyRequested : l.qtyApproved;
+      return want > (onHand.get(l.rawMaterialId) ?? 0);
+    });
+
   return (
     <div>
       <PageHeader
@@ -100,6 +111,14 @@ export default async function RequisitionDetailPage({
             )}
           </div>
           <div className="flex gap-1.5">
+            {canRaisePo && (
+              <Button asChild variant="outline" className="border-amber-300 text-amber-800 hover:bg-amber-50">
+                <Link href={`/inventory/purchase/new?req=${req.id}`}>
+                  <ShoppingCart className="h-4 w-4" />
+                  Raise PO for shortfall
+                </Link>
+              </Button>
+            )}
             {canFulfil && <FulfilButton id={req.id} />}
             {canCancel && <CancelButton id={req.id} />}
           </div>

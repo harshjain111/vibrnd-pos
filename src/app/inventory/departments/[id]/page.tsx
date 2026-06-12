@@ -11,6 +11,7 @@ import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
 import { stockAtDepartment } from "@/lib/stock";
+import { RaiseGrnButton } from "./raise-grn";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,27 @@ export default async function DepartmentStockPage({
     where: { id, outletId: outlet.id, active: true },
   });
   if (!dept) return notFound();
+
+  // For non-STORE depts surface the approved requisitions this dept can
+  // pull against — the "Raise GRN" button opens them in a dialog.
+  const eligibleReqs =
+    dept.kind === "STORE"
+      ? []
+      : await db.requisition.findMany({
+          where: {
+            outletId: outlet.id,
+            fromDepartmentId: dept.id,
+            status: { in: ["APPROVED", "PARTIAL"] },
+            transfer: null,
+          },
+          include: {
+            lines: {
+              include: { rawMaterial: { select: { name: true } } },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+          take: 25,
+        });
 
   const rms = await db.rawMaterial.findMany({
     where: { outletId: outlet.id, active: true },
@@ -98,12 +120,34 @@ export default async function DepartmentStockPage({
               </Link>
             </Button>
             {dept.kind !== "STORE" && (
-              <Button size="sm" asChild>
-                <Link href={`/inventory/requisitions/new`}>
-                  <Plus className="h-4 w-4" />
-                  Request from store
-                </Link>
-              </Button>
+              <>
+                <RaiseGrnButton
+                  deptName={dept.name}
+                  requisitions={eligibleReqs.map((r) => ({
+                    id: r.id,
+                    reqNo: r.reqNo,
+                    raisedAtLabel: r.createdAt.toLocaleString("en-IN", {
+                      day: "2-digit",
+                      month: "short",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    }),
+                    lines: r.lines
+                      .filter((l) => l.qtyApproved > 0)
+                      .map((l) => ({
+                        name: l.rawMaterial.name,
+                        qtyApproved: l.qtyApproved,
+                        unit: l.unit,
+                      })),
+                  }))}
+                />
+                <Button size="sm" asChild>
+                  <Link href={`/inventory/requisitions/new`}>
+                    <Plus className="h-4 w-4" />
+                    Request from store
+                  </Link>
+                </Button>
+              </>
             )}
           </>
         }

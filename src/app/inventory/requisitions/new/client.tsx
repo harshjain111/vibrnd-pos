@@ -173,14 +173,12 @@ export function NewRequisitionForm({
                 <th className="text-left p-2">Raw material</th>
                 <th className="text-left p-2 w-28">Unit</th>
                 <th className="text-right p-2 w-28">Qty needed</th>
-                <th className="text-right p-2 w-32">In stock (outlet)</th>
                 <th className="text-right p-2 w-12"></th>
               </tr>
             </thead>
             <tbody>
               {lines.map((l) => {
                 const rm = l.rawMaterialId ? rmById.get(l.rawMaterialId) : null;
-                const low = rm && rm.currentQty < rm.parLevel;
                 return (
                   <tr key={l.key} className="border-t">
                     <td className="p-2">
@@ -207,16 +205,6 @@ export function NewRequisitionForm({
                         onChange={(e) => updateLine(l.key, { qty: e.target.value })}
                         className="h-8 w-24 text-right ml-auto"
                       />
-                    </td>
-                    <td className="p-2 text-right text-xs">
-                      {rm ? (
-                        <span className={low ? "text-amber-700 font-medium" : "text-muted-foreground"}>
-                          {rm.currentQty} {rm.unit}
-                          {low && <span className="ml-1 text-[10px]">(low)</span>}
-                        </span>
-                      ) : (
-                        "—"
-                      )}
                     </td>
                     <td className="p-2 text-right">
                       <Button
