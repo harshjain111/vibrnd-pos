@@ -8,9 +8,13 @@
     "start": "next start",
     "lint": "next lint",
     "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:status": "prisma migrate status",
     "db:seed": "tsx prisma/seed.ts",
     "db:demo": "tsx prisma/seed-demo.ts",
     "db:studio": "prisma studio",
+    "vercel-build": "prisma migrate deploy && next build",
     "postinstall": "prisma generate"
   },
   "dependencies": {
