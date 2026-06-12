@@ -40,6 +40,37 @@ model Outlet {
   kdsEnabled      Boolean  @default(true)  // when false the POS prints KOTs locally instead of pushing to /kds
   serviceChargePct Float   @default(10)    // default service charge % at Settle; set 0 to disable by default
   active          Boolean  @default(true)  // soft-delete
+
+  // ─── Chain-inventory foundation (Prompt 1) ─────────────────────────
+  /// What this outlet IS in the chain topology. OUTLET = customer-facing
+  /// restaurant (has POS, menu, billing). BASE_STORE = chain warehouse that
+  /// receives supplier POs and ships to outlets. BASE_KITCHEN = central
+  /// commissary that produces semi-finished goods (e.g. cooked dal) from
+  /// raw materials. BS / BK get a slimmed-down inventory-only UI; POS,
+  /// menu, billing are hidden.
+  kind            String   @default("OUTLET") // OUTLET | BASE_STORE | BASE_KITCHEN
+  /// 1-outlet → 1-BS mapping for v1. Null for non-OUTLET kinds.
+  baseStoreOutletId String?
+  baseStoreOutlet   Outlet? @relation("OutletBaseStore", fields: [baseStoreOutletId], references: [id])
+  outletsServedByBs Outlet[] @relation("OutletBaseStore")
+  /// 1-outlet → 1-BK mapping for v1. Null for non-OUTLET kinds.
+  baseKitchenOutletId String?
+  baseKitchenOutlet   Outlet? @relation("OutletBaseKitchen", fields: [baseKitchenOutletId], references: [id])
+  outletsServedByBk Outlet[] @relation("OutletBaseKitchen")
+  /// When true, Store Manager POs must be approved by a Cost Controller
+  /// before they can be sent to the vendor. Owner can flip this off per
+  /// outlet from Settings → Inventory.
+  requireCostControlApproval Boolean @default(true)
+  /// When true, BK → Outlet transfers carry forward a configurable labour /
+  /// overhead markup on top of the input cost. Default off.
+  applyBKMarkupOnTransfer    Boolean @default(false)
+  bkMarkupPercent            Float   @default(0)
+  /// Master switch for the multi-department inventory model (Store → Kitchen
+  /// / Bar / Housekeeping). Default ON for new outlets; legacy outlets are
+  /// flipped on by the backfill script. Disabling reverts the UI to the
+  /// old flat per-outlet stock view.
+  multiDeptInventoryEnabled  Boolean @default(true)
+
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -83,6 +114,42 @@ model Outlet {
   rolePermissions   RolePermission[]
   fixedAssets       FixedAsset[]
   assetAudits       AssetAudit[]
+
+  departments       Department[]
+  requisitions      Requisition[]
+  grns              Grn[]
+  vendorInvoices    VendorInvoice[]
+}
+
+/// A stock-holding sub-unit within an outlet. Every outlet has at minimum a
+/// STORE department; OUTLET-kind outlets typically also have KITCHEN / BAR /
+/// HOUSEKEEPING. BASE_STORE / BASE_KITCHEN outlets have a single STORE dept
+/// that holds the chain-level stock.
+model Department {
+  id          String   @id @default(cuid())
+  outletId    String
+  outlet      Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  /// STORE | KITCHEN | BAR | HOUSEKEEPING | OTHER. STORE is the only dept
+  /// with an external inbound channel — everything else gets stock via
+  /// internal requisition from STORE.
+  kind        String
+  name        String
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users               User[]
+  stockMovements      StockMovement[]
+  transfersOutbound   Transfer[] @relation("TransferFromDept")
+  transfersInbound    Transfer[] @relation("TransferToDept")
+  requisitionsRaised  Requisition[] @relation("RequisitionFromDept")
+  requisitionsReceived Requisition[] @relation("RequisitionToDept")
+  grns                Grn[]
+
+  /// One STORE / KITCHEN / BAR / HOUSEKEEPING per outlet — extra OTHER
+  /// instances allowed under unique names.
+  @@unique([outletId, kind, name])
+  @@index([outletId, active])
 }
 
 model ActivityLog {
@@ -105,11 +172,22 @@ model User {
   name           String
   email          String   @unique
   passwordHash   String?  // bcrypt-hashed; nullable for legacy seed
-  role           String   @default("BILLER") // OWNER | MANAGER | BILLER | CAPTAIN
+  /// Role registry now extends to inventory / procurement roles:
+  /// OWNER | MANAGER | BILLER | CAPTAIN | STORE_MANAGER | COST_CONTROLLER
+  /// | CHEF_HOD | BARTENDER_HOD | HOUSEKEEPING_HOD | ACCOUNTANT
+  /// | PRODUCTION_MANAGER.
+  role           String   @default("BILLER")
   active         Boolean  @default(true)
   commissionRate Float    @default(0)        // % of order revenue earned as commission
   outletId       String
   outlet         Outlet   @relation(fields: [outletId], references: [id])
+  /// Department this user is scoped to. Nullable for outlet-wide roles
+  /// (OWNER, MANAGER, BILLER, CAPTAIN, STORE_MANAGER who owns STORE,
+  /// COST_CONTROLLER, ACCOUNTANT). Set for HODs (CHEF_HOD → KITCHEN,
+  /// BARTENDER_HOD → BAR, HOUSEKEEPING_HOD → HOUSEKEEPING) and for
+  /// PRODUCTION_MANAGER (set to a BK outlet's STORE dept).
+  departmentId   String?
+  department     Department? @relation(fields: [departmentId], references: [id])
   assignedTasks  Task[]   @relation("AssignedTasks")
   createdTasks   Task[]   @relation("CreatedTasks")
   dayCloses      DayClose[]
@@ -383,6 +461,16 @@ model RawMaterial {
   supplier        Supplier? @relation(fields: [supplierId], references: [id])
   outletId        String
   outlet          Outlet   @relation(fields: [outletId], references: [id])
+
+  /// Where this raw material comes from:
+  ///   PURCHASED — bought from suppliers (default for everything that existed
+  ///               before the chain inventory work).
+  ///   PRODUCED  — output of a production run at a Base Kitchen (e.g. cooked
+  ///               dal). Carries an avg cost rolled forward from the inputs.
+  ///   BOTH      — can be either, e.g. paneer that's sometimes bought and
+  ///               sometimes produced in-house.
+  source          String   @default("PURCHASED")
+
   recipes         RecipeIngredient[]
   movements       StockMovement[]
   poLines         PurchaseOrderLine[]
@@ -414,18 +502,32 @@ model StockMovement {
   rawMaterialId String
   rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id], onDelete: Cascade)
   delta         Float       // signed: positive = in, negative = out
-  reason        String      // SALE | CANCEL_REVERSE | ADJUST | PURCHASE | WASTAGE | OPENING
-  refType       String?     // Order | Outlet | Manual
+  /// Reason codes — extended for chain inventory:
+  ///   SALE | CANCEL_REVERSE | ADJUST | PURCHASE | WASTAGE | OPENING
+  ///   PRODUCTION_INPUT  (consumed by a ProductionRun at BK)
+  ///   PRODUCTION_OUTPUT (created by a ProductionRun at BK)
+  ///   INTERNAL_TRANSFER (Store → Kitchen / Bar / HK within same outlet)
+  ///   CHAIN_TRANSFER    (BS → Outlet or BK → Outlet)
+  ///   GRN_RECEIPT       (vendor goods received against PO/standalone GRN)
+  reason        String
+  refType       String?     // Order | Outlet | Manual | Grn | Requisition | ProductionRun
   refId         String?
   qtyBefore     Float
   qtyAfter      Float
   note          String?
   outletId      String
   outlet        Outlet      @relation(fields: [outletId], references: [id])
+  /// Department this movement happened in. Nullable while we backfill;
+  /// once Prompt 1's backfill runs every row points at the outlet's STORE
+  /// (or the right sub-dept for movements that came in via Requisition).
+  /// Going forward all new movements MUST set this — services validate it.
+  departmentId  String?
+  department    Department? @relation(fields: [departmentId], references: [id])
   createdAt     DateTime    @default(now())
 
   @@index([outletId, createdAt])
   @@index([rawMaterialId, createdAt])
+  @@index([departmentId, createdAt])
 }
 
 model Supplier {
@@ -454,6 +556,7 @@ model Supplier {
   purchases       Purchase[]
   vendorPayments  VendorPayment[]
   rmSuppliers     RawMaterialSupplier[]
+  vendorInvoices  VendorInvoice[]
   createdAt       DateTime @default(now())
 }
 
@@ -462,15 +565,32 @@ model PurchaseOrder {
   poNo         String              @unique
   supplierId   String
   supplier     Supplier            @relation(fields: [supplierId], references: [id])
-  status       String              @default("DRAFT") // DRAFT | SENT | RECEIVED | CANCELLED
+  /// Extended PO state machine (Prompt 1):
+  ///   DRAFT
+  ///   → PENDING_CC_APPROVAL  (when outlet.requireCostControlApproval = true;
+  ///                          otherwise auto-promotes to APPROVED on submit)
+  ///   → APPROVED  →  REJECTED (with ccRejectionReason)
+  ///   → SENT (PO emailed / downloaded by SM)
+  ///   → PARTIALLY_RECEIVED  (one or more GRNs against this PO, more to come)
+  ///   → CLOSED              (all qty received OR manually closed)
+  ///   → CANCELLED
+  status       String              @default("DRAFT")
   subTotal     Float               @default(0)
   taxTotal     Float               @default(0)
   grandTotal   Float               @default(0)
   notes        String?
+  /// Cost-controller approval audit columns. Null until the CC acts.
+  ccApprovedById      String?
+  ccApprovedAt        DateTime?
+  ccRejectionReason   String?
+  /// Department that raised this PO (typically the outlet's STORE). Nullable
+  /// while we backfill; required for newly-created POs once Prompt 1 lands.
+  departmentId        String?
   outletId     String
   outlet       Outlet              @relation(fields: [outletId], references: [id])
   lines        PurchaseOrderLine[]
   purchases    Purchase[]
+  grns         Grn[]
   receivedAt   DateTime?
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
@@ -488,6 +608,10 @@ model PurchaseOrderLine {
   unit          String
   unitPrice     Float
   lineTotal     Float
+  /// Running tally of how much of this line has been received via GRNs.
+  /// Used to drive the PO status transition PARTIALLY_RECEIVED → CLOSED.
+  qtyReceived   Float         @default(0)
+  grnLines      GrnLine[]
 }
 
 model Recipe {
@@ -980,10 +1104,26 @@ model Transfer {
   challanNo        String?
   transferDate     DateTime
   status           String       @default("SENT") // SENT | RECEIVED | CANCELLED
+  /// Outlet-level legacy fields — kept for back-compat reporting. New
+  /// transfers populate these from the source/dest departments' outlets.
   senderOutletId   String
   sender           Outlet       @relation("TransfersSent", fields: [senderOutletId], references: [id])
   receiverOutletId String
   receiver         Outlet       @relation("TransfersReceived", fields: [receiverOutletId], references: [id])
+  /// Department-level transfer endpoints. Nullable while we backfill;
+  /// services validate after Prompt 1 lands.
+  fromDepartmentId String?
+  fromDepartment   Department?  @relation("TransferFromDept", fields: [fromDepartmentId], references: [id])
+  toDepartmentId   String?
+  toDepartment     Department?  @relation("TransferToDept", fields: [toDepartmentId], references: [id])
+  /// Kind of transfer for reporting + permissions:
+  ///   INTERNAL — within the same outlet (Store → Kitchen/Bar/HK)
+  ///   CHAIN    — between outlets (BS → Outlet, BK → Outlet, etc.)
+  kind             String       @default("CHAIN")
+  /// When this Transfer was spawned by a Requisition approval, link back
+  /// so the requisition's "delivered" status can roll up automatically.
+  requisitionId    String?      @unique
+  requisition      Requisition? @relation(fields: [requisitionId], references: [id])
   notes            String?
   lines            TransferLine[]
   sentById         String?
@@ -993,6 +1133,8 @@ model Transfer {
 
   @@index([receiverOutletId, status])
   @@index([senderOutletId, status])
+  @@index([fromDepartmentId, status])
+  @@index([toDepartmentId, status])
 }
 
 model TransferLine {
@@ -1064,12 +1206,18 @@ model VendorPayment {
   notes       String?
   purchaseId  String?
   purchase    Purchase? @relation(fields: [purchaseId], references: [id])
+  /// Chain-inventory v2 — payments can now also be allocated to a
+  /// VendorInvoice. `purchaseId` stays for back-compat with the legacy
+  /// Purchase-record-based payment screen.
+  vendorInvoiceId String?
+  vendorInvoice   VendorInvoice? @relation(fields: [vendorInvoiceId], references: [id])
   outletId    String
   outlet      Outlet   @relation(fields: [outletId], references: [id])
   createdById String?
   createdAt   DateTime @default(now())
 
   @@index([supplierId, occurredAt])
+  @@index([vendorInvoiceId])
 }
 
 /// Rules-as-data for the 9-tab Inventory Settings page (per-outlet toggles).
@@ -1213,4 +1361,160 @@ model AssetAuditLine {
   note            String?
 
   @@index([auditId])
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Chain-inventory procurement docs (Prompt 1)
+// ──────────────────────────────────────────────────────────────────────
+//
+// The new procurement story:
+//   1. HOD raises a Requisition to the Store dept of their outlet.
+//   2. Store Manager reviews — approve full / partial / decline (with reason).
+//   3. On approve, SM clicks "Transfer to Kitchen" which spawns an
+//      INTERNAL Transfer (Department -> Department, same outlet).
+//   4. For external supplies: Store Manager raises a PurchaseOrder. If
+//      outlet.requireCostControlApproval = true, the PO sits in
+//      PENDING_CC_APPROVAL until the CC approves or rejects.
+//   5. Once SENT and goods arrive, a Goods Receipt Note (Grn) is created
+//      against the PO (or standalone, with a warning banner). Stock moves
+//      ONLY on Grn save — never on PO close. One PO -> many Grns allowed.
+//   6. Accountant records a VendorInvoice linked to one or more Grns
+//      (m:n via VendorInvoiceGrnLink), then pays it via VendorPayment.
+
+model Requisition {
+  id              String   @id @default(cuid())
+  reqNo           String   @unique
+  outletId        String
+  outlet          Outlet   @relation(fields: [outletId], references: [id])
+  fromDepartmentId String   // the requesting dept (HOD's dept: KITCHEN/BAR/HK)
+  fromDepartment   Department @relation("RequisitionFromDept", fields: [fromDepartmentId], references: [id])
+  toDepartmentId   String   // always the STORE dept of the same outlet
+  toDepartment     Department @relation("RequisitionToDept", fields: [toDepartmentId], references: [id])
+  /// Lifecycle:
+  ///   NEW      — created by HOD, waiting for SM review
+  ///   APPROVED — SM fully approved every line
+  ///   PARTIAL  — SM approved some qty (qtyApproved < qtyRequested on at
+  ///              least one line)
+  ///   DECLINED — SM rejected the whole requisition with a reason
+  ///   FULFILLED — Transfer spawned + received; stock moved
+  ///   CANCELLED — HOD cancelled before SM acted
+  status          String   @default("NEW")
+  requestedById   String?  // the HOD's user id
+  reviewedById    String?  // the SM's user id
+  reviewedAt      DateTime?
+  declineReason   String?  // mandatory when status = DECLINED
+  notes           String?
+  lines           RequisitionLine[]
+  transfer        Transfer? // 1:1 — set after SM clicks "Transfer"
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([outletId, status, createdAt])
+  @@index([fromDepartmentId, status])
+}
+
+model RequisitionLine {
+  id              String   @id @default(cuid())
+  requisitionId   String
+  requisition     Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  rawMaterialId   String
+  qtyRequested    Float
+  qtyApproved     Float    @default(0)   // SM edits this; defaults to 0 (= declined per-line)
+  unit            String
+  /// Mandatory when qtyApproved < qtyRequested (per-line short-decline note).
+  declineReason   String?
+}
+
+/// Goods Receipt Note. Source-of-truth doc for stock incoming from a
+/// supplier. One PO -> many Grns supported (partial deliveries). A Grn
+/// CAN be created standalone (no PO) for emergency local purchases — the
+/// manager gets a notification + the Grn flashes a warning banner.
+model Grn {
+  id              String   @id @default(cuid())
+  grnNo           String   @unique
+  /// Nullable for ad-hoc / no-PO receipts.
+  poId            String?
+  po              PurchaseOrder? @relation(fields: [poId], references: [id])
+  /// When poId is null AND createdAt is set, this is an ad-hoc GRN. Used to
+  /// drive the "flash warning to manager" notification at create time.
+  isAdHoc         Boolean  @default(false)
+  outletId        String
+  outlet          Outlet   @relation(fields: [outletId], references: [id])
+  departmentId    String   // always the STORE dept
+  department      Department @relation(fields: [departmentId], references: [id])
+  receivedById    String?
+  receivedAt      DateTime @default(now())
+  /// OPEN  — partial receive, more expected later
+  /// CLOSED — all expected qty received OR manually closed
+  status          String   @default("CLOSED")
+  notes           String?
+  lines           GrnLine[]
+  vendorInvoiceLinks VendorInvoiceGrnLink[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([outletId, status, createdAt])
+}
+
+model GrnLine {
+  id              String   @id @default(cuid())
+  grnId           String
+  grn             Grn      @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  /// Optional FK to the PO line being received. Null for ad-hoc receipts.
+  poLineId        String?
+  poLine          PurchaseOrderLine? @relation(fields: [poLineId], references: [id])
+  rawMaterialId   String
+  qtyReceived     Float
+  qtyDamaged      Float    @default(0)
+  qtyShort        Float    @default(0)   // expected but didn't arrive
+  unit            String
+  /// Snapshot of unit cost at the moment of receipt — used for avg-cost
+  /// roll-forward on the receiving dept's stock.
+  unitCost        Float
+  batchNo         String?
+  expiryDate      DateTime?
+  note            String?
+}
+
+/// Vendor invoice — the AP doc the Accountant works with. One invoice can
+/// reference multiple GRNs (vendor batches their deliveries into one bill);
+/// one GRN can be split across multiple invoices.
+model VendorInvoice {
+  id              String   @id @default(cuid())
+  /// Vendor's invoice number (not ours).
+  invoiceNo       String
+  invoiceDate     DateTime
+  supplierId      String
+  supplier        Supplier @relation(fields: [supplierId], references: [id])
+  outletId        String
+  outlet          Outlet   @relation(fields: [outletId], references: [id])
+  subTotal        Float    @default(0)
+  taxTotal        Float    @default(0)
+  grandTotal      Float    @default(0)
+  /// UNPAID | PARTIAL | PAID
+  status          String   @default("UNPAID")
+  amountPaid      Float    @default(0)
+  /// Supabase Storage path to the uploaded invoice PDF / image. Optional.
+  fileUrl         String?
+  notes           String?
+  createdById     String?
+  grnLinks        VendorInvoiceGrnLink[]
+  payments        VendorPayment[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([supplierId, invoiceNo])
+  @@index([outletId, status, invoiceDate])
+}
+
+model VendorInvoiceGrnLink {
+  invoiceId       String
+  invoice         VendorInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  grnId           String
+  grn             Grn      @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  /// Amount of this invoice attributable to this GRN. Useful when one
+  /// invoice spans multiple GRNs and we need per-GRN accruals.
+  amount          Float    @default(0)
+
+  @@id([invoiceId, grnId])
 }
