@@ -229,7 +229,15 @@ const ReviewInput = z.object({
  *
  * Per-line declineReason is required when 0 < qtyApproved < qtyRequested.
  */
-export async function reviewRequisition(input: z.infer<typeof ReviewInput>) {
+export async function reviewRequisition(input: z.infer<typeof ReviewInput>): Promise<ActionResult> {
+  try {
+    return await reviewRequisitionInner(input);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function reviewRequisitionInner(input: z.infer<typeof ReviewInput>): Promise<ActionResult> {
   const user = await requireUser();
   const data = ReviewInput.parse(input);
   const outlet = await getActiveOutlet();
@@ -323,6 +331,7 @@ export async function reviewRequisition(input: z.infer<typeof ReviewInput>) {
 
   revalidatePath("/inventory/requisitions");
   revalidatePath(`/inventory/requisitions/${req.id}`);
+  return { ok: true };
 }
 
 /**
@@ -341,7 +350,20 @@ export async function reviewRequisition(input: z.infer<typeof ReviewInput>) {
  * Cross-outlet flow runs at the SUPPLIER outlet (the BS / BK) — that's
  * the active outlet for the user clicking "Transfer to requester".
  */
-export async function fulfilRequisition(fd: FormData) {
+/** Returned by fulfilRequisition + reviewRequisition so the client toast can
+ *  surface the real error message (Next.js production builds otherwise mask
+ *  thrown errors as the cryptic "Server Components render" digest). */
+export type ActionResult = { ok: true } | { ok: false; error: string };
+
+export async function fulfilRequisition(fd: FormData): Promise<ActionResult> {
+  try {
+    return await fulfilRequisitionInner(fd);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function fulfilRequisitionInner(fd: FormData): Promise<ActionResult> {
   const user = await requireUser();
   const id = String(fd.get("id") ?? "");
   if (!id) throw new Error("Requisition id is required");
@@ -552,4 +574,5 @@ export async function fulfilRequisition(fd: FormData) {
   revalidatePath("/inventory/requisitions");
   revalidatePath(`/inventory/requisitions/${req.id}`);
   revalidatePath("/inventory/transfers");
+  return { ok: true };
 }

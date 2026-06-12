@@ -46,25 +46,25 @@ export function ReviewForm({
 
   const submit = (declineAll: boolean) => {
     startTransition(async () => {
-      try {
-        await reviewRequisition({
-          id: requisitionId,
-          declineAll,
-          notes: notes || undefined,
-          lines: state.map((r) => ({
-            lineId: r.id,
-            qtyApproved: Math.max(0, Number(r.qtyApproved) || 0),
-            declineReason: r.declineReason || undefined,
-          })),
-        });
-        toast({
-          variant: "success",
-          title: declineAll ? "Requisition declined" : "Review saved",
-        });
-        router.refresh();
-      } catch (e) {
-        toast({ variant: "destructive", title: "Couldn't save review", description: String(e) });
+      const res = await reviewRequisition({
+        id: requisitionId,
+        declineAll,
+        notes: notes || undefined,
+        lines: state.map((r) => ({
+          lineId: r.id,
+          qtyApproved: Math.max(0, Number(r.qtyApproved) || 0),
+          declineReason: r.declineReason || undefined,
+        })),
+      });
+      if (!res.ok) {
+        toast({ variant: "destructive", title: "Couldn't save review", description: res.error });
+        return;
       }
+      toast({
+        variant: "success",
+        title: declineAll ? "Requisition declined" : "Review saved",
+      });
+      router.refresh();
     });
   };
 
@@ -163,13 +163,13 @@ export function FulfilButton({ id }: { id: string }) {
   return (
     <form
       action={async (fd) => {
-        try {
-          await fulfilRequisition(fd);
-          toast({ variant: "success", title: "Transferred to requester" });
-          router.refresh();
-        } catch (e) {
-          toast({ variant: "destructive", title: "Couldn't transfer", description: String(e) });
+        const res = await fulfilRequisition(fd);
+        if (!res.ok) {
+          toast({ variant: "destructive", title: "Couldn't transfer", description: res.error });
+          return;
         }
+        toast({ variant: "success", title: "Transferred to requester" });
+        router.refresh();
       }}
     >
       <input type="hidden" name="id" value={id} />

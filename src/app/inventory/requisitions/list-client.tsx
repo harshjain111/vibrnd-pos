@@ -172,30 +172,30 @@ function ExpandedPanel({
 
   const submitReview = (declineAll: boolean) => {
     startTransition(async () => {
-      try {
-        await reviewRequisition({
-          id: row.id,
-          declineAll,
-          notes: overallNotes || undefined,
-          lines: state.map((r) => ({
-            lineId: r.id,
-            qtyApproved: Math.max(0, Number(r.qtyApproved) || 0),
-            declineReason: r.declineReason || undefined,
-          })),
-        });
-        toast({
-          variant: "success",
-          title: declineAll ? "Requisition declined" : "Review saved",
-        });
-        onDone();
-        router.refresh();
-      } catch (e) {
+      const res = await reviewRequisition({
+        id: row.id,
+        declineAll,
+        notes: overallNotes || undefined,
+        lines: state.map((r) => ({
+          lineId: r.id,
+          qtyApproved: Math.max(0, Number(r.qtyApproved) || 0),
+          declineReason: r.declineReason || undefined,
+        })),
+      });
+      if (!res.ok) {
         toast({
           variant: "destructive",
           title: "Couldn't save review",
-          description: String(e?.toString().slice(0, 200) ?? e),
+          description: res.error,
         });
+        return;
       }
+      toast({
+        variant: "success",
+        title: declineAll ? "Requisition declined" : "Review saved",
+      });
+      onDone();
+      router.refresh();
     });
   };
 
@@ -203,18 +203,18 @@ function ExpandedPanel({
     const fd = new FormData();
     fd.set("id", row.id);
     startTransition(async () => {
-      try {
-        await fulfilRequisition(fd);
-        toast({ variant: "success", title: "Transferred to requester" });
-        onDone();
-        router.refresh();
-      } catch (e) {
+      const res = await fulfilRequisition(fd);
+      if (!res.ok) {
         toast({
           variant: "destructive",
           title: "Couldn't transfer",
-          description: String(e?.toString().slice(0, 200) ?? e),
+          description: res.error,
         });
+        return;
       }
+      toast({ variant: "success", title: "Transferred to requester" });
+      onDone();
+      router.refresh();
     });
   };
 

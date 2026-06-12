@@ -143,22 +143,62 @@ export async function postInternalTransferMovement(input: {
 }
 
 /**
- * Sum the ledger to compute how much of `rawMaterialId` currently sits in
- * `departmentId`. We special-case STORE: anything with `departmentId = null`
- * (legacy un-backfilled rows from before chain inventory landed) counts as
- * STORE so existing reports stay accurate.
+ * Compute how much of `rawMaterialId` currently sits at `departmentId`.
  *
- * Called from requisition / transfer flows that need to validate "enough
- * stock at source dept" before mutating.
+ * Two cases:
+ *
+ *   STORE department (the inbound channel for every outlet):
+ *     STORE qty = RawMaterial.currentQty − sum(movements at any OTHER
+ *                  active department at this outlet)
+ *     This handles three realities at once:
+ *       (a) Seeded data sets currentQty without writing OPENING ledger
+ *           rows. There's no "STORE += currentQty" event; we infer it.
+ *       (b) Legacy stock-changing actions (POS settle consuming a
+ *           recipe, GRN receipts before chain inventory landed) wrote
+ *           movements with departmentId=null. Those rows shouldn't be
+ *           subtracted from STORE because they ALREADY reduced
+ *           currentQty.
+ *       (c) Internal transfers from STORE to Kitchen/Bar/HK record
+ *           BOTH a -STORE row AND a +OTHER row. We mustn't subtract
+ *           the -STORE row twice — by counting only OTHER-dept rows
+ *           we get STORE = currentQty − distributed.
+ *     Worked example (Sugar): currentQty=8, Kitchen drew 5 via internal
+ *     transfer → ledger has [{STORE: -5}, {KITCHEN: +5}], currentQty
+ *     unchanged. STORE = 8 − (+5 at KITCHEN) = 3. ✓
+ *
+ *   Non-STORE department (Kitchen / Bar / Housekeeping / Other):
+ *     simple ledger sum of all movements tagged with that departmentId.
+ *
+ * Used by requisition / transfer flows for "enough stock at source"
+ * validation, and by the chain-stock matrix + per-dept stock view.
  */
 export async function stockAtDepartment(rawMaterialId: string, departmentId: string): Promise<number> {
   const dept = await db.department.findUnique({ where: { id: departmentId } });
-  const includeNullForStore = dept?.kind === "STORE";
-  const where = includeNullForStore
-    ? { rawMaterialId, OR: [{ departmentId }, { departmentId: null, outletId: dept!.outletId }] }
-    : { rawMaterialId, departmentId };
+  if (!dept) return 0;
+
+  if (dept.kind === "STORE") {
+    const rm = await db.rawMaterial.findUnique({ where: { id: rawMaterialId } });
+    if (!rm) return 0;
+    // Sum movements at every OTHER department at the same outlet.
+    const otherDepts = await db.department.findMany({
+      where: { outletId: dept.outletId, active: true, NOT: { id: dept.id } },
+      select: { id: true },
+    });
+    if (otherDepts.length === 0) return rm.currentQty;
+    const agg = await db.stockMovement.aggregate({
+      where: {
+        rawMaterialId,
+        departmentId: { in: otherDepts.map((d) => d.id) },
+      },
+      _sum: { delta: true },
+    });
+    const distributed = Number(agg._sum.delta ?? 0);
+    return Number((rm.currentQty - distributed).toFixed(4));
+  }
+
+  // Non-STORE: pure ledger sum.
   const agg = await db.stockMovement.aggregate({
-    where,
+    where: { rawMaterialId, departmentId },
     _sum: { delta: true },
   });
   return Number(agg._sum.delta ?? 0);
