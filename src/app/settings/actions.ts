@@ -83,6 +83,32 @@ export async function setTaxInclusive(fd: FormData) {
   revalidatePath("/", "layout");
 }
 
+/**
+ * Save chain-inventory outlet settings — the three toggles that drive
+ * Prompt 1+4 workflows: Cost Controller approval gate, BK markup on
+ * outbound transfers, multi-department inventory model.
+ */
+export async function saveChainInventorySettings(fd: FormData) {
+  const outlet = await db.outlet.findFirstOrThrow();
+  const requireCC = fd.get("requireCostControlApproval") === "on";
+  const applyMarkup = fd.get("applyBKMarkupOnTransfer") === "on";
+  const multiDept = fd.get("multiDeptInventoryEnabled") === "on";
+  const rawPct = Number(fd.get("bkMarkupPercent") ?? "");
+  const bkMarkupPercent =
+    Number.isFinite(rawPct) && rawPct >= 0 && rawPct <= 100 ? rawPct : 0;
+  await db.outlet.update({
+    where: { id: outlet.id },
+    data: {
+      requireCostControlApproval: requireCC,
+      applyBKMarkupOnTransfer: applyMarkup,
+      bkMarkupPercent,
+      multiDeptInventoryEnabled: multiDept,
+    } as any,
+  });
+  revalidatePath("/settings");
+  revalidatePath("/", "layout");
+}
+
 export async function toggleStoreOpen() {
   const outlet = await db.outlet.findFirstOrThrow();
   await db.outlet.update({ where: { id: outlet.id }, data: { storeOpen: !outlet.storeOpen } });

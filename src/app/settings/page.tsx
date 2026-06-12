@@ -7,7 +7,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { saveOutlet, deleteTable, setTaxInclusive } from "./actions";
+import { saveOutlet, deleteTable, setTaxInclusive, saveChainInventorySettings } from "./actions";
 import { TableDialog } from "./client";
 import { Plus, Trash2 } from "lucide-react";
 import { requireUser } from "@/lib/rbac";
@@ -31,6 +31,7 @@ export default async function SettingsPage() {
           <TabsTrigger value="outlet">Outlet</TabsTrigger>
           <TabsTrigger value="tables">Dining tables ({tables.length})</TabsTrigger>
           <TabsTrigger value="ops">Operations</TabsTrigger>
+          <TabsTrigger value="inventory">Chain inventory</TabsTrigger>
         </TabsList>
 
         <TabsContent value="outlet">
@@ -234,6 +235,106 @@ export default async function SettingsPage() {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+
+        <TabsContent value="inventory">
+          <Card>
+            <CardHeader>
+              <CardTitle>Chain inventory workflows</CardTitle>
+              <CardDescription>
+                Switches that change how requisitions, procurement, and chain transfers
+                behave at this outlet. Affects /inventory and /outlets pages immediately.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form action={saveChainInventorySettings} className="space-y-4">
+                {/* Multi-dept toggle */}
+                <label className="flex items-start justify-between gap-3 cursor-pointer pb-3 border-b">
+                  <div>
+                    <div className="font-medium">Multi-department inventory</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      When ON, each outlet has Store / Kitchen / Bar / Housekeeping
+                      sub-departments and HOD requisitions are available. When OFF,
+                      the older flat per-outlet stock view applies (legacy mode).
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    name="multiDeptInventoryEnabled"
+                    defaultChecked={(outlet as any).multiDeptInventoryEnabled ?? true}
+                    className="h-4 w-4 mt-1 shrink-0"
+                  />
+                </label>
+
+                {/* CC approval toggle */}
+                <label className="flex items-start justify-between gap-3 cursor-pointer pb-3 border-b">
+                  <div>
+                    <div className="font-medium">Cost Controller approval on Purchase Orders</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      When ON, every PO raised by a Store Manager sits in PENDING_CC_APPROVAL
+                      until a Cost Controller actions it. When OFF, submit auto-promotes to
+                      APPROVED — the submitter is captured as the auto-approver in the audit
+                      log. Default ON for tighter financial control.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    name="requireCostControlApproval"
+                    defaultChecked={(outlet as any).requireCostControlApproval ?? true}
+                    className="h-4 w-4 mt-1 shrink-0"
+                  />
+                </label>
+
+                {/* BK markup toggle + percent */}
+                <div className="space-y-2 pb-3 border-b">
+                  <label className="flex items-start justify-between gap-3 cursor-pointer">
+                    <div>
+                      <div className="font-medium">Apply Base Kitchen markup on outbound transfers</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        When this outlet is a BASE_KITCHEN and ships produced goods to other
+                        outlets, the per-unit transfer price = avgCost × (1 + markup %).
+                        Lets you bake labour / overhead into the receiver's cost basis.
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      name="applyBKMarkupOnTransfer"
+                      defaultChecked={(outlet as any).applyBKMarkupOnTransfer ?? false}
+                      className="h-4 w-4 mt-1 shrink-0"
+                    />
+                  </label>
+                  <div className="flex items-center justify-between gap-3 pl-1">
+                    <Label className="font-normal text-xs text-muted-foreground">Markup percent</Label>
+                    <div className="inline-flex items-center gap-1">
+                      <input
+                        type="number"
+                        name="bkMarkupPercent"
+                        step="0.5"
+                        min="0"
+                        max="100"
+                        defaultValue={(outlet as any).bkMarkupPercent ?? 0}
+                        className="h-9 w-24 rounded-md border bg-background px-2 text-right text-sm"
+                      />
+                      <span className="text-xs text-muted-foreground">%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <Button type="submit">Save chain settings</Button>
+                </div>
+
+                <div className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+                  <strong>Tip:</strong> Outlet kind + which BS/BK this outlet pulls from
+                  is configured separately on the{" "}
+                  <a href="/outlets" className="underline-offset-2 hover:underline">
+                    /outlets
+                  </a>{" "}
+                  page (Owner only) via the Network icon per row.
+                </div>
+              </form>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
