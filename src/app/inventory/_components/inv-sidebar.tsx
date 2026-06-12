@@ -44,11 +44,22 @@ const GROUPS: Group[] = [
   },
   {
     id: "purchase",
-    label: "Purchase",
+    label: "Procurement",
     icon: ShoppingCart,
     items: [
-      { label: "Stock Purchase", href: "/inventory/purchase-records" },
       { label: "Purchase Orders", href: "/inventory/purchase" },
+      { label: "Goods received (GRN)", href: "/inventory/grn" },
+      { label: "Vendor invoices", href: "/inventory/invoices" },
+      { label: "Stock Purchase (legacy)", href: "/inventory/purchase-records" },
+    ],
+  },
+  {
+    id: "requisitions",
+    label: "Requisitions",
+    icon: ClipboardList,
+    items: [
+      { label: "All requisitions", href: "/inventory/requisitions" },
+      { label: "Raise new", href: "/inventory/requisitions/new" },
     ],
   },
   {
@@ -84,6 +95,9 @@ const GROUPS: Group[] = [
     icon: BarChart3,
     items: [
       { label: "Stock Summary", href: "/inventory/reports/summary" },
+      { label: "Chain stock matrix", href: "/inventory/reports/chain-stock" },
+      { label: "Requisition variance", href: "/inventory/reports/requisition-variance" },
+      { label: "Procurement cockpit", href: "/inventory/reports/procurement-cockpit" },
     ],
   },
   {

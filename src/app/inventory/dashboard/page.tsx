@@ -5,7 +5,18 @@ import { Badge } from "@/components/ui/badge";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { inr } from "@/lib/utils";
-import { AlertTriangle, Boxes, CalendarCheck, Receipt, TrendingDown } from "lucide-react";
+import {
+  AlertTriangle,
+  Boxes,
+  CalendarCheck,
+  Receipt,
+  TrendingDown,
+  ClipboardList,
+  PackageCheck,
+  FileText,
+  BarChart3,
+  Network,
+} from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -52,12 +63,67 @@ export default async function InventoryDashboardPage() {
   const accuracy = daysInMonth ? Math.round((counts.length / daysInMonth) * 100) : 0;
   const missed = Math.min(daysInMonth, Math.max(0, today.getDate() - counts.length));
 
+  // Chain workflow KPIs for the quick-link strip — keep these cheap, they
+  // run on every render of /inventory/dashboard.
+  const [pendingReqCount, openGrnCount, openInvoiceCount, pendingCcCount] = await Promise.all([
+    db.requisition.count({ where: { outletId: outlet.id, status: "NEW" } }),
+    db.grn.count({ where: { outletId: outlet.id, status: "OPEN" } }),
+    db.vendorInvoice.count({ where: { outletId: outlet.id, status: { in: ["UNPAID", "PARTIAL"] } } }),
+    db.purchaseOrder.count({ where: { outletId: outlet.id, status: "PENDING_CC_APPROVAL" } }),
+  ]);
+
   return (
     <div>
       <PageHeader
         title="Inventory Dashboard"
         description={`${outlet.name} · live snapshot of stock health`}
       />
+
+      {/* Chain workflow quick-link strip — surfaces the new procurement +
+          requisition surfaces so they're not buried in the sidebar. */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-4">
+        <QuickLink
+          href="/inventory/requisitions"
+          icon={<ClipboardList className="h-4 w-4" />}
+          label="Requisitions"
+          badge={pendingReqCount}
+          badgeTone={pendingReqCount > 0 ? "warn" : "neutral"}
+        />
+        <QuickLink
+          href="/inventory/purchase"
+          icon={<Receipt className="h-4 w-4" />}
+          label="Purchase orders"
+          badge={pendingCcCount}
+          badgeTone={pendingCcCount > 0 ? "warn" : "neutral"}
+          badgeLabel="pending CC"
+        />
+        <QuickLink
+          href="/inventory/grn"
+          icon={<PackageCheck className="h-4 w-4" />}
+          label="Goods received"
+          badge={openGrnCount}
+          badgeTone="neutral"
+          badgeLabel="open"
+        />
+        <QuickLink
+          href="/inventory/invoices"
+          icon={<FileText className="h-4 w-4" />}
+          label="Vendor invoices"
+          badge={openInvoiceCount}
+          badgeTone={openInvoiceCount > 0 ? "warn" : "neutral"}
+          badgeLabel="unpaid"
+        />
+        <QuickLink
+          href="/inventory/reports/procurement-cockpit"
+          icon={<BarChart3 className="h-4 w-4" />}
+          label="Procurement cockpit"
+        />
+        <QuickLink
+          href="/inventory/reports/chain-stock"
+          icon={<Network className="h-4 w-4" />}
+          label="Chain stock"
+        />
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         {/* Daily Stock Closing Tracker */}
@@ -210,5 +276,44 @@ export default async function InventoryDashboardPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+function QuickLink({
+  href,
+  icon,
+  label,
+  badge,
+  badgeLabel,
+  badgeTone = "neutral",
+}: {
+  href: string;
+  icon: React.ReactNode;
+  label: string;
+  badge?: number;
+  badgeLabel?: string;
+  badgeTone?: "neutral" | "warn";
+}) {
+  return (
+    <Link
+      href={href}
+      className="group flex items-center justify-between gap-2 rounded-md border bg-card hover:bg-accent transition-colors px-3 py-2 text-sm"
+    >
+      <span className="inline-flex items-center gap-2 min-w-0">
+        <span className="text-muted-foreground group-hover:text-foreground shrink-0">
+          {icon}
+        </span>
+        <span className="font-medium truncate">{label}</span>
+      </span>
+      {badge !== undefined && badge > 0 && (
+        <Badge
+          variant={badgeTone === "warn" ? "warning" : "outline"}
+          className="text-[10px] shrink-0"
+        >
+          {badge}
+          {badgeLabel && ` ${badgeLabel}`}
+        </Badge>
+      )}
+    </Link>
   );
 }
