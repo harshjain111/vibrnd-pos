@@ -82,6 +82,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Requisitions", href: "/inventory/requisitions", icon: "ClipboardList", pageId: "inventory.requisitions" },
       { label: "Goods received", href: "/inventory/grn", icon: "PackageCheck", pageId: "inventory.grn" },
       { label: "Vendor invoices", href: "/inventory/invoices", icon: "FileText", pageId: "inventory.invoices" },
+      { label: "Production", href: "/inventory/production", icon: "ChefHat", pageId: "inventory.production" },
     ],
   },
   {

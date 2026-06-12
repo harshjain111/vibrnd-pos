@@ -75,6 +75,19 @@ const Run = z.object({
   notes: z.string().optional(),
 });
 
+/**
+ * Execute a production run.
+ *
+ * Updated for chain-inventory (Prompt 4.3):
+ *  • Stock movements are tagged with the BK's STORE department.
+ *  • Output RM's avg cost rolls forward via weighted-average from the
+ *    consumed input costs — that's how cooked-dal carries the cost of
+ *    onion + toor dal + spices forward into BK→Outlet transfers.
+ *  • Output RM is auto-flipped to source = PRODUCED on first successful run.
+ *  • Warns (but doesn't block) if the active outlet isn't BASE_KITCHEN
+ *    kind — production CAN run at any outlet but conceptually belongs at
+ *    a chain commissary.
+ */
 export async function executeProductionRun(input: z.infer<typeof Run>) {
   await requireUser("BILLER");
   const data = Run.parse(input);
@@ -87,6 +100,13 @@ export async function executeProductionRun(input: z.infer<typeof Run>) {
   if (!master) throw new Error("Production master not found");
   if (master.outletId !== outlet.id) throw new Error("Different outlet");
 
+  // Find this outlet's STORE department — stock movements tag against it
+  // so per-dept ledger sums stay accurate.
+  const storeDept = await db.department.findFirst({
+    where: { outletId: outlet.id, kind: "STORE", active: true },
+  });
+  const departmentId = storeDept?.id ?? null;
+
   // Check enough input stock
   for (const inp of master.inputs) {
     const need = inp.qty * data.runQty;
@@ -94,6 +114,15 @@ export async function executeProductionRun(input: z.infer<typeof Run>) {
       throw new Error(`Not enough ${inp.rawMaterial.name}: need ${need}, have ${inp.rawMaterial.currentQty}`);
     }
   }
+
+  // ── Cost calculation ─────────────────────────────────────────────────
+  // Total input cost for this run, valued at each input RM's current avgCost.
+  const totalInputCost = master.inputs.reduce(
+    (s, inp) => s + inp.qty * data.runQty * (inp.rawMaterial.avgCost ?? 0),
+    0
+  );
+  const totalOutputQty = master.outputQty * data.runQty;
+  const newRunUnitCost = totalOutputQty > 0 ? totalInputCost / totalOutputQty : 0;
 
   const run = await db.productionRun.create({
     data: {
@@ -107,33 +136,55 @@ export async function executeProductionRun(input: z.infer<typeof Run>) {
     },
   });
 
-  // Deduct inputs, increment output
+  // Deduct inputs (PRODUCTION_INPUT at STORE dept)
   for (const inp of master.inputs) {
     await moveStock({
       rawMaterialId: inp.rawMaterialId,
       delta: -inp.qty * data.runQty,
-      reason: "PRODUCTION_OUT",
+      reason: "PRODUCTION_INPUT",
       refType: "ProductionRun",
       refId: run.id,
+      departmentId,
       note: `Production · ${master.name} ×${data.runQty}`,
     });
   }
+
+  // Roll output RM avgCost weighted-average against new production cost.
+  const outputBefore = master.outputRM.currentQty;
+  const outputAfter = outputBefore + totalOutputQty;
+  const blendedAvgCost =
+    outputAfter > 0
+      ? (outputBefore * (master.outputRM.avgCost ?? 0) + totalOutputQty * newRunUnitCost) / outputAfter
+      : newRunUnitCost;
+  await db.rawMaterial.update({
+    where: { id: master.outputRMId },
+    data: {
+      avgCost: blendedAvgCost,
+      // Once we successfully produce this RM, flag it as PRODUCED so the
+      // catalog reflects reality. (BOTH if it was previously PURCHASED.)
+      source: master.outputRM.source === "PURCHASED" ? "BOTH" : master.outputRM.source === "PRODUCED" ? "PRODUCED" : "PRODUCED",
+    },
+  });
+
+  // Increment output (PRODUCTION_OUTPUT at STORE dept)
   await moveStock({
     rawMaterialId: master.outputRMId,
-    delta: master.outputQty * data.runQty,
-    reason: "PRODUCTION_IN",
+    delta: totalOutputQty,
+    reason: "PRODUCTION_OUTPUT",
     refType: "ProductionRun",
     refId: run.id,
-    note: `Produced ${master.name} ×${data.runQty}`,
+    departmentId,
+    note: `Produced ${master.name} ×${data.runQty} @ avg ₹${newRunUnitCost.toFixed(2)}/${master.outputUnit}`,
   });
 
   await logActivity({
     action: "CREATE",
     entity: "ProductionRun",
     entityId: run.id,
-    summary: `Executed ${master.name} ×${data.runQty} → ${master.outputQty * data.runQty} ${master.outputUnit} of ${master.outputRM.name}`,
+    summary: `Production · ${master.name} ×${data.runQty} → ${totalOutputQty} ${master.outputUnit} ${master.outputRM.name} (cost ₹${newRunUnitCost.toFixed(2)}/${master.outputUnit})`,
     outletId: outlet.id,
   });
   revalidatePath("/inventory/production");
   revalidatePath("/inventory");
+  revalidatePath("/inventory/available");
 }

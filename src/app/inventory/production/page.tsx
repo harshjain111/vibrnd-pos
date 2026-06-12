@@ -7,13 +7,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Empty } from "@/components/ui/empty";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { Plus } from "lucide-react";
+import { ChefHat, Plus, AlertTriangle } from "lucide-react";
 import { ProductionMasterDialog, DeleteMasterBtn, RunBtn } from "./client";
 
 export const dynamic = "force-dynamic";
 
 export default async function ProductionPage() {
   const outlet = await getActiveOutlet();
+  const outletKind = (outlet as any).kind ?? "OUTLET";
+  const isBK = outletKind === "BASE_KITCHEN";
   const [masters, runs, rms, units] = await Promise.all([
     db.productionMaster.findMany({
       where: { outletId: outlet.id, active: true },
@@ -34,7 +36,11 @@ export default async function ProductionPage() {
     <div>
       <PageHeader
         title="Production"
-        description="Define a conversion (inputs → output) and run batches. Input stock decrements, output stock increments."
+        description={
+          isBK
+            ? "Central commissary — runs decrement inputs from this BK's store and roll the cost forward into the produced item's avg cost."
+            : "Define a conversion (inputs → output) and run batches. Input stock decrements, output stock increments."
+        }
         actions={
           <ProductionMasterDialog
             rawMaterials={rms.map((r) => ({ id: r.id, name: r.name, unit: r.consumptionUnit ?? r.unit }))}
@@ -44,6 +50,44 @@ export default async function ProductionPage() {
           </ProductionMasterDialog>
         }
       />
+
+      {!isBK && (
+        <Card className="mb-3 border-amber-300 bg-amber-50/50">
+          <CardContent className="p-3 flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-700 mt-0.5 shrink-0" />
+            <div>
+              <div className="font-semibold text-amber-900 text-sm">
+                Not a Base Kitchen
+              </div>
+              <div className="text-sm text-amber-800 mt-0.5">
+                This outlet's kind is <strong>{outletKind}</strong>. Production runs work
+                here but conceptually belong at a Base Kitchen — switch outlets via the
+                location switcher to a BK to run chain-level production. (Owner can also
+                promote this outlet's kind from <strong>/outlets</strong>.)
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {isBK && (
+        <Card className="mb-3 border-sky-300 bg-sky-50/50">
+          <CardContent className="p-3 flex items-start gap-2">
+            <ChefHat className="h-4 w-4 text-sky-700 mt-0.5 shrink-0" />
+            <div>
+              <div className="font-semibold text-sky-900 text-sm">
+                {outlet.name} — Base Kitchen
+              </div>
+              <div className="text-sm text-sky-800 mt-0.5">
+                Define a process master (recipe), then run batches. Each run consumes from
+                this BK's store, produces semi-finished goods that ship to outlets via
+                CHAIN transfers. Output cost = sum(input cost) ÷ output qty, rolled into
+                the produced raw material's avg cost.
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
       <Tabs defaultValue="masters">
         <TabsList>
           <TabsTrigger value="masters">Process Master ({masters.length})</TabsTrigger>
