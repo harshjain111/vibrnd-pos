@@ -413,12 +413,21 @@ async function fulfilRequisitionInner(fd: FormData): Promise<ActionResult> {
   }
 
   if (!isCrossOutlet) {
-    // ─── INTERNAL flow (Prompt 2 — unchanged) ───────────────────────────
-    for (const l of linesToMove) {
-      const onHand = await stockAtDepartment(l.rawMaterialId, req.toDepartmentId);
-      if (onHand < l.qtyApproved) {
+    // ─── INTERNAL flow ──────────────────────────────────────────────────
+    // Stock-at-dept lookups run in parallel — each one fans into 3-4
+    // Prisma queries and the sequential version was causing the dialog
+    // to feel like it had hung on multi-line reqs (especially on Vercel's
+    // serverless 10s budget). Same call topology, much less wall-clock.
+    const onHandPairs = await Promise.all(
+      linesToMove.map(async (l) => ({
+        line: l,
+        onHand: await stockAtDepartment(l.rawMaterialId, req.toDepartmentId),
+      }))
+    );
+    for (const { line, onHand } of onHandPairs) {
+      if (onHand < line.qtyApproved) {
         throw new Error(
-          `Insufficient stock of ${l.rawMaterial.name} at STORE (have ${onHand}, need ${l.qtyApproved})`
+          `Insufficient stock of ${line.rawMaterial.name} at STORE (have ${onHand}, need ${line.qtyApproved})`
         );
       }
     }
@@ -452,17 +461,20 @@ async function fulfilRequisitionInner(fd: FormData): Promise<ActionResult> {
       });
       await tx.requisition.update({ where: { id: req.id }, data: { status: "FULFILLED" } });
     });
-    for (const l of linesToMove) {
-      await postInternalTransferMovement({
-        rawMaterialId: l.rawMaterialId,
-        qty: l.qtyApproved,
-        fromDepartmentId: req.toDepartmentId,
-        toDepartmentId: req.fromDepartmentId,
-        refType: "Requisition",
-        refId: req.id,
-        note: `${req.reqNo} fulfilment`,
-      });
-    }
+    // Per-line ledger writes — fan out instead of waiting one-by-one.
+    await Promise.all(
+      linesToMove.map((l) =>
+        postInternalTransferMovement({
+          rawMaterialId: l.rawMaterialId,
+          qty: l.qtyApproved,
+          fromDepartmentId: req.toDepartmentId,
+          toDepartmentId: req.fromDepartmentId,
+          refType: "Requisition",
+          refId: req.id,
+          note: `${req.reqNo} fulfilment`,
+        })
+      )
+    );
   } else {
     // ─── CHAIN flow (cross-outlet, new in Prompt 4.2) ───────────────────
     // The requisition lines reference the REQUESTER's RawMaterial ids. We
@@ -574,5 +586,8 @@ async function fulfilRequisitionInner(fd: FormData): Promise<ActionResult> {
   revalidatePath("/inventory/requisitions");
   revalidatePath(`/inventory/requisitions/${req.id}`);
   revalidatePath("/inventory/transfers");
+  // HOD dashboard surfaces approved reqs in an "Ready for collection"
+  // banner — refresh so the banner drops as soon as fulfilment lands.
+  revalidatePath("/inventory/dashboard");
   return { ok: true };
 }
