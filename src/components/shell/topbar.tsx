@@ -1,6 +1,7 @@
 import { HelpCircle, Search } from "lucide-react";
 import { getActiveOutlet, listAccessibleOutlets } from "@/lib/outlet";
 import { getSessionUser } from "@/lib/session";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { UserMenu } from "./user-menu";
 import { NotificationBell } from "./notification-bell";
@@ -45,6 +46,15 @@ export async function Topbar() {
         <Button variant="ghost" size="icon" aria-label="Help" className="hidden sm:inline-flex">
           <HelpCircle className="h-4 w-4" />
         </Button>
+        {user && (
+          <Badge
+            variant="outline"
+            className="hidden sm:inline-flex text-[10px] uppercase tracking-wider font-semibold"
+            title={`Signed in as ${user.role}`}
+          >
+            {user.role}
+          </Badge>
+        )}
         {user && <UserMenu name={user.name} email={user.email} role={user.role} />}
       </div>
     </header>

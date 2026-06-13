@@ -24,6 +24,10 @@ export function landingPathFor(role: Role | string): string {
     case "PRODUCTION_MANAGER":
       // Production runs at the Base Kitchen.
       return "/inventory/production";
+    case "RECEPTIONIST":
+      // Receptionist owns the floor plan — register customers + assign
+      // tables — so we drop them on the live grid.
+      return "/orders/live";
     case "CAPTAIN":
     case "BILLER":
       // POS roles go straight to the New Bill screen.

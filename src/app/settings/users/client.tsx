@@ -16,9 +16,19 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { Trash2, KeyRound } from "lucide-react";
-import { createUser, updateUser, resetPassword, deleteUser } from "./actions";
+import { Copy, Wand2 } from "lucide-react";
+import { createUser, updateUser, resetPassword, deleteUser, seedTestUsers } from "./actions";
 
-const ROLES = ["OWNER", "MANAGER", "BILLER", "CAPTAIN"] as const;
+import { ROLES as ALL_ROLES } from "@/lib/rbac";
+
+// All roles — POS hierarchy first, then the inventory / procurement
+// roles. Grouped in the select via <optgroup> so the dropdown reads
+// naturally despite being long.
+const POS_ROLE_OPTIONS = ["OWNER", "MANAGER", "BILLER", "CAPTAIN", "RECEPTIONIST"] as const;
+const INVENTORY_ROLE_OPTIONS = ALL_ROLES.filter(
+  (r) => !(POS_ROLE_OPTIONS as readonly string[]).includes(r)
+);
+const ROLES = ALL_ROLES;
 
 export function AddUserDialog({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = React.useState(false);
@@ -56,11 +66,20 @@ export function AddUserDialog({ children }: { children: React.ReactNode }) {
           <div>
             <Label>Role</Label>
             <select name="role" defaultValue="BILLER" className="h-9 w-full rounded-md border bg-background px-3 text-sm">
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
+              <optgroup label="POS / Front of house">
+                {POS_ROLE_OPTIONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Inventory / Procurement">
+                {INVENTORY_ROLE_OPTIONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </div>
           <div>
@@ -120,11 +139,20 @@ export function EditUserDialog({
               defaultValue={initial.role}
               className="h-9 w-full rounded-md border bg-background px-3 text-sm"
             >
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
+              <optgroup label="POS / Front of house">
+                {POS_ROLE_OPTIONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Inventory / Procurement">
+                {INVENTORY_ROLE_OPTIONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </div>
           <div className="col-span-2">
@@ -226,5 +254,99 @@ export function DeleteUserButton({ id, email, disabled }: { id: string; email: s
     >
       <Trash2 className="h-4 w-4" />
     </Button>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   "Seed test users" — one-click provisioning of one Manager / Cashier /
+   Captain / Receptionist test account so the owner can log out, sign
+   back in as each role, and visually confirm the role-aware UI without
+   typing emails into forms.
+   ────────────────────────────────────────────────────────────────────── */
+export function SeedTestUsersButton() {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [open, setOpen] = React.useState(false);
+  const [pending, startTransition] = React.useTransition();
+  const [rows, setRows] = React.useState<
+    { role: string; email: string; name: string; password: string; status: "created" | "existed" }[]
+  >([]);
+
+  const run = () => {
+    startTransition(async () => {
+      const res = await seedTestUsers();
+      if (!res.ok) {
+        toast({ variant: "destructive", title: "Couldn't seed", description: res.error });
+        return;
+      }
+      setRows(res.rows);
+      setOpen(true);
+      router.refresh();
+    });
+  };
+
+  const copy = (s: string) => {
+    navigator.clipboard?.writeText(s);
+    toast({ title: "Copied" });
+  };
+
+  return (
+    <>
+      <Button variant="outline" size="sm" onClick={run} disabled={pending} title="Provision one test user per role">
+        <Wand2 className="h-4 w-4" />
+        {pending ? "Seeding…" : "Seed test users"}
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Test users ready</DialogTitle>
+            <DialogDescription>
+              Sign out, log back in as any of the below to see what their role sees.
+              Existing accounts are kept as-is.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            {rows.map((r) => (
+              <div
+                key={r.email}
+                className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium truncate">
+                    {r.name}{" "}
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground ml-1">
+                      {r.role}
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground font-mono truncate">
+                    {r.email} · {r.password}
+                  </div>
+                </div>
+                <span
+                  className={`text-[10px] uppercase tracking-wider rounded-full px-2 py-0.5 ${
+                    r.status === "created"
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-muted text-muted-foreground"
+                  }`}
+                >
+                  {r.status}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => copy(`${r.email} / ${r.password}`)}
+                  title="Copy email / password"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setOpen(false)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

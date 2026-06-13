@@ -7,7 +7,7 @@ import { db } from "@/lib/db";
 import { requireUser } from "@/lib/rbac";
 import { getActiveOutlet } from "@/lib/outlet";
 import { Plus } from "lucide-react";
-import { AddUserDialog, EditUserDialog, ResetPasswordDialog, DeleteUserButton } from "./client";
+import { AddUserDialog, EditUserDialog, ResetPasswordDialog, DeleteUserButton, SeedTestUsersButton } from "./client";
 
 export const dynamic = "force-dynamic";
 
@@ -32,12 +32,15 @@ export default async function UsersPage() {
         title="Users & permissions"
         description={`${users.length} user${users.length === 1 ? "" : "s"} · OWNER role required to manage`}
         actions={
-          <AddUserDialog>
-            <Button size="sm">
-              <Plus className="h-4 w-4" />
-              Invite user
-            </Button>
-          </AddUserDialog>
+          <>
+            <SeedTestUsersButton />
+            <AddUserDialog>
+              <Button size="sm">
+                <Plus className="h-4 w-4" />
+                Invite user
+              </Button>
+            </AddUserDialog>
+          </>
         }
       />
 
@@ -89,8 +92,16 @@ export default async function UsersPage() {
         </CardContent>
       </Card>
 
-      <div className="mt-4 text-xs text-muted-foreground">
-        <strong>Role hierarchy:</strong> OWNER (full access) → MANAGER (operations + reports) → BILLER (POS only) → CAPTAIN (table orders only).
+      <div className="mt-4 text-xs text-muted-foreground space-y-1">
+        <div>
+          <strong>Front of house:</strong> OWNER → MANAGER → BILLER (cashier) → CAPTAIN / RECEPTIONIST.
+          Receptionist owns the floor plan + customer register; captain punches orders + KOTs;
+          cashier handles moves / splits / comp; manager additionally voids.
+        </div>
+        <div>
+          <strong>Inventory / Procurement:</strong> Store Manager, Cost Controller, HODs (Chef / Bartender / Housekeeping),
+          Accountant, Production Manager — gated per page, not by hierarchy.
+        </div>
       </div>
     </div>
   );

@@ -4,10 +4,12 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { requireUser } from "@/lib/rbac";
+import { requireUser, ROLES as ALL_ROLES } from "@/lib/rbac";
 import { logActivity } from "@/lib/audit";
 
-const ROLES = ["OWNER", "MANAGER", "BILLER", "CAPTAIN"] as const;
+// Same source of truth the sidebar / permission registry uses — keeps the
+// user-creation dropdown in lock-step with the role list.
+const ROLES = ALL_ROLES;
 
 const CreateInput = z.object({
   name: z.string().min(1),
@@ -111,6 +113,70 @@ export async function resetPassword(fd: FormData) {
   });
   revalidatePath("/settings/users");
   revalidatePath("/logs");
+}
+
+/**
+ * One-click "Seed test users" — provisions one user per front-of-house
+ * role (Manager, Cashier, Captain, Receptionist) with deterministic
+ * emails so the owner can flip between roles to test the role-aware
+ * flows without juggling passwords. Idempotent: skips any role whose
+ * test email already exists. Returns a transcript the dialog renders
+ * so the owner can copy-paste creds.
+ */
+type SeedRow = {
+  role: string;
+  email: string;
+  name: string;
+  password: string;
+  status: "created" | "existed";
+};
+
+export async function seedTestUsers(): Promise<{ ok: true; rows: SeedRow[] } | { ok: false; error: string }> {
+  try {
+    await requireUser("OWNER");
+    const outlet = await getActiveOutlet();
+    const password = "test123";
+    const hash = await bcrypt.hash(password, 10);
+
+    const targets: { role: string; email: string; name: string }[] = [
+      { role: "MANAGER",      email: "manager@test.com",      name: "Test Manager" },
+      { role: "BILLER",       email: "cashier@test.com",      name: "Test Cashier" },
+      { role: "CAPTAIN",      email: "captain@test.com",      name: "Test Captain" },
+      { role: "RECEPTIONIST", email: "receptionist@test.com", name: "Test Receptionist" },
+    ];
+
+    const rows: SeedRow[] = [];
+    for (const t of targets) {
+      const existing = await db.user.findUnique({ where: { email: t.email } });
+      if (existing) {
+        rows.push({ ...t, password, status: "existed" });
+        continue;
+      }
+      await db.user.create({
+        data: {
+          name: t.name,
+          email: t.email,
+          role: t.role,
+          passwordHash: hash,
+          outletId: outlet.id,
+        },
+      });
+      rows.push({ ...t, password, status: "created" });
+    }
+
+    await logActivity({
+      action: "CREATE",
+      entity: "Outlet",
+      entityId: outlet.id,
+      summary: `Seeded ${rows.filter((r) => r.status === "created").length} test user(s) for role testing`,
+      outletId: outlet.id,
+    });
+    revalidatePath("/settings/users");
+    revalidatePath("/logs");
+    return { ok: true, rows };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 export async function deleteUser(fd: FormData) {
