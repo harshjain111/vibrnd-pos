@@ -20,20 +20,14 @@ import { getSessionUser, type SessionUser } from "./session";
  * roles, callers should consult `canAccess(role, pageId)` from
  * `./permissions.ts` instead.
  */
-export const POS_ROLES = ["OWNER", "MANAGER", "BILLER", "CAPTAIN", "RECEPTIONIST"] as const;
-export const INVENTORY_ROLES = [
-  "STORE_MANAGER",
-  "COST_CONTROLLER",
-  "CHEF_HOD",
-  "BARTENDER_HOD",
-  "HOUSEKEEPING_HOD",
-  "ACCOUNTANT",
-  "PRODUCTION_MANAGER",
-] as const;
-export const ROLES = [...POS_ROLES, ...INVENTORY_ROLES] as const;
-export type PosRole = (typeof POS_ROLES)[number];
-export type InventoryRole = (typeof INVENTORY_ROLES)[number];
-export type Role = (typeof ROLES)[number];
+// Role constants + types live in role-types.ts so client components can
+// import them without dragging the server-only session helpers into the
+// client bundle. Re-exported here so existing server-side imports of
+// `@/lib/rbac` keep working unchanged.
+import { INVENTORY_ROLES, ROLES } from "./role-types";
+import type { InventoryRole, Role } from "./role-types";
+export { POS_ROLES, INVENTORY_ROLES, ROLES } from "./role-types";
+export type { PosRole, InventoryRole, Role } from "./role-types";
 
 /** Higher rank = more powerful for the POS hierarchy. Inventory roles sit
  *  at rank 2 (between BILLER and MANAGER) — they manage their own slice

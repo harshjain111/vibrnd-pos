@@ -19,7 +19,7 @@ import { Trash2, KeyRound } from "lucide-react";
 import { Copy, Wand2 } from "lucide-react";
 import { createUser, updateUser, resetPassword, deleteUser, seedTestUsers } from "./actions";
 
-import { ROLES as ALL_ROLES } from "@/lib/rbac";
+import { ROLES as ALL_ROLES } from "@/lib/role-types";
 
 // All roles — POS hierarchy first, then the inventory / procurement
 // roles. Grouped in the select via <optgroup> so the dropdown reads
