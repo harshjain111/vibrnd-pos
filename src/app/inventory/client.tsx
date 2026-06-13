@@ -32,20 +32,131 @@ type RmInit = {
   currentQty: number;
   avgCost: number;
   supplierId?: string;
+  categoryName?: string;
+  subCategory?: string;
 };
 
 const UNITS = ["kg", "g", "ltr", "ml", "pcs", "pkt", "box"];
 
+/**
+ * Inline create-or-pick combo box. Existing values come from the parent;
+ * picking "+ Add new…" swaps the select for a text input so the SM can
+ * coin a fresh category without leaving the dialog. The field name is
+ * preserved either way so the surrounding <form> sees one consistent
+ * payload.
+ */
+function CategoryComboBox({
+  name,
+  label,
+  options,
+  initial,
+  placeholder,
+  disabled,
+  onChange,
+}: {
+  name: string;
+  label: string;
+  options: string[];
+  initial?: string;
+  placeholder: string;
+  disabled?: boolean;
+  onChange?: (next: string) => void;
+}) {
+  // Bootstrap: if the saved value isn't in the option list, drop into
+  // "new" mode so the user sees and can edit it.
+  const initialMode: "pick" | "new" =
+    initial && !options.includes(initial) ? "new" : "pick";
+  const [mode, setMode] = React.useState<"pick" | "new">(initialMode);
+  const [pick, setPick] = React.useState(initial ?? "");
+  const [draft, setDraft] = React.useState(initial && initialMode === "new" ? initial : "");
+  React.useEffect(() => {
+    onChange?.(mode === "new" ? draft : pick);
+  }, [mode, pick, draft, onChange]);
+  return (
+    <div>
+      <Label>{label}</Label>
+      {mode === "pick" ? (
+        <div className="flex gap-1">
+          <select
+            value={pick}
+            onChange={(e) => {
+              if (e.target.value === "__new__") {
+                setMode("new");
+                setDraft("");
+                setPick("");
+              } else {
+                setPick(e.target.value);
+              }
+            }}
+            disabled={disabled}
+            className="h-9 flex-1 rounded-md border bg-background px-3 text-sm disabled:opacity-50"
+          >
+            <option value="">{placeholder}</option>
+            {options.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+            <option value="__new__">+ Add new…</option>
+          </select>
+          <input type="hidden" name={name} value={pick} />
+        </div>
+      ) : (
+        <div className="flex gap-1">
+          <Input
+            name={name}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Type a new category"
+            disabled={disabled}
+            autoFocus
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setMode("pick");
+              setDraft("");
+            }}
+            title="Back to picker"
+          >
+            ←
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function RmDialog({
   children,
   suppliers,
+  categories,
+  subCategoriesByCategory,
   initial,
 }: {
   children: React.ReactNode;
   suppliers: { id: string; name: string }[];
+  /** Distinct existing category names from the catalog. */
+  categories?: string[];
+  /** Map of category → sub-categories so the sub-category dropdown stays
+   *  scoped to whatever the user just picked. */
+  subCategoriesByCategory?: Record<string, string[]>;
   initial?: RmInit;
 }) {
   const [open, setOpen] = React.useState(false);
+  // Track the currently-picked category so the sub-category combo can
+  // filter its option list. Kept in component state because both combos
+  // need to stay in sync as the user types.
+  const [pickedCategory, setPickedCategory] = React.useState(initial?.categoryName ?? "");
+  React.useEffect(() => {
+    if (open) setPickedCategory(initial?.categoryName ?? "");
+  }, [open, initial?.categoryName]);
+
+  const allCategories = categories ?? [];
+  const subOptions = (subCategoriesByCategory?.[pickedCategory] ?? []).filter(Boolean);
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>{children}</DialogTrigger>
@@ -65,6 +176,24 @@ export function RmDialog({
             <Label>Name</Label>
             <Input name="name" defaultValue={initial?.name} required />
           </div>
+          <CategoryComboBox
+            key={`cat-${open}`}
+            name="categoryName"
+            label="Category"
+            options={allCategories}
+            initial={initial?.categoryName}
+            placeholder="Pick a category…"
+            onChange={(next) => setPickedCategory(next)}
+          />
+          <CategoryComboBox
+            key={`sub-${open}-${pickedCategory}`}
+            name="subCategory"
+            label="Sub-category"
+            options={subOptions}
+            initial={initial?.subCategory}
+            placeholder={pickedCategory ? "Pick a sub-category…" : "Pick a category first"}
+            disabled={!pickedCategory}
+          />
           <div>
             <Label>Unit</Label>
             <select name="unit" defaultValue={initial?.unit ?? "kg"} className="h-9 w-full rounded-md border bg-background px-3 text-sm">
@@ -76,7 +205,7 @@ export function RmDialog({
             </select>
           </div>
           <div>
-            <Label>Supplier</Label>
+            <Label>Supplier (quick pick)</Label>
             <select name="supplierId" defaultValue={initial?.supplierId ?? ""} className="h-9 w-full rounded-md border bg-background px-3 text-sm">
               <option value="">— None —</option>
               {suppliers.map((s) => (

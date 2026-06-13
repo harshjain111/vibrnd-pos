@@ -7,19 +7,25 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { inr } from "@/lib/utils";
-import { Plus, AlertTriangle, Boxes, Users } from "lucide-react";
+import { Plus, AlertTriangle, Boxes, Search, Users, X } from "lucide-react";
 import { ManageRmSuppliersDialog, RmDialog, StockAdjust } from "./client";
 
 export const dynamic = "force-dynamic";
 
+type SP = { filter?: string; q?: string; cat?: string; sub?: string };
+
 export default async function InventoryPage({
   searchParams,
 }: {
-  searchParams: Promise<{ filter?: string }>;
+  searchParams: Promise<SP>;
 }) {
   const outlet = await getActiveOutlet();
   const sp = await searchParams;
+  const search = (sp.q ?? "").trim();
+  const cat = (sp.cat ?? "").trim();
+  const sub = (sp.sub ?? "").trim();
   const onlyUncovered = sp.filter === "uncovered";
+
   const [rms, suppliers] = await Promise.all([
     db.rawMaterial.findMany({
       where: { outletId: outlet.id },
@@ -35,11 +41,50 @@ export default async function InventoryPage({
     db.supplier.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
   ]);
 
-  const visible = onlyUncovered ? rms.filter((r) => r.rmSuppliers.length === 0) : rms;
+  // Distinct category + sub-category values, for the search filters AND the
+  // Add-RM dialog's smart dropdown. Built off the existing free-text fields
+  // so we don't need a separate taxonomy table.
+  const categories = Array.from(
+    new Set(rms.map((r) => r.categoryName).filter((v): v is string => !!v && v.trim().length > 0))
+  ).sort((a, b) => a.localeCompare(b));
+  const subCategoriesByCategory: Record<string, string[]> = {};
+  for (const r of rms) {
+    if (!r.categoryName || !r.subCategory) continue;
+    const list = (subCategoriesByCategory[r.categoryName] ??= []);
+    if (!list.includes(r.subCategory)) list.push(r.subCategory);
+  }
+  for (const k of Object.keys(subCategoriesByCategory)) {
+    subCategoriesByCategory[k].sort((a, b) => a.localeCompare(b));
+  }
+
+  // Apply filters.
+  const lowered = search.toLowerCase();
+  const visible = rms.filter((r) => {
+    if (onlyUncovered && r.rmSuppliers.length > 0) return false;
+    if (cat && r.categoryName !== cat) return false;
+    if (sub && r.subCategory !== sub) return false;
+    if (lowered && !r.name.toLowerCase().includes(lowered)) return false;
+    return true;
+  });
+
   const stockWorth = rms.reduce((s, r) => s + r.avgCost * r.currentQty, 0);
   const belowMin = rms.filter((r) => r.currentQty < r.minLevel);
   const belowPar = rms.filter((r) => r.currentQty >= r.minLevel && r.currentQty < r.parLevel);
   const uncoveredCount = rms.filter((r) => r.rmSuppliers.length === 0).length;
+
+  // Helper: build a URL that preserves all other filters.
+  const buildHref = (overrides: Partial<SP>) => {
+    const next = { filter: onlyUncovered ? "uncovered" : undefined, q: search || undefined, cat: cat || undefined, sub: sub || undefined, ...overrides };
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(next)) if (v) qs.set(k, String(v));
+    const s = qs.toString();
+    return s ? `/inventory?${s}` : "/inventory";
+  };
+
+  const subOptions = cat ? subCategoriesByCategory[cat] ?? [] : [];
+  const hasAnyFilter = !!(search || cat || sub || onlyUncovered);
+
+  const supplierOptions = suppliers.map((s) => ({ id: s.id, name: s.name }));
 
   return (
     <div>
@@ -57,7 +102,11 @@ export default async function InventoryPage({
             <Button variant="outline" size="sm" asChild>
               <Link href="/inventory/movements">Movements</Link>
             </Button>
-            <RmDialog suppliers={suppliers.map((s) => ({ id: s.id, name: s.name }))}>
+            <RmDialog
+              suppliers={supplierOptions}
+              categories={categories}
+              subCategoriesByCategory={subCategoriesByCategory}
+            >
               <Button size="sm">
                 <Plus className="h-4 w-4" />
                 Raw material
@@ -73,11 +122,58 @@ export default async function InventoryPage({
         <KpiCard label="Below par level" value={String(belowPar.length)} icon={<AlertTriangle className="h-4 w-4" />} />
       </div>
 
-      {/* Filter strip — surfaces the supplier-coverage gap + lets the SM
-          jump straight to it without scrolling the catalog. */}
+      {/* Filter strip + search */}
+      <form method="get" action="/inventory" className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[220px] max-w-md">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <input
+            name="q"
+            defaultValue={search}
+            placeholder="Search by name…"
+            className="h-9 w-full rounded-md border bg-background pl-8 pr-3 text-sm"
+          />
+        </div>
+        <select
+          name="cat"
+          defaultValue={cat}
+          className="h-9 rounded-md border bg-background px-3 text-sm"
+        >
+          <option value="">All categories</option>
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <select
+          name="sub"
+          defaultValue={sub}
+          disabled={!cat}
+          className="h-9 rounded-md border bg-background px-3 text-sm disabled:opacity-50"
+          title={cat ? "" : "Pick a category first"}
+        >
+          <option value="">All sub-categories</option>
+          {subOptions.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        {onlyUncovered && <input type="hidden" name="filter" value="uncovered" />}
+        <Button type="submit" size="sm">Apply</Button>
+        {hasAnyFilter && (
+          <Button type="button" variant="ghost" size="sm" asChild>
+            <Link href="/inventory">
+              <X className="h-3.5 w-3.5" /> Clear
+            </Link>
+          </Button>
+        )}
+      </form>
+
+      {/* Quick filter chips (preserves search/cat/sub) */}
       <div className="flex flex-wrap gap-1.5 mb-3">
         <Link
-          href="/inventory"
+          href={buildHref({ filter: undefined })}
           className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
             onlyUncovered ? "bg-background hover:bg-accent" : "bg-primary text-primary-foreground border-primary"
           }`}
@@ -88,7 +184,7 @@ export default async function InventoryPage({
           </Badge>
         </Link>
         <Link
-          href="/inventory?filter=uncovered"
+          href={buildHref({ filter: "uncovered" })}
           className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
             onlyUncovered
               ? "bg-amber-500 text-white border-amber-500"
@@ -127,6 +223,7 @@ export default async function InventoryPage({
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
+                <TableHead>Category</TableHead>
                 <TableHead>Suppliers</TableHead>
                 <TableHead className="text-right">Current</TableHead>
                 <TableHead className="text-right">Min / Par</TableHead>
@@ -147,7 +244,9 @@ export default async function InventoryPage({
                   >
                     <TableCell>
                       <RmDialog
-                        suppliers={suppliers.map((s) => ({ id: s.id, name: s.name }))}
+                        suppliers={supplierOptions}
+                        categories={categories}
+                        subCategoriesByCategory={subCategoriesByCategory}
                         initial={{
                           id: r.id,
                           name: r.name,
@@ -157,34 +256,73 @@ export default async function InventoryPage({
                           currentQty: r.currentQty,
                           avgCost: r.avgCost,
                           supplierId: r.supplierId ?? "",
+                          categoryName: r.categoryName ?? "",
+                          subCategory: r.subCategory ?? "",
                         }}
                       >
                         <button className="font-medium hover:underline text-left">{r.name}</button>
                       </RmDialog>
                     </TableCell>
-                    <TableCell>
-                      {covered ? (
-                        <div className="text-xs">
-                          <div className="font-medium">
-                            {primary?.supplier.name}{" "}
-                            {primary && (
-                              <span className="text-muted-foreground tabular-nums">
-                                · ₹{primary.negotiatedRate}/{r.unit}
-                              </span>
-                            )}
-                          </div>
-                          {r.rmSuppliers.length > 1 && (
+                    <TableCell className="text-xs">
+                      {r.categoryName ? (
+                        <div>
+                          <div className="font-medium">{r.categoryName}</div>
+                          {r.subCategory && (
                             <div className="text-[10px] text-muted-foreground mt-0.5">
-                              +{r.rmSuppliers.length - 1} more vendor
-                              {r.rmSuppliers.length - 1 === 1 ? "" : "s"}
+                              {r.subCategory}
                             </div>
                           )}
                         </div>
                       ) : (
-                        <Badge variant="warning" className="text-[10px]">
-                          <AlertTriangle className="h-3 w-3 mr-0.5" />
-                          Needs supplier
-                        </Badge>
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {covered ? (
+                        <ManageRmSuppliersDialog
+                          rawMaterialId={r.id}
+                          rawMaterialName={r.name}
+                          rawMaterialUnit={r.unit}
+                          suppliers={supplierOptions}
+                          initialEntries={r.rmSuppliers.map((rs) => ({
+                            supplierId: rs.supplierId,
+                            negotiatedRate: rs.negotiatedRate,
+                            isPrimary: rs.isPrimary,
+                          }))}
+                        >
+                          <button className="text-xs text-left hover:underline">
+                            <div className="font-medium">
+                              {primary?.supplier.name}{" "}
+                              {primary && (
+                                <span className="text-muted-foreground tabular-nums">
+                                  · ₹{primary.negotiatedRate}/{r.unit}
+                                </span>
+                              )}
+                            </div>
+                            {r.rmSuppliers.length > 1 && (
+                              <div className="text-[10px] text-muted-foreground mt-0.5">
+                                +{r.rmSuppliers.length - 1} more vendor
+                                {r.rmSuppliers.length - 1 === 1 ? "" : "s"}
+                              </div>
+                            )}
+                          </button>
+                        </ManageRmSuppliersDialog>
+                      ) : (
+                        <ManageRmSuppliersDialog
+                          rawMaterialId={r.id}
+                          rawMaterialName={r.name}
+                          rawMaterialUnit={r.unit}
+                          suppliers={supplierOptions}
+                          initialEntries={[]}
+                        >
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[10px] font-medium text-amber-900 hover:bg-amber-100 transition-colors"
+                          >
+                            <AlertTriangle className="h-3 w-3" />
+                            Assign supplier
+                          </button>
+                        </ManageRmSuppliersDialog>
                       )}
                     </TableCell>
                     <TableCell className="text-right">
@@ -203,7 +341,7 @@ export default async function InventoryPage({
                           rawMaterialId={r.id}
                           rawMaterialName={r.name}
                           rawMaterialUnit={r.unit}
-                          suppliers={suppliers.map((s) => ({ id: s.id, name: s.name }))}
+                          suppliers={supplierOptions}
                           initialEntries={r.rmSuppliers.map((rs) => ({
                             supplierId: rs.supplierId,
                             negotiatedRate: rs.negotiatedRate,
@@ -222,9 +360,9 @@ export default async function InventoryPage({
               })}
               {visible.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-6">
-                    {onlyUncovered
-                      ? "Every item has a supplier 🎉 Switch to All items to see the catalog."
+                  <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-6">
+                    {hasAnyFilter
+                      ? "No items match the current filters."
                       : "No raw materials yet."}
                   </TableCell>
                 </TableRow>

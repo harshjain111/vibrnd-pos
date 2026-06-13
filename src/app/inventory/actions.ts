@@ -15,6 +15,12 @@ const RM = z.object({
   currentQty: z.coerce.number().nonnegative(),
   avgCost: z.coerce.number().nonnegative(),
   supplierId: z.string().optional(),
+  /** Free-text category/sub-category. The Add RM dialog surfaces a
+   *  dropdown of distinct existing values + an inline "new" input so
+   *  this stays clean despite being unstructured. Stored normalised
+   *  (trimmed) so filters match. */
+  categoryName: z.string().optional(),
+  subCategory: z.string().optional(),
 });
 
 export async function saveRawMaterial(fd: FormData) {
@@ -28,6 +34,8 @@ export async function saveRawMaterial(fd: FormData) {
     currentQty: fd.get("currentQty"),
     avgCost: fd.get("avgCost"),
     supplierId: fd.get("supplierId") || undefined,
+    categoryName: ((fd.get("categoryName") as string) ?? "").trim() || undefined,
+    subCategory: ((fd.get("subCategory") as string) ?? "").trim() || undefined,
   });
 
   if (parsed.id) {
