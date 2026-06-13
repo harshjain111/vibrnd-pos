@@ -76,13 +76,14 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    // Inventory module — keep this section to a single entry so the main
+    // sidebar doesn't duplicate the module's own sub-sidebar (which already
+    // surfaces Requisitions / GRN / Vendor invoices / Production etc.
+    // inside /inventory/*). One click into "Inventory" and the rest of the
+    // nav lives there.
     label: "Inventory",
     items: [
       { label: "Inventory", href: "/inventory/dashboard", icon: "Boxes", pageId: "inventory.dashboard" },
-      { label: "Requisitions", href: "/inventory/requisitions", icon: "ClipboardList", pageId: "inventory.requisitions" },
-      { label: "Goods received", href: "/inventory/grn", icon: "PackageCheck", pageId: "inventory.grn" },
-      { label: "Vendor invoices", href: "/inventory/invoices", icon: "FileText", pageId: "inventory.invoices" },
-      { label: "Production", href: "/inventory/production", icon: "ChefHat", pageId: "inventory.production" },
     ],
   },
   {

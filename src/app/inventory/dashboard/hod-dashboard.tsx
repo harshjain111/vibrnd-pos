@@ -252,6 +252,79 @@ export async function HodDashboard({
         </Card>
       </div>
 
+      {/* Complete department stock — every item the HOD can request, with
+          current on-hand qty pulled from the dept ledger. The chef wanted
+          this because the alert tables only show pain points; for sizing a
+          requisition they need to see the whole catalog at a glance. */}
+      <Card className="mb-4">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-1.5">
+            <ChefHat className="h-4 w-4" />
+            Complete stock at your department
+          </CardTitle>
+          <CardDescription>
+            Every item your department can request, with on-hand qty + min/par. Click
+            "New requisition" above to raise one for any of these.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          {stockRows.length === 0 ? (
+            <Empty
+              title="No items in your catalog yet"
+              desc={
+                dept
+                  ? "Ask the manager to tag raw materials with your department so they appear here."
+                  : "Your user account isn't linked to a department. Ask the owner to set one in Settings → Users."
+              }
+            />
+          ) : (
+            <div className="max-h-96 overflow-y-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Item</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="text-right">On hand</TableHead>
+                    <TableHead className="text-right">Min / Par</TableHead>
+                    <TableHead className="text-right">Value</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {stockRows.map((r) => {
+                    const tone =
+                      r.qty < r.rm.minLevel
+                        ? "destructive"
+                        : r.qty < r.rm.parLevel
+                          ? "warning"
+                          : "success";
+                    const value = r.qty * (r.rm.avgCost ?? 0);
+                    return (
+                      <TableRow key={r.rm.id}>
+                        <TableCell className="font-medium">{r.rm.name}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {r.rm.categoryName ?? "—"}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant={tone as any} className="text-[10px] tabular-nums">
+                            {r.qty} {r.rm.unit}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right text-xs text-muted-foreground tabular-nums">
+                          {r.rm.minLevel} / {r.rm.parLevel} {r.rm.unit}
+                        </TableCell>
+                        <TableCell className="text-right text-xs tabular-nums">
+                          ₹{Math.round(value).toLocaleString("en-IN")}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Pending Requisitions Status */}
       <Card>
         <CardHeader className="pb-2">

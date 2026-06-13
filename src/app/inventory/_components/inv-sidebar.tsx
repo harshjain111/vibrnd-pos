@@ -85,6 +85,11 @@ const GROUPS: Group[] = [
     id: "requisitions",
     label: "Requisitions",
     icon: ClipboardList,
+    // Header itself navigates to the list. Sub-items are the two routes
+    // most HODs / SMs reach for — opening the group with the chevron is
+    // still supported, but the primary click goes to /inventory/requisitions
+    // so the user doesn't get the "I clicked but nothing happened" effect.
+    href: "/inventory/requisitions",
     items: [
       { label: "All requisitions", href: "/inventory/requisitions" },
       { label: "Raise new", href: "/inventory/requisitions/new" },
@@ -268,22 +273,55 @@ export function InventorySidebar({ userRole }: { userRole?: string | null }) {
 
           return (
             <div key={g.id} className="text-sm">
-              <button
-                type="button"
-                onClick={() => toggle(g.id)}
-                className={cn(
-                  "w-full flex items-center gap-2.5 px-4 py-2 transition-colors",
-                  groupActive ? "text-primary font-semibold" : "text-foreground hover:bg-accent/50"
-                )}
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                <span className="flex-1 text-left">{g.label}</span>
-                {isOpen ? (
-                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                )}
-              </button>
+              {/* When the group has its own href, the header text is a Link
+                  (primary click navigates) and the chevron is a separate
+                  toggle button. Without an href the whole row is the
+                  toggle, same as before. */}
+              {g.href ? (
+                <div
+                  className={cn(
+                    "w-full flex items-center gap-2.5 px-4 py-2 transition-colors",
+                    groupActive ? "text-primary font-semibold" : "text-foreground hover:bg-accent/50"
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <Link
+                    href={g.href}
+                    className="flex-1 text-left hover:underline underline-offset-2"
+                  >
+                    {g.label}
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => toggle(g.id)}
+                    title={isOpen ? "Collapse" : "Expand"}
+                    className="p-0.5 -mr-1 hover:bg-accent/60 rounded"
+                  >
+                    {isOpen ? (
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => toggle(g.id)}
+                  className={cn(
+                    "w-full flex items-center gap-2.5 px-4 py-2 transition-colors",
+                    groupActive ? "text-primary font-semibold" : "text-foreground hover:bg-accent/50"
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="flex-1 text-left">{g.label}</span>
+                  {isOpen ? (
+                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </button>
+              )}
               {isOpen && (
                 <ul className="pb-1">
                   {g.items.map((it) => {
