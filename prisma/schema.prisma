@@ -473,6 +473,14 @@ model RawMaterial {
   ///               sometimes produced in-house.
   source          String   @default("PURCHASED")
 
+  /// CSV of department kinds (KITCHEN | BAR | HOUSEKEEPING | STORE) that
+  /// are allowed to see + request this item. NULL or empty means the item
+  /// is available to every department (typical for salt, oil, packaging
+  /// material). The HOD requisition form + the department-scoped catalog
+  /// views filter through this — a Chef HOD won't see "Vodka" if its
+  /// allowedDepartments is "BAR".
+  allowedDepartments String?
+
   recipes         RecipeIngredient[]
   movements       StockMovement[]
   poLines         PurchaseOrderLine[]

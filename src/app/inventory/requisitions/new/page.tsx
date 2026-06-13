@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser, ownedDepartmentKind } from "@/lib/rbac";
 import { getSessionUser } from "@/lib/session";
+import { rmDepartmentFilter } from "@/lib/department-scope";
 import { NewRequisitionForm } from "./client";
 
 export const dynamic = "force-dynamic";
@@ -20,8 +21,12 @@ export default async function NewRequisitionPage() {
   });
   const defaultDept = hodKind ? depts.find((d) => d.kind === hodKind) : depts[0];
 
+  // HOD scope — only show items their dept is allowed to request. The
+  // matching field on RawMaterial is allowedDepartments (CSV); the helper
+  // wraps that into a Prisma where fragment. Non-HOD roles see everything.
+  const deptScope = rmDepartmentFilter(user?.role ?? null);
   const rms = await db.rawMaterial.findMany({
-    where: { outletId: outlet.id, active: true },
+    where: { outletId: outlet.id, active: true, ...(deptScope ?? {}) },
     select: { id: true, name: true, unit: true, currentQty: true, parLevel: true },
     orderBy: { name: "asc" },
   });

@@ -21,10 +21,19 @@ const RM = z.object({
    *  (trimmed) so filters match. */
   categoryName: z.string().optional(),
   subCategory: z.string().optional(),
+  /** CSV of department kinds (STORE | KITCHEN | BAR | HOUSEKEEPING)
+   *  that can request this item. Null/empty = available to every
+   *  department. Drives the HOD-scoped catalog filter in
+   *  src/lib/department-scope.ts. */
+  allowedDepartments: z.string().nullable().optional(),
 });
 
 export async function saveRawMaterial(fd: FormData) {
   const outlet = await getActiveOutlet();
+  // The dialog submits one "deptAllow" hidden input per checked box —
+  // grab them all and concat into the canonical CSV.
+  const deptAllowChecks = fd.getAll("deptAllow").filter((v): v is string => typeof v === "string");
+  const allowedDepartments = deptAllowChecks.length > 0 ? deptAllowChecks.join(",") : null;
   const parsed = RM.parse({
     id: fd.get("id") || undefined,
     name: fd.get("name"),
@@ -36,6 +45,7 @@ export async function saveRawMaterial(fd: FormData) {
     supplierId: fd.get("supplierId") || undefined,
     categoryName: ((fd.get("categoryName") as string) ?? "").trim() || undefined,
     subCategory: ((fd.get("subCategory") as string) ?? "").trim() || undefined,
+    allowedDepartments,
   });
 
   if (parsed.id) {

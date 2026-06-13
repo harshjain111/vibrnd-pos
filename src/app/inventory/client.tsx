@@ -34,7 +34,16 @@ type RmInit = {
   supplierId?: string;
   categoryName?: string;
   subCategory?: string;
+  /** CSV of dept kinds this item is requestable by. Null/empty = all. */
+  allowedDepartments?: string | null;
 };
+
+const DEPT_OPTIONS: { value: "KITCHEN" | "BAR" | "HOUSEKEEPING" | "STORE"; label: string }[] = [
+  { value: "KITCHEN",      label: "Kitchen (Chef)" },
+  { value: "BAR",          label: "Bar (Bartender)" },
+  { value: "HOUSEKEEPING", label: "Housekeeping" },
+  { value: "STORE",        label: "Store only" },
+];
 
 const UNITS = ["kg", "g", "ltr", "ml", "pcs", "pkt", "box"];
 
@@ -230,6 +239,33 @@ export function RmDialog({
           <div>
             <Label>Par level</Label>
             <Input name="parLevel" type="number" step="0.01" min="0" defaultValue={initial?.parLevel ?? 0} />
+          </div>
+          <div className="col-span-2">
+            <Label>Available to departments</Label>
+            <div className="rounded-md border bg-muted/20 p-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {DEPT_OPTIONS.map((o) => {
+                const initialSet = (initial?.allowedDepartments ?? "")
+                  .split(",")
+                  .map((s) => s.trim().toUpperCase());
+                const checked = initialSet.includes(o.value);
+                return (
+                  <label key={o.value} className="inline-flex items-center gap-1.5 text-xs cursor-pointer">
+                    <input
+                      type="checkbox"
+                      name="deptAllow"
+                      value={o.value}
+                      defaultChecked={checked}
+                      className="h-3.5 w-3.5"
+                    />
+                    {o.label}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Tick which HODs can request this item. Leave all unticked for items
+              used everywhere (salt, oil, packaging).
+            </p>
           </div>
           <DialogFooter className="col-span-2">
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>

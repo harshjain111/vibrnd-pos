@@ -62,8 +62,24 @@ export default async function DepartmentStockPage({
           take: 25,
         });
 
+  // Scope the catalog to items this department is allowed to handle. The
+  // allowedDepartments CSV is empty / null for items everyone shares (salt,
+  // oil), and limited otherwise (Vodka stays in BAR's view only). STORE
+  // departments see everything — they're the receiving end.
   const rms = await db.rawMaterial.findMany({
-    where: { outletId: outlet.id, active: true },
+    where: {
+      outletId: outlet.id,
+      active: true,
+      ...(dept.kind === "STORE"
+        ? {}
+        : {
+            OR: [
+              { allowedDepartments: null },
+              { allowedDepartments: "" },
+              { allowedDepartments: { contains: dept.kind } },
+            ],
+          }),
+    },
     select: {
       id: true,
       name: true,
@@ -73,6 +89,7 @@ export default async function DepartmentStockPage({
       minLevel: true,
       currentQty: true,
       source: true,
+      allowedDepartments: true,
     },
     orderBy: { name: "asc" },
   });

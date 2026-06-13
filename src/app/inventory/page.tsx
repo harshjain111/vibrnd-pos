@@ -6,7 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
+import { getSessionUser } from "@/lib/session";
 import { inr } from "@/lib/utils";
+import { rmDepartmentFilter } from "@/lib/department-scope";
+import { ownedDepartmentKind } from "@/lib/rbac";
 import { AlertTriangle, Boxes, Pencil, Plus, Search, Users, X } from "lucide-react";
 import { ManageRmSuppliersDialog, RmDialog, StockAdjust } from "./client";
 
@@ -20,15 +23,22 @@ export default async function InventoryPage({
   searchParams: Promise<SP>;
 }) {
   const outlet = await getActiveOutlet();
+  const user = await getSessionUser();
   const sp = await searchParams;
   const search = (sp.q ?? "").trim();
   const cat = (sp.cat ?? "").trim();
   const sub = (sp.sub ?? "").trim();
   const onlyUncovered = sp.filter === "uncovered";
 
+  // HOD scope — Chef HOD only sees KITCHEN items, Bartender only BAR, etc.
+  // Manager / Owner / Accountant track sees the full catalog (filter returns
+  // undefined and we just spread `where` as-is).
+  const deptScope = rmDepartmentFilter(user?.role ?? null);
+  const hodKind = user ? ownedDepartmentKind(user.role) : null;
+
   const [rms, suppliers] = await Promise.all([
     db.rawMaterial.findMany({
-      where: { outletId: outlet.id },
+      where: { outletId: outlet.id, ...(deptScope ?? {}) },
       include: {
         supplier: true,
         rmSuppliers: {
@@ -90,7 +100,11 @@ export default async function InventoryPage({
     <div>
       <PageHeader
         title="Raw materials"
-        description={`Inventory master · ${rms.length - uncoveredCount}/${rms.length} items have a rate-card supplier`}
+        description={
+          hodKind
+            ? `Scoped to ${hodKind.toLowerCase()} · ${rms.length} item(s) you can request`
+            : `Inventory master · ${rms.length - uncoveredCount}/${rms.length} items have a rate-card supplier`
+        }
         actions={
           <RmDialog
             suppliers={supplierOptions}
@@ -247,6 +261,7 @@ export default async function InventoryPage({
                           supplierId: r.supplierId ?? "",
                           categoryName: r.categoryName ?? "",
                           subCategory: r.subCategory ?? "",
+                          allowedDepartments: r.allowedDepartments,
                         }}
                       >
                         <button className="font-medium hover:underline text-left">{r.name}</button>
@@ -341,6 +356,7 @@ export default async function InventoryPage({
                             supplierId: r.supplierId ?? "",
                             categoryName: r.categoryName ?? "",
                             subCategory: r.subCategory ?? "",
+                          allowedDepartments: r.allowedDepartments,
                           }}
                         >
                           <Button variant="ghost" size="sm" title="Edit raw material">
