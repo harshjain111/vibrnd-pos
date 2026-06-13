@@ -9,6 +9,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Plus, Trash2, AlertTriangle } from "lucide-react";
 import { inr } from "@/lib/utils";
 import { saveStockPurchase } from "../actions";
+import { isRedirectError } from "@/lib/next-action";
 
 type Supplier = { id: string; name: string; gstin: string | null };
 type RM = { id: string; name: string; unit: string; price: number; taxPct: number };
@@ -181,6 +182,7 @@ export function NewPurchaseForm({
           })),
         });
       } catch (e) {
+        if (isRedirectError(e)) throw e;
         toast({ variant: "destructive", title: "Couldn't save", description: String(e) });
       }
     });

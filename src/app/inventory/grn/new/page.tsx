@@ -263,9 +263,12 @@ export default async function NewGrnPage({
             </div>
             <Link
               href={`/inventory/purchase/${po.id}`}
+              target="_blank"
+              rel="noopener"
               className="text-xs text-sky-700 underline-offset-2 hover:underline"
+              title="Opens in a new tab so this GRN form keeps everything you've typed"
             >
-              View PO →
+              View PO ↗
             </Link>
           </CardContent>
         </Card>

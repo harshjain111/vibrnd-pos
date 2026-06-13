@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
 import { Trash2, Plus, Send } from "lucide-react";
 import { createRequisition } from "../actions";
+import { isRedirectError } from "@/lib/next-action";
 
 type Dept = { id: string; name: string; kind: string };
 type Rm = { id: string; name: string; unit: string; currentQty: number; parLevel: number };
@@ -80,6 +81,7 @@ export function NewRequisitionForm({
         });
         // server redirects to detail; no toast needed
       } catch (e) {
+        if (isRedirectError(e)) throw e;
         toast({ variant: "destructive", title: "Couldn't raise requisition", description: String(e) });
       }
     });

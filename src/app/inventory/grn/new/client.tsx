@@ -8,6 +8,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Plus, Trash2, Truck, AlertTriangle } from "lucide-react";
 import { createGrn } from "../actions";
 import { inr2 } from "@/lib/utils";
+import { isRedirectError } from "@/lib/next-action";
 
 type PoLine = {
   id: string;
@@ -128,6 +129,7 @@ export function NewGrnForm({
         });
         // server action redirects to /inventory/grn/[id]
       } catch (e) {
+        if (isRedirectError(e)) throw e;
         toast({ variant: "destructive", title: "Couldn't save GRN", description: String(e) });
       }
     });

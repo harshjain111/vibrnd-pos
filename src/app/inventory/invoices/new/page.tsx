@@ -312,9 +312,12 @@ export default async function NewInvoicePage({
           {seedGrn.po && (
             <Link
               href={`/inventory/grn/${seedGrn.id}`}
+              target="_blank"
+              rel="noopener"
               className="text-xs text-sky-700 underline-offset-2 hover:underline shrink-0"
+              title="Opens in a new tab so this form keeps everything you've typed"
             >
-              View GRN →
+              View GRN ↗
             </Link>
           )}
         </CardContent>

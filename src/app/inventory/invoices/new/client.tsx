@@ -8,6 +8,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { AlertTriangle, FileText, Plus, Trash2, Wand2 } from "lucide-react";
 import { createVendorInvoice } from "../actions";
 import { inr } from "@/lib/utils";
+import { isRedirectError } from "@/lib/next-action";
 
 type Supplier = { id: string; name: string };
 type GrnOption = {
@@ -243,6 +244,7 @@ export function NewInvoiceForm({
         });
         // server redirects to detail
       } catch (e) {
+        if (isRedirectError(e)) throw e;
         toast({ variant: "destructive", title: "Couldn't save invoice", description: String(e) });
       }
     });

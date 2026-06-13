@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
 import { ClipboardCheck } from "lucide-react";
 import { submitAudit } from "../../actions";
+import { isRedirectError } from "@/lib/next-action";
 
 type AssetRow = {
   id: string;
@@ -50,6 +51,7 @@ export function AuditForm({ assets }: { assets: AssetRow[] }) {
         });
         // server action redirects to detail page
       } catch (e) {
+        if (isRedirectError(e)) throw e;
         toast({ variant: "destructive", title: "Couldn't save audit", description: String(e) });
       }
     });
