@@ -4,7 +4,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
+import { getSessionUser } from "@/lib/session";
+import { ownedDepartmentKind } from "@/lib/rbac";
 import { inr } from "@/lib/utils";
+import { HodDashboard } from "./hod-dashboard";
 import {
   AlertTriangle,
   Boxes,
@@ -24,6 +27,23 @@ function midnight(d: Date) { const x = new Date(d); x.setHours(0,0,0,0); return 
 
 export default async function InventoryDashboardPage() {
   const outlet = await getActiveOutlet();
+  const user = await getSessionUser();
+  // HODs get a completely different page — the focused box-#4 view that
+  // only surfaces their dept's stock, alerts, replenishment list, and
+  // their own pending requisitions. Manager / Owner / Accountant /
+  // Store Manager etc. fall through to the procurement-style overview
+  // built for the inventory super-users.
+  const hodKind = user ? ownedDepartmentKind(user.role) : null;
+  if (user && hodKind && hodKind !== "STORE") {
+    return (
+      <HodDashboard
+        outletId={outlet.id}
+        outletName={outlet.name}
+        user={{ id: user.id, name: user.name, role: user.role, departmentId: user.departmentId ?? null }}
+        deptKind={hodKind}
+      />
+    );
+  }
   const today = midnight(new Date());
   const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
   const week7 = new Date(today.getTime() - 7 * 86400000);

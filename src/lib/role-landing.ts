@@ -10,8 +10,10 @@ export function landingPathFor(role: Role | string): string {
     case "CHEF_HOD":
     case "BARTENDER_HOD":
     case "HOUSEKEEPING_HOD":
-      // HODs spend most of their day raising requisitions to the store.
-      return "/inventory/requisitions/new";
+      // HODs land on the focused box-#4 dashboard — current stock, low
+      // stock alerts, replenishment list, and pending reqs — with the
+      // "New requisition" CTA front-and-centre.
+      return "/inventory/dashboard";
     case "STORE_MANAGER":
       // SM lives in the approval queue + the PO module.
       return "/inventory/requisitions";

@@ -58,6 +58,9 @@ export type SessionUser = {
   email: string;
   role: string;
   outletId: string;
+  /** Department the user owns (HODs + Store Manager). Null for everyone
+   *  else. Powers dept-scoped dashboards and the catalog filter. */
+  departmentId: string | null;
 };
 
 export async function getSessionUser(): Promise<SessionUser | null> {
@@ -74,6 +77,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     email: user.email,
     role: user.role,
     outletId: user.outletId,
+    departmentId: user.departmentId ?? null,
   };
 }
 
