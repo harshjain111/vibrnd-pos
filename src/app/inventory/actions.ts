@@ -152,6 +152,90 @@ export async function saveSupplierRateCard(
   }
 }
 
+/* ──────────────────────────────────────────────────────────────────────
+   Suppliers-for-RM — mirrors saveSupplierRateCard but scoped to one RM.
+   Lets the SM assign multiple vendors + rates from the raw-material page.
+   ────────────────────────────────────────────────────────────────────── */
+
+const RmSupplierRow = z.object({
+  supplierId: z.string(),
+  negotiatedRate: z.coerce.number().nonnegative(),
+  isPrimary: z.boolean().default(false),
+});
+
+const RmSuppliersInput = z.object({
+  rawMaterialId: z.string(),
+  rows: z.array(RmSupplierRow),
+});
+
+export async function saveRawMaterialSuppliers(
+  input: z.infer<typeof RmSuppliersInput>
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const data = RmSuppliersInput.parse(input);
+    const outlet = await getActiveOutlet();
+    const rm = await db.rawMaterial.findFirst({
+      where: { id: data.rawMaterialId, outletId: outlet.id },
+    });
+    if (!rm) throw new Error("Raw material not found at this outlet");
+
+    // De-dupe by supplierId so the editor doesn't have to be paranoid.
+    const bySupplier = new Map<string, typeof data.rows[number]>();
+    for (const r of data.rows) bySupplier.set(r.supplierId, r);
+    const cleaned = Array.from(bySupplier.values());
+
+    // At most one primary across the set — last-write-wins if the user
+    // ticked multiple.
+    const primaries = cleaned.filter((r) => r.isPrimary);
+    if (primaries.length > 1) {
+      for (let i = 0; i < primaries.length - 1; i++) primaries[i].isPrimary = false;
+    }
+
+    await db.$transaction([
+      db.rawMaterialSupplier.deleteMany({ where: { rawMaterialId: data.rawMaterialId } }),
+      ...(cleaned.length > 0
+        ? [
+            db.rawMaterialSupplier.createMany({
+              data: cleaned.map((r) => ({
+                rawMaterialId: data.rawMaterialId,
+                supplierId: r.supplierId,
+                negotiatedRate: r.negotiatedRate,
+                isPrimary: r.isPrimary,
+              })),
+            }),
+          ]
+        : []),
+      // Sync the legacy single supplierId pointer to whichever row is
+      // marked primary (or the only row, when there's just one). Null when
+      // the SM cleared the assignments entirely.
+      db.rawMaterial.update({
+        where: { id: data.rawMaterialId },
+        data: {
+          supplierId:
+            cleaned.length === 0
+              ? null
+              : (cleaned.find((r) => r.isPrimary) ?? cleaned[0]).supplierId,
+        },
+      }),
+    ]);
+
+    await logActivity({
+      action: "UPDATE",
+      entity: "RawMaterial",
+      entityId: data.rawMaterialId,
+      summary: `Rate-card suppliers for ${rm.name} updated — ${cleaned.length} vendor(s)`,
+      outletId: outlet.id,
+    });
+
+    revalidatePath("/inventory");
+    revalidatePath("/inventory/suppliers");
+    revalidatePath("/inventory/purchase/new");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 const RecipeIngredientInput = z.object({
   rawMaterialId: z.string(),
   qty: z.coerce.number().positive(),

@@ -98,6 +98,9 @@ export function RateCardEditor({
         title: "Rate card saved",
         description: `${cleaned.length} item(s), ${Number(creditDays) || 0} day credit`,
       });
+      // Bounce back to the suppliers list — the updated card item count
+      // surfaces there immediately so the SM gets a visible state change.
+      router.push("/inventory/suppliers");
       router.refresh();
     });
   };

@@ -7,27 +7,45 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { inr } from "@/lib/utils";
-import { Plus, AlertTriangle, Boxes } from "lucide-react";
-import { RmDialog, StockAdjust } from "./client";
+import { Plus, AlertTriangle, Boxes, Users } from "lucide-react";
+import { ManageRmSuppliersDialog, RmDialog, StockAdjust } from "./client";
 
 export const dynamic = "force-dynamic";
 
-export default async function InventoryPage() {
+export default async function InventoryPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ filter?: string }>;
+}) {
   const outlet = await getActiveOutlet();
+  const sp = await searchParams;
+  const onlyUncovered = sp.filter === "uncovered";
   const [rms, suppliers] = await Promise.all([
-    db.rawMaterial.findMany({ where: { outletId: outlet.id }, include: { supplier: true }, orderBy: { name: "asc" } }),
-    db.supplier.findMany({ orderBy: { name: "asc" } }),
+    db.rawMaterial.findMany({
+      where: { outletId: outlet.id },
+      include: {
+        supplier: true,
+        rmSuppliers: {
+          include: { supplier: { select: { id: true, name: true } } },
+          orderBy: { isPrimary: "desc" },
+        },
+      },
+      orderBy: { name: "asc" },
+    }),
+    db.supplier.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
   ]);
 
+  const visible = onlyUncovered ? rms.filter((r) => r.rmSuppliers.length === 0) : rms;
   const stockWorth = rms.reduce((s, r) => s + r.avgCost * r.currentQty, 0);
   const belowMin = rms.filter((r) => r.currentQty < r.minLevel);
   const belowPar = rms.filter((r) => r.currentQty >= r.minLevel && r.currentQty < r.parLevel);
+  const uncoveredCount = rms.filter((r) => r.rmSuppliers.length === 0).length;
 
   return (
     <div>
       <PageHeader
         title="Raw materials"
-        description="Inventory master with current stock, par/min levels, and supplier link"
+        description={`Inventory master · ${rms.length - uncoveredCount}/${rms.length} items have a rate-card supplier`}
         actions={
           <>
             <Button variant="outline" size="sm" asChild>
@@ -55,6 +73,38 @@ export default async function InventoryPage() {
         <KpiCard label="Below par level" value={String(belowPar.length)} icon={<AlertTriangle className="h-4 w-4" />} />
       </div>
 
+      {/* Filter strip — surfaces the supplier-coverage gap + lets the SM
+          jump straight to it without scrolling the catalog. */}
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        <Link
+          href="/inventory"
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
+            onlyUncovered ? "bg-background hover:bg-accent" : "bg-primary text-primary-foreground border-primary"
+          }`}
+        >
+          All items
+          <Badge variant="outline" className="text-[10px] bg-background/50">
+            {rms.length}
+          </Badge>
+        </Link>
+        <Link
+          href="/inventory?filter=uncovered"
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
+            onlyUncovered
+              ? "bg-amber-500 text-white border-amber-500"
+              : uncoveredCount > 0
+                ? "bg-background border-amber-300 text-amber-800 hover:bg-amber-50"
+                : "bg-background hover:bg-accent"
+          }`}
+        >
+          <AlertTriangle className="h-3.5 w-3.5" />
+          Needs supplier
+          <Badge variant="outline" className={`text-[10px] ${onlyUncovered ? "bg-white/30 border-white/40 text-white" : "bg-background/50"}`}>
+            {uncoveredCount}
+          </Badge>
+        </Link>
+      </div>
+
       {belowMin.length > 0 && (
         <Card className="mb-4 border-amber-300 bg-amber-50/40">
           <CardHeader>
@@ -77,19 +127,24 @@ export default async function InventoryPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
-                <TableHead>Supplier</TableHead>
+                <TableHead>Suppliers</TableHead>
                 <TableHead className="text-right">Current</TableHead>
                 <TableHead className="text-right">Min / Par</TableHead>
                 <TableHead className="text-right">Avg cost</TableHead>
                 <TableHead className="text-right">Worth</TableHead>
-                <TableHead className="w-40 text-right">Adjust</TableHead>
+                <TableHead className="w-40 text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rms.map((r) => {
+              {visible.map((r) => {
                 const tone = r.currentQty < r.minLevel ? "destructive" : r.currentQty < r.parLevel ? "warning" : "success";
+                const covered = r.rmSuppliers.length > 0;
+                const primary = r.rmSuppliers.find((rs) => rs.isPrimary) ?? r.rmSuppliers[0] ?? null;
                 return (
-                  <TableRow key={r.id}>
+                  <TableRow
+                    key={r.id}
+                    className={covered ? "bg-emerald-50/40 hover:bg-emerald-50/70" : ""}
+                  >
                     <TableCell>
                       <RmDialog
                         suppliers={suppliers.map((s) => ({ id: s.id, name: s.name }))}
@@ -107,7 +162,31 @@ export default async function InventoryPage() {
                         <button className="font-medium hover:underline text-left">{r.name}</button>
                       </RmDialog>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{r.supplier?.name ?? "—"}</TableCell>
+                    <TableCell>
+                      {covered ? (
+                        <div className="text-xs">
+                          <div className="font-medium">
+                            {primary?.supplier.name}{" "}
+                            {primary && (
+                              <span className="text-muted-foreground tabular-nums">
+                                · ₹{primary.negotiatedRate}/{r.unit}
+                              </span>
+                            )}
+                          </div>
+                          {r.rmSuppliers.length > 1 && (
+                            <div className="text-[10px] text-muted-foreground mt-0.5">
+                              +{r.rmSuppliers.length - 1} more vendor
+                              {r.rmSuppliers.length - 1 === 1 ? "" : "s"}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <Badge variant="warning" className="text-[10px]">
+                          <AlertTriangle className="h-3 w-3 mr-0.5" />
+                          Needs supplier
+                        </Badge>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right">
                       <Badge variant={tone as any}>
                         {r.currentQty} {r.unit}
@@ -119,11 +198,37 @@ export default async function InventoryPage() {
                     <TableCell className="text-right">{inr(r.avgCost)}/{r.unit}</TableCell>
                     <TableCell className="text-right font-medium">{inr(r.currentQty * r.avgCost)}</TableCell>
                     <TableCell className="text-right">
-                      <StockAdjust id={r.id} unit={r.unit} />
+                      <div className="flex justify-end gap-1">
+                        <ManageRmSuppliersDialog
+                          rawMaterialId={r.id}
+                          rawMaterialName={r.name}
+                          rawMaterialUnit={r.unit}
+                          suppliers={suppliers.map((s) => ({ id: s.id, name: s.name }))}
+                          initialEntries={r.rmSuppliers.map((rs) => ({
+                            supplierId: rs.supplierId,
+                            negotiatedRate: rs.negotiatedRate,
+                            isPrimary: rs.isPrimary,
+                          }))}
+                        >
+                          <Button variant="ghost" size="sm" title="Manage suppliers + rates">
+                            <Users className="h-3.5 w-3.5" />
+                          </Button>
+                        </ManageRmSuppliersDialog>
+                        <StockAdjust id={r.id} unit={r.unit} />
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
               })}
+              {visible.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-6">
+                    {onlyUncovered
+                      ? "Every item has a supplier 🎉 Switch to All items to see the catalog."
+                      : "No raw materials yet."}
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </CardContent>

@@ -1,17 +1,27 @@
 "use client";
 import * as React from "react";
+import { useRouter } from "next/navigation";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { saveRawMaterial, saveSupplier, adjustStock } from "./actions";
+import { useToast } from "@/components/ui/use-toast";
+import { Plus, Save, Trash2 } from "lucide-react";
+import {
+  saveRawMaterial,
+  saveSupplier,
+  adjustStock,
+  saveRawMaterialSuppliers,
+} from "./actions";
 
 type RmInit = {
   id?: string;
@@ -172,6 +182,237 @@ export function SupplierDialog({
             <Button type="submit">Save</Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Quick "Manage suppliers" dialog scoped to a single raw material.
+   Mirror of the supplier rate-card editor but pivoted — one item × many
+   vendors instead of one vendor × many items.
+   ────────────────────────────────────────────────────────────────────── */
+
+export type RmSupplierEntry = {
+  supplierId: string;
+  negotiatedRate: number;
+  isPrimary: boolean;
+};
+
+type RmRow = {
+  key: string;
+  supplierId: string;
+  negotiatedRate: string;
+  isPrimary: boolean;
+};
+
+export function ManageRmSuppliersDialog({
+  children,
+  rawMaterialId,
+  rawMaterialName,
+  rawMaterialUnit,
+  suppliers,
+  initialEntries,
+}: {
+  children: React.ReactNode;
+  rawMaterialId: string;
+  rawMaterialName: string;
+  rawMaterialUnit: string;
+  suppliers: { id: string; name: string }[];
+  initialEntries: RmSupplierEntry[];
+}) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [open, setOpen] = React.useState(false);
+  const [pending, startTransition] = React.useTransition();
+  const [rows, setRows] = React.useState<RmRow[]>([]);
+
+  // Hydrate the editor every time the dialog opens so it picks up
+  // server-side changes since the last interaction.
+  React.useEffect(() => {
+    if (!open) return;
+    setRows(
+      initialEntries.length > 0
+        ? initialEntries.map((e) => ({
+            key: Math.random().toString(36).slice(2),
+            supplierId: e.supplierId,
+            negotiatedRate: String(e.negotiatedRate),
+            isPrimary: e.isPrimary,
+          }))
+        : [
+            {
+              key: Math.random().toString(36).slice(2),
+              supplierId: "",
+              negotiatedRate: "",
+              isPrimary: true,
+            },
+          ]
+    );
+  }, [open, initialEntries]);
+
+  const takenSupplierIds = React.useMemo(
+    () => new Set(rows.map((r) => r.supplierId).filter(Boolean)),
+    [rows]
+  );
+
+  const updateRow = (key: string, patch: Partial<RmRow>) =>
+    setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  const addRow = () =>
+    setRows((rs) => [
+      ...rs,
+      {
+        key: Math.random().toString(36).slice(2),
+        supplierId: "",
+        negotiatedRate: "",
+        isPrimary: rs.length === 0,
+      },
+    ]);
+  const removeRow = (key: string) =>
+    setRows((rs) => (rs.length > 1 ? rs.filter((r) => r.key !== key) : rs));
+  const togglePrimary = (key: string, on: boolean) =>
+    setRows((rs) =>
+      rs.map((r) => ({
+        ...r,
+        // Mutually-exclusive — ticking one un-ticks others.
+        isPrimary: r.key === key ? on : on ? false : r.isPrimary,
+      }))
+    );
+
+  const submit = () => {
+    const cleaned = rows
+      .filter((r) => r.supplierId && Number(r.negotiatedRate) >= 0)
+      .map((r) => ({
+        supplierId: r.supplierId,
+        negotiatedRate: Number(r.negotiatedRate),
+        isPrimary: r.isPrimary,
+      }));
+    startTransition(async () => {
+      const res = await saveRawMaterialSuppliers({ rawMaterialId, rows: cleaned });
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Couldn't save",
+          description: res.error,
+        });
+        return;
+      }
+      toast({
+        variant: "success",
+        title:
+          cleaned.length === 0
+            ? "Cleared all suppliers"
+            : `Saved ${cleaned.length} supplier(s)`,
+        description:
+          cleaned.length === 0
+            ? rawMaterialName
+            : `${rawMaterialName} · POs will auto-suggest the primary`,
+      });
+      setOpen(false);
+      router.refresh();
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>{children}</DialogTrigger>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Manage suppliers for {rawMaterialName}</DialogTitle>
+          <DialogDescription>
+            Add every vendor that supplies this item along with the negotiated
+            rate. Mark one as <strong>Primary</strong> — that's the default
+            the PO builder reaches for.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="rounded-md border overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40">
+                <tr>
+                  <th className="text-left p-2">Supplier</th>
+                  <th className="text-right p-2 w-36">Rate ₹ / {rawMaterialUnit}</th>
+                  <th className="text-center p-2 w-24">Primary</th>
+                  <th className="text-right p-2 w-12"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.key} className="border-t">
+                    <td className="p-2">
+                      <select
+                        value={r.supplierId}
+                        onChange={(e) => updateRow(r.key, { supplierId: e.target.value })}
+                        className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+                      >
+                        <option value="">Pick a supplier…</option>
+                        {suppliers.map((s) => {
+                          const blocked =
+                            takenSupplierIds.has(s.id) && s.id !== r.supplierId;
+                          return (
+                            <option key={s.id} value={s.id} disabled={blocked}>
+                              {s.name}
+                              {blocked ? " (already assigned)" : ""}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </td>
+                    <td className="p-2 text-right">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={r.negotiatedRate}
+                        onChange={(e) =>
+                          updateRow(r.key, { negotiatedRate: e.target.value })
+                        }
+                        className="h-8 w-32 text-right ml-auto"
+                      />
+                    </td>
+                    <td className="p-2 text-center">
+                      <input
+                        type="checkbox"
+                        checked={r.isPrimary}
+                        onChange={(e) => togglePrimary(r.key, e.target.checked)}
+                        className="h-4 w-4"
+                      />
+                    </td>
+                    <td className="p-2 text-right">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeRow(r.key)}
+                        disabled={rows.length === 1}
+                        title="Remove"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Button type="button" variant="ghost" size="sm" onClick={addRow}>
+            <Plus className="h-3.5 w-3.5" /> Add vendor
+          </Button>
+          {rows.every((r) => !r.isPrimary) && rows.some((r) => r.supplierId) && (
+            <div className="text-[11px] text-amber-700">
+              No primary picked — the first vendor in the list will be treated
+              as primary on save.
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={pending}>
+            <Save className="h-4 w-4" />
+            {pending ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -1,26 +1,43 @@
 import Link from "next/link";
 import { PageHeader } from "@/components/shell/page-header";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { db } from "@/lib/db";
-import { ClipboardList, Plus } from "lucide-react";
+import { getActiveOutlet } from "@/lib/outlet";
+import { AlertTriangle, ClipboardList, CheckCircle2, Plus } from "lucide-react";
 import { SupplierDialog } from "../client";
 
 export const dynamic = "force-dynamic";
 
 export default async function SuppliersPage() {
-  const suppliers = await db.supplier.findMany({
-    include: { _count: { select: { rmSuppliers: true } } },
-    orderBy: { name: "asc" },
-  });
+  const outlet = await getActiveOutlet();
+  const [suppliers, rms] = await Promise.all([
+    db.supplier.findMany({
+      include: { _count: { select: { rmSuppliers: true } } },
+      orderBy: { name: "asc" },
+    }),
+    db.rawMaterial.findMany({
+      where: { outletId: outlet.id, active: true },
+      select: { id: true, name: true, unit: true, rmSuppliers: { select: { id: true } } },
+      orderBy: { name: "asc" },
+    }),
+  ]);
+
+  // Coverage analysis: how many raw materials have at least one supplier
+  // assigned via the rate card? Surfaces the gap before a frantic late-night
+  // PO realizes no vendor was ever picked.
+  const uncovered = rms.filter((r) => r.rmSuppliers.length === 0);
+  const covered = rms.length - uncovered.length;
+  const coveragePct =
+    rms.length === 0 ? 100 : Math.round((covered / rms.length) * 100);
 
   return (
     <div>
       <PageHeader
         title="Suppliers"
-        description={`${suppliers.length} suppliers · linked to raw material masters`}
+        description={`${suppliers.length} suppliers · ${covered}/${rms.length} raw materials covered (${coveragePct}%)`}
         actions={
           <SupplierDialog>
             <Button size="sm">
@@ -30,6 +47,66 @@ export default async function SuppliersPage() {
           </SupplierDialog>
         }
       />
+
+      {/* Coverage strip — green when 100%, amber when there's a gap. */}
+      {rms.length > 0 && (
+        <Card
+          className={`mb-4 ${
+            uncovered.length === 0
+              ? "border-emerald-300 bg-emerald-50/40"
+              : "border-amber-300 bg-amber-50/40"
+          }`}
+        >
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              {uncovered.length === 0 ? (
+                <>
+                  <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                  <span className="text-emerald-900">Every item is covered</span>
+                </>
+              ) : (
+                <>
+                  <AlertTriangle className="h-4 w-4 text-amber-700" />
+                  <span className="text-amber-900">
+                    {uncovered.length} item{uncovered.length === 1 ? "" : "s"} need a
+                    supplier
+                  </span>
+                </>
+              )}
+            </CardTitle>
+            <CardDescription>
+              {uncovered.length === 0
+                ? "Every raw material is on at least one supplier's rate card. POs will auto-suggest the primary vendor."
+                : "These items have no supplier on file. Assign one from the raw materials page so PO builders find them on the right rate card."}
+            </CardDescription>
+          </CardHeader>
+          {uncovered.length > 0 && (
+            <CardContent className="pt-0">
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {uncovered.slice(0, 12).map((r) => (
+                  <Badge
+                    key={r.id}
+                    variant="warning"
+                    className="text-[10px] font-normal"
+                  >
+                    {r.name}
+                  </Badge>
+                ))}
+                {uncovered.length > 12 && (
+                  <Badge variant="outline" className="text-[10px]">
+                    +{uncovered.length - 12} more
+                  </Badge>
+                )}
+              </div>
+              <Button asChild size="sm" variant="outline" className="border-amber-300">
+                <Link href="/inventory?filter=uncovered">
+                  Go assign suppliers
+                </Link>
+              </Button>
+            </CardContent>
+          )}
+        </Card>
+      )}
 
       <Card>
         <CardContent className="p-0">
