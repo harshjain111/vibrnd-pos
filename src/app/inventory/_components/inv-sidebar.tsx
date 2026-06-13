@@ -32,7 +32,35 @@ import {
 } from "lucide-react";
 
 type Item = { label: string; href: string; icon?: LucideIcon };
-type Group = { id: string; label: string; icon: LucideIcon; items: Item[]; href?: string };
+type Group = {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  items: Item[];
+  href?: string;
+  /** Roles allowed to see this group. Undefined = everyone with inventory
+   *  access (i.e. anyone the parent layout lets in). When set, the sidebar
+   *  intersects with the current user's role and hides groups they can't
+   *  use — keeps the HODs from staring at Procurement + Reports they
+   *  have no permission for. */
+  allowedRoles?: readonly string[];
+};
+
+/**
+ * Role → group whitelist for the inventory module's secondary sidebar.
+ * Matches the flow chart spec:
+ *   • HODs see only their dept dashboard + requisitions.
+ *   • Store Manager runs procurement / requisitions / manage stock / etc.
+ *   • Cost Controller stays in PO approval + reports.
+ *   • Accountant lives in vendor invoices / GRN / payments.
+ *   • Production Manager works production + manage stock.
+ *   • Manager / Owner see everything.
+ */
+const HOD_GROUPS = ["dashboard", "requisitions"] as const;
+const SM_GROUPS = ["dashboard", "purchase", "requisitions", "manage-stock", "consumption", "reports", "masters", "settings"] as const;
+const CC_GROUPS = ["dashboard", "purchase", "reports"] as const;
+const ACCT_GROUPS = ["dashboard", "purchase"] as const;
+const PROD_GROUPS = ["dashboard", "production", "manage-stock", "masters"] as const;
 
 const GROUPS: Group[] = [
   {
@@ -131,6 +159,31 @@ const GROUPS: Group[] = [
   },
 ];
 
+/**
+ * Map a role to the set of sidebar group ids it should see. Falling
+ * through (Owner / Manager / unknown) returns null which means "show
+ * every group".
+ */
+function allowedGroupsFor(role: string | undefined | null): Set<string> | null {
+  if (!role) return null;
+  switch (role) {
+    case "CHEF_HOD":
+    case "BARTENDER_HOD":
+    case "HOUSEKEEPING_HOD":
+      return new Set(HOD_GROUPS);
+    case "STORE_MANAGER":
+      return new Set(SM_GROUPS);
+    case "COST_CONTROLLER":
+      return new Set(CC_GROUPS);
+    case "ACCOUNTANT":
+      return new Set(ACCT_GROUPS);
+    case "PRODUCTION_MANAGER":
+      return new Set(PROD_GROUPS);
+    default:
+      return null;
+  }
+}
+
 function isActiveHref(pathname: string, href: string) {
   // /inventory is the Raw Materials masters list — match exactly so it doesn't
   // light up for every /inventory/* route.
@@ -143,22 +196,31 @@ function groupContainsActive(pathname: string, g: Group) {
   return g.items.some((i) => isActiveHref(pathname, i.href));
 }
 
-export function InventorySidebar() {
+export function InventorySidebar({ userRole }: { userRole?: string | null }) {
   const pathname = usePathname() ?? "";
+  // Filter to groups the role is allowed to see. The dashboard group's
+  // own page already redirects HODs to /inventory/departments/[id] so
+  // landing there is correct for them too.
+  const allowed = allowedGroupsFor(userRole);
+  const visibleGroups = React.useMemo(
+    () => (allowed ? GROUPS.filter((g) => allowed.has(g.id)) : GROUPS),
+    [allowed]
+  );
+
   // A group is open if it contains the active route, or the user manually toggled it open.
   const initiallyOpen = React.useMemo(() => {
     const set = new Set<string>();
-    for (const g of GROUPS) if (groupContainsActive(pathname, g)) set.add(g.id);
+    for (const g of visibleGroups) if (groupContainsActive(pathname, g)) set.add(g.id);
     return set;
-  }, [pathname]);
+  }, [pathname, visibleGroups]);
   const [openGroups, setOpenGroups] = React.useState<Set<string>>(initiallyOpen);
   React.useEffect(() => {
     setOpenGroups((prev) => {
       const next = new Set(prev);
-      for (const g of GROUPS) if (groupContainsActive(pathname, g)) next.add(g.id);
+      for (const g of visibleGroups) if (groupContainsActive(pathname, g)) next.add(g.id);
       return next;
     });
-  }, [pathname]);
+  }, [pathname, visibleGroups]);
 
   const toggle = (id: string) =>
     setOpenGroups((s) => {
@@ -179,7 +241,7 @@ export function InventorySidebar() {
       </Link>
 
       <nav className="py-2">
-        {GROUPS.map((g) => {
+        {visibleGroups.map((g) => {
           const Icon = g.icon;
           const isLeaf = !g.items.length && !!g.href;
           const isOpen = openGroups.has(g.id);

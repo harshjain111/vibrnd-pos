@@ -18,6 +18,7 @@ export default async function InventoryLayout({ children }: { children: React.Re
   let departments: DeptOption[] = [];
   let lockedToKind: string | null = null;
   let multiDeptEnabled = false;
+  let userRole: string | null = null;
 
   try {
     const outlet = await getActiveOutlet();
@@ -31,13 +32,14 @@ export default async function InventoryLayout({ children }: { children: React.Re
     }
     const user = await getSessionUser();
     lockedToKind = user ? ownedDepartmentKind(user.role) : null;
+    userRole = user?.role ?? null;
   } catch {
     // Pre-login renders fall through to the un-decorated layout.
   }
 
   return (
     <div className="-m-4 md:-m-6 flex min-h-[calc(100vh-3.5rem)]">
-      <InventorySidebar />
+      <InventorySidebar userRole={userRole} />
       <div className="flex-1 min-w-0 p-4 md:p-6">
         {multiDeptEnabled && departments.length > 0 && (
           <div className="mb-3 -mt-1">
