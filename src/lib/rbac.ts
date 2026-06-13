@@ -20,7 +20,7 @@ import { getSessionUser, type SessionUser } from "./session";
  * roles, callers should consult `canAccess(role, pageId)` from
  * `./permissions.ts` instead.
  */
-export const POS_ROLES = ["OWNER", "MANAGER", "BILLER", "CAPTAIN"] as const;
+export const POS_ROLES = ["OWNER", "MANAGER", "BILLER", "CAPTAIN", "RECEPTIONIST"] as const;
 export const INVENTORY_ROLES = [
   "STORE_MANAGER",
   "COST_CONTROLLER",
@@ -39,6 +39,11 @@ export type Role = (typeof ROLES)[number];
  *  at rank 2 (between BILLER and MANAGER) — they manage their own slice
  *  of the app but can't override MANAGER-and-above actions. */
 const RANK: Record<Role, number> = {
+  // Receptionist sits at the same rank as a captain — neither outranks the
+  // other; their access is gated per-permission. Receptionists own the
+  // table-assign + customer-register flow; captains own the order-punch
+  // + KOT flow. Both are floor-facing entry-level roles.
+  RECEPTIONIST: 1,
   CAPTAIN: 1,
   BILLER: 2,
   STORE_MANAGER: 2,
