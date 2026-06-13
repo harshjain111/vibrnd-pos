@@ -9,6 +9,7 @@ import { AlertTriangle, ChefHat, ClipboardList, Inbox, PackageCheck, Plus, Trend
 import { db } from "@/lib/db";
 import { stockAtDepartment } from "@/lib/stock";
 import { rmDepartmentFilter } from "@/lib/department-scope";
+import { RaiseGrnButton } from "../departments/[id]/raise-grn";
 
 /**
  * Department dashboard for HODs (Chef / Bartender / Housekeeping).
@@ -93,20 +94,104 @@ export async function HodDashboard({
     take: 10,
   });
 
+  // Reqs ready to be pulled into the dept — APPROVED or PARTIAL, not yet
+  // transferred. The Raise GRN dialog ships the stock from STORE → dept
+  // and stamps the transfer back on the requisition.
+  const fromDeptId = dept?.id;
+  const readyToReceive = fromDeptId
+    ? await db.requisition.findMany({
+        where: {
+          outletId,
+          fromDepartmentId: fromDeptId,
+          status: { in: ["APPROVED", "PARTIAL"] },
+          transfer: null,
+        },
+        include: {
+          lines: { include: { rawMaterial: { select: { name: true } } } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 25,
+      })
+    : [];
+
   return (
     <div>
       <PageHeader
         title={`${dept?.name ?? deptKind} dashboard`}
         description={`${outletName} · scoped to items your department can request`}
         actions={
-          <Button asChild size="sm">
-            <Link href="/inventory/requisitions/new">
-              <Plus className="h-4 w-4" />
-              New requisition
-            </Link>
-          </Button>
+          <>
+            {dept && readyToReceive.length > 0 && (
+              <RaiseGrnButton
+                deptName={dept.name}
+                requisitions={readyToReceive.map((r) => ({
+                  id: r.id,
+                  reqNo: r.reqNo,
+                  raisedAtLabel: r.createdAt.toLocaleString("en-IN", {
+                    day: "2-digit",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }),
+                  lines: r.lines
+                    .filter((l) => l.qtyApproved > 0)
+                    .map((l) => ({
+                      name: l.rawMaterial.name,
+                      qtyApproved: l.qtyApproved,
+                      unit: l.unit,
+                    })),
+                }))}
+              />
+            )}
+            <Button asChild size="sm">
+              <Link href="/inventory/requisitions/new">
+                <Plus className="h-4 w-4" />
+                New requisition
+              </Link>
+            </Button>
+          </>
         }
       />
+
+      {/* Ready-to-receive banner — front-and-centre when SM has approved
+          requisitions waiting. The same button is also in the header so
+          either click works. */}
+      {dept && readyToReceive.length > 0 && (
+        <Card className="mb-4 border-emerald-300 bg-emerald-50/40">
+          <CardContent className="p-3 flex items-start gap-3">
+            <PackageCheck className="h-5 w-5 text-emerald-700 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <div className="font-semibold text-emerald-900 text-sm">
+                {readyToReceive.length} requisition{readyToReceive.length === 1 ? "" : "s"} ready for collection
+              </div>
+              <div className="text-sm text-emerald-800 mt-0.5">
+                The store manager has approved your request{readyToReceive.length === 1 ? "" : "s"}. Click <strong>Raise GRN</strong> to receive
+                the stock — that moves it from the store into your department's ledger.
+              </div>
+            </div>
+            <RaiseGrnButton
+              deptName={dept.name}
+              requisitions={readyToReceive.map((r) => ({
+                id: r.id,
+                reqNo: r.reqNo,
+                raisedAtLabel: r.createdAt.toLocaleString("en-IN", {
+                  day: "2-digit",
+                  month: "short",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }),
+                lines: r.lines
+                  .filter((l) => l.qtyApproved > 0)
+                  .map((l) => ({
+                    name: l.rawMaterial.name,
+                    qtyApproved: l.qtyApproved,
+                    unit: l.unit,
+                  })),
+              }))}
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* KPI strip — Current Stock + Low Stock + Replenishment */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">

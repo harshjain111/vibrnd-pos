@@ -69,23 +69,39 @@ export default async function NewRequisitionPage() {
           </CardDescription>
         </CardHeader>
       </Card>
-      <Card>
-        <CardContent className="p-4">
-          <NewRequisitionForm
-            departments={depts.map((d) => ({ id: d.id, name: d.name, kind: d.kind }))}
-            defaultDepartmentId={defaultDept?.id ?? null}
-            lockDepartment={!!hodKind}
-            chainSources={chainSources}
-            rawMaterials={rms.map((r) => ({
-              id: r.id,
-              name: r.name,
-              unit: r.unit,
-              currentQty: r.currentQty,
-              parLevel: r.parLevel,
-            }))}
-          />
-        </CardContent>
-      </Card>
+      {/* If the HOD's allowedDepartments filter excludes every item, the
+          item picker would render blank and the form looks broken. Surface
+          the cause directly so the owner knows what to fix. */}
+      {hodKind && rms.length === 0 ? (
+        <Card className="border-amber-300 bg-amber-50/40">
+          <CardHeader>
+            <CardTitle className="text-base text-amber-900">No items tagged for your department yet</CardTitle>
+            <CardDescription className="text-amber-800">
+              The {hodKind.toLowerCase()} HOD only sees raw materials whose <strong>Available to departments</strong>
+              setting includes {hodKind}. The owner needs to open each item in <strong>Inventory → Raw materials</strong> and
+              tick {hodKind} (or leave the field empty so the item is shared).
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="p-4">
+            <NewRequisitionForm
+              departments={depts.map((d) => ({ id: d.id, name: d.name, kind: d.kind }))}
+              defaultDepartmentId={defaultDept?.id ?? null}
+              lockDepartment={!!hodKind}
+              chainSources={chainSources}
+              rawMaterials={rms.map((r) => ({
+                id: r.id,
+                name: r.name,
+                unit: r.unit,
+                currentQty: r.currentQty,
+                parLevel: r.parLevel,
+              }))}
+            />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
