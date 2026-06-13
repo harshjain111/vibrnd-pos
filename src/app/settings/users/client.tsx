@@ -33,9 +33,18 @@ const POS_ROLE_OPTIONS: { value: string; label: string }[] = [
   { value: "CAPTAIN",      label: "CAPTAIN — punch orders + send KOTs" },
   { value: "RECEPTIONIST", label: "RECEPTIONIST — floor plan: register customers + assign tables" },
 ];
+const INVENTORY_ROLE_LABELS: Record<string, string> = {
+  STORE_MANAGER:      "STORE_MANAGER — approve requisitions, raise POs, manage GRNs",
+  COST_CONTROLLER:    "COST_CONTROLLER — approve POs, procurement cockpit",
+  ACCOUNTANT:         "ACCOUNTANT — vendor invoices, payments, GRN review",
+  CHEF_HOD:           "CHEF_HOD — kitchen requisitions + dept stock view",
+  BARTENDER_HOD:      "BARTENDER_HOD — bar requisitions + dept stock view",
+  HOUSEKEEPING_HOD:   "HOUSEKEEPING_HOD — housekeeping requisitions + dept stock view",
+  PRODUCTION_MANAGER: "PRODUCTION_MANAGER — base-kitchen production runs",
+};
 const INVENTORY_ROLE_OPTIONS = ALL_ROLES
   .filter((r) => !POS_ROLE_OPTIONS.some((p) => p.value === r))
-  .map((r) => ({ value: r, label: r }));
+  .map((r) => ({ value: r, label: INVENTORY_ROLE_LABELS[r] ?? r }));
 const ROLES = ALL_ROLES;
 
 export function AddUserDialog({ children }: { children: React.ReactNode }) {

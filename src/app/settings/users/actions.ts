@@ -133,11 +133,18 @@ type SeedRow = {
 };
 
 /**
- * One-click test-user seed. Per-row try/catch so a single failure (existing
- * email with conflicting role, DB connection blip, etc) doesn't drop the
- * other rows on the floor — historic gotcha was the receptionist row not
- * landing because the loop bailed mid-way. Each row reports back its own
- * status so the dialog can flag which ones need attention.
+ * One-click test-user seed. Provisions one user per role across BOTH
+ * tiers — front-of-house POS (Manager / Cashier / Captain / Receptionist)
+ * AND the inventory ecosystem (Store Manager, Cost Controller, three
+ * HODs, Accountant, Production Manager). HOD users are auto-scoped to
+ * their matching active department so the inventory dashboard filters
+ * correctly.
+ *
+ * Per-row try/catch: a single failure doesn't drop the rest. Self-heals
+ * on re-click — existing rows get reset to the canonical state (correct
+ * role + active + test password + outlet + department for HODs) so
+ * clicking the button after a manual edit pulls everything back to a
+ * known-good baseline.
  */
 export async function seedTestUsers(): Promise<{ ok: true; rows: SeedRow[] } | { ok: false; error: string }> {
   try {
@@ -146,21 +153,41 @@ export async function seedTestUsers(): Promise<{ ok: true; rows: SeedRow[] } | {
     const password = "test123";
     const hash = await bcrypt.hash(password, 10);
 
-    const targets: { role: string; email: string; name: string }[] = [
-      { role: "MANAGER",      email: "manager@test.com",      name: "Test Manager" },
-      { role: "BILLER",       email: "cashier@test.com",      name: "Test Cashier" },
-      { role: "CAPTAIN",      email: "captain@test.com",      name: "Test Captain" },
-      { role: "RECEPTIONIST", email: "receptionist@test.com", name: "Test Receptionist" },
+    // Pre-fetch department ids per kind so each HOD lands on the right
+    // department on first login. Missing kinds become null — the HOD
+    // dashboard handles "no department" gracefully via a banner.
+    const depts = await db.department.findMany({
+      where: { outletId: outlet.id, active: true },
+      select: { id: true, kind: true },
+    });
+    const deptIdByKind = new Map(depts.map((d) => [d.kind, d.id]));
+
+    const targets: { role: string; email: string; name: string; departmentKind?: string }[] = [
+      // Front of house
+      { role: "MANAGER",            email: "manager@test.com",       name: "Test Manager" },
+      { role: "BILLER",             email: "cashier@test.com",       name: "Test Cashier" },
+      { role: "CAPTAIN",            email: "captain@test.com",       name: "Test Captain" },
+      { role: "RECEPTIONIST",       email: "receptionist@test.com",  name: "Test Receptionist" },
+      // Inventory ecosystem
+      { role: "STORE_MANAGER",      email: "storemgr@test.com",      name: "Test Store Manager" },
+      { role: "COST_CONTROLLER",    email: "costctrl@test.com",      name: "Test Cost Controller" },
+      { role: "ACCOUNTANT",         email: "accountant@test.com",    name: "Test Accountant" },
+      { role: "CHEF_HOD",           email: "chefhod@test.com",       name: "Test Chef (HOD)",          departmentKind: "KITCHEN" },
+      { role: "BARTENDER_HOD",      email: "barhod@test.com",        name: "Test Bartender (HOD)",     departmentKind: "BAR" },
+      { role: "HOUSEKEEPING_HOD",   email: "hkhod@test.com",         name: "Test Housekeeping (HOD)",  departmentKind: "HOUSEKEEPING" },
+      { role: "PRODUCTION_MANAGER", email: "production@test.com",    name: "Test Production Manager" },
     ];
 
     const rows: SeedRow[] = [];
     for (const t of targets) {
+      const departmentId = t.departmentKind ? deptIdByKind.get(t.departmentKind) ?? null : null;
       try {
         const existing = await db.user.findUnique({ where: { email: t.email } });
         if (existing) {
-          // Re-attach the test password + activate + ensure the role matches
-          // what the seed wants. Self-heal lets the owner click the button
-          // again to recover from any earlier partial / wrong-role seed.
+          // Re-attach the test password + activate + ensure the role +
+          // department match what the seed wants. Self-heal lets the
+          // owner click the button to recover from any earlier partial /
+          // wrong-role seed.
           await db.user.update({
             where: { id: existing.id },
             data: {
@@ -168,9 +195,10 @@ export async function seedTestUsers(): Promise<{ ok: true; rows: SeedRow[] } | {
               active: true,
               passwordHash: hash,
               outletId: outlet.id,
+              departmentId,
             },
           });
-          rows.push({ ...t, password, status: "existed" });
+          rows.push({ role: t.role, email: t.email, name: t.name, password, status: "existed" });
           continue;
         }
         await db.user.create({
@@ -180,12 +208,15 @@ export async function seedTestUsers(): Promise<{ ok: true; rows: SeedRow[] } | {
             role: t.role,
             passwordHash: hash,
             outletId: outlet.id,
+            departmentId,
           },
         });
-        rows.push({ ...t, password, status: "created" });
+        rows.push({ role: t.role, email: t.email, name: t.name, password, status: "created" });
       } catch (e) {
         rows.push({
-          ...t,
+          role: t.role,
+          email: t.email,
+          name: t.name,
           password,
           status: "failed",
           error: e instanceof Error ? e.message : String(e),
