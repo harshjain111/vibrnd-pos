@@ -7,7 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { inr } from "@/lib/utils";
-import { Plus, AlertTriangle, Boxes, Search, Users, X } from "lucide-react";
+import { AlertTriangle, Boxes, Pencil, Plus, Search, Users, X } from "lucide-react";
 import { ManageRmSuppliersDialog, RmDialog, StockAdjust } from "./client";
 
 export const dynamic = "force-dynamic";
@@ -92,27 +92,16 @@ export default async function InventoryPage({
         title="Raw materials"
         description={`Inventory master · ${rms.length - uncoveredCount}/${rms.length} items have a rate-card supplier`}
         actions={
-          <>
-            <Button variant="outline" size="sm" asChild>
-              <Link href="/inventory/suppliers">Suppliers</Link>
+          <RmDialog
+            suppliers={supplierOptions}
+            categories={categories}
+            subCategoriesByCategory={subCategoriesByCategory}
+          >
+            <Button size="sm">
+              <Plus className="h-4 w-4" />
+              Raw material
             </Button>
-            <Button variant="outline" size="sm" asChild>
-              <Link href="/inventory/recipes">Recipes</Link>
-            </Button>
-            <Button variant="outline" size="sm" asChild>
-              <Link href="/inventory/movements">Movements</Link>
-            </Button>
-            <RmDialog
-              suppliers={supplierOptions}
-              categories={categories}
-              subCategoriesByCategory={subCategoriesByCategory}
-            >
-              <Button size="sm">
-                <Plus className="h-4 w-4" />
-                Raw material
-              </Button>
-            </RmDialog>
-          </>
+          </RmDialog>
         }
       />
 
@@ -337,6 +326,27 @@ export default async function InventoryPage({
                     <TableCell className="text-right font-medium">{inr(r.currentQty * r.avgCost)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
+                        <RmDialog
+                          suppliers={supplierOptions}
+                          categories={categories}
+                          subCategoriesByCategory={subCategoriesByCategory}
+                          initial={{
+                            id: r.id,
+                            name: r.name,
+                            unit: r.unit,
+                            parLevel: r.parLevel,
+                            minLevel: r.minLevel,
+                            currentQty: r.currentQty,
+                            avgCost: r.avgCost,
+                            supplierId: r.supplierId ?? "",
+                            categoryName: r.categoryName ?? "",
+                            subCategory: r.subCategory ?? "",
+                          }}
+                        >
+                          <Button variant="ghost" size="sm" title="Edit raw material">
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        </RmDialog>
                         <ManageRmSuppliersDialog
                           rawMaterialId={r.id}
                           rawMaterialName={r.name}
