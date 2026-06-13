@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { moveStock } from "@/lib/stock";
+import { logActivity } from "@/lib/audit";
 
 const RM = z.object({
   id: z.string().optional(),
@@ -62,6 +63,93 @@ export async function saveSupplier(fd: FormData) {
     await db.supplier.create({ data: { ...parsed, id: undefined } });
   }
   revalidatePath("/inventory/suppliers");
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Supplier rate card
+   ────────────────────────────────────────────────────────────────────── */
+
+const RateCardLine = z.object({
+  rawMaterialId: z.string(),
+  negotiatedRate: z.coerce.number().nonnegative(),
+  isPrimary: z.boolean().default(false),
+});
+
+const RateCardInput = z.object({
+  supplierId: z.string(),
+  creditDays: z.coerce.number().int().min(0).max(365).default(0),
+  lines: z.array(RateCardLine),
+});
+
+/**
+ * Replace the rate card for a supplier in one shot — easier than diffing
+ * adds/updates/removes against the UI editor. Also stamps `creditDays` on
+ * the Supplier so the AP team can see payment terms at a glance.
+ *
+ * Inputs that point at the same rawMaterialId are de-duplicated server-side
+ * (last write wins), so the UI doesn't have to be paranoid about it.
+ */
+export async function saveSupplierRateCard(
+  input: z.infer<typeof RateCardInput>
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const data = RateCardInput.parse(input);
+    const supplier = await db.supplier.findUnique({ where: { id: data.supplierId } });
+    if (!supplier) throw new Error("Supplier not found");
+    const outlet = await getActiveOutlet();
+
+    // Validate every raw material belongs to this outlet (catalog-scoped).
+    if (data.lines.length > 0) {
+      const rmIds = Array.from(new Set(data.lines.map((l) => l.rawMaterialId)));
+      const rms = await db.rawMaterial.findMany({
+        where: { id: { in: rmIds }, outletId: outlet.id },
+        select: { id: true },
+      });
+      if (rms.length !== rmIds.length) {
+        throw new Error("One or more items are not from this outlet's catalog");
+      }
+    }
+
+    // De-dupe by rawMaterialId (last write wins).
+    const byRm = new Map<string, typeof data.lines[number]>();
+    for (const l of data.lines) byRm.set(l.rawMaterialId, l);
+    const cleaned = Array.from(byRm.values());
+
+    await db.$transaction([
+      db.supplier.update({
+        where: { id: data.supplierId },
+        data: { creditDays: data.creditDays },
+      }),
+      db.rawMaterialSupplier.deleteMany({ where: { supplierId: data.supplierId } }),
+      ...(cleaned.length > 0
+        ? [
+            db.rawMaterialSupplier.createMany({
+              data: cleaned.map((l) => ({
+                supplierId: data.supplierId,
+                rawMaterialId: l.rawMaterialId,
+                negotiatedRate: l.negotiatedRate,
+                isPrimary: l.isPrimary,
+              })),
+            }),
+          ]
+        : []),
+    ]);
+
+    await logActivity({
+      action: "UPDATE",
+      entity: "RawMaterial",
+      entityId: data.supplierId,
+      summary: `Rate card for ${supplier.name} updated — ${cleaned.length} item(s), ${data.creditDays}d credit`,
+      outletId: outlet.id,
+    });
+
+    revalidatePath("/inventory/suppliers");
+    revalidatePath(`/inventory/suppliers/${data.supplierId}/rate-card`);
+    revalidatePath("/inventory/purchase/new");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 const RecipeIngredientInput = z.object({

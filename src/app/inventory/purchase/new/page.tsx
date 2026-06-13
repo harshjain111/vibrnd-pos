@@ -17,8 +17,17 @@ export default async function NewPOPage({
 }) {
   const sp = await searchParams;
   const outlet = await getActiveOutlet();
+  // Load suppliers WITH their rate cards in one shot so the client can
+  // switch supplier without round-tripping. Rate-card map drives both the
+  // item picker (filtered to card items) and the auto-fill rate.
   const [suppliers, rms] = await Promise.all([
-    db.supplier.findMany({ orderBy: { name: "asc" } }),
+    db.supplier.findMany({
+      where: { active: true },
+      include: {
+        rmSuppliers: { select: { rawMaterialId: true, negotiatedRate: true, isPrimary: true } },
+      },
+      orderBy: { name: "asc" },
+    }),
     db.rawMaterial.findMany({ where: { outletId: outlet.id }, orderBy: { name: "asc" } }),
   ]);
 
@@ -105,7 +114,16 @@ export default async function NewPOPage({
         </Card>
       )}
       <PoBuilder
-        suppliers={suppliers.map((s) => ({ id: s.id, name: s.name }))}
+        suppliers={suppliers.map((s) => ({
+          id: s.id,
+          name: s.name,
+          creditDays: s.creditDays,
+          rateCard: s.rmSuppliers.map((rm) => ({
+            rawMaterialId: rm.rawMaterialId,
+            negotiatedRate: rm.negotiatedRate,
+            isPrimary: rm.isPrimary,
+          })),
+        }))}
         rms={rms.map((r) => ({
           id: r.id,
           name: r.name,

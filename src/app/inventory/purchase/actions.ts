@@ -32,6 +32,12 @@ const LineInput = z.object({
   qty: z.coerce.number().positive(),
   unit: z.string().min(1),
   unitPrice: z.coerce.number().nonnegative(),
+  /** Optional rate-card flags — set by the PO builder client. Server
+   *  persists them on PurchaseOrderLine and fires a manager notification
+   *  when any line is off-card or has an overridden rate. */
+  offCard: z.boolean().default(false),
+  rateChangedFrom: z.coerce.number().optional(),
+  rateChangeReason: z.string().optional(),
 });
 
 const POInput = z.object({
@@ -64,6 +70,55 @@ async function getStoreDept(outletId: string) {
   });
   if (!store) throw new Error("No STORE department for this outlet");
   return store;
+}
+
+/**
+ * When the SM saved a PO with off-card lines or overridden rates, fire one
+ * Notification per change to whoever is reading the bell — managers /
+ * owners see the audit story in the inbox without having to crawl logs.
+ */
+async function alertOnRateCardDeviations(opts: {
+  outletId: string;
+  poId: string;
+  poNo: string;
+  supplierName: string;
+  lines: { rawMaterialId: string; offCard: boolean; rateChangedFrom?: number; unitPrice: number; rateChangeReason?: string }[];
+}) {
+  const flagged = opts.lines.filter((l) => l.offCard || l.rateChangedFrom !== undefined);
+  if (flagged.length === 0) return;
+  // Hydrate raw-material names so the alert reads naturally.
+  const rms = await db.rawMaterial.findMany({
+    where: { id: { in: flagged.map((l) => l.rawMaterialId) } },
+    select: { id: true, name: true },
+  });
+  const nameById = new Map(rms.map((r) => [r.id, r.name]));
+  const offCount = flagged.filter((l) => l.offCard).length;
+  const rateCount = flagged.filter((l) => !l.offCard && l.rateChangedFrom !== undefined).length;
+  const title = `PO ${opts.poNo} — rate-card deviation${flagged.length === 1 ? "" : "s"}`;
+  const bodyLines: string[] = [];
+  if (offCount > 0) bodyLines.push(`${offCount} off-card line${offCount === 1 ? "" : "s"}`);
+  if (rateCount > 0) bodyLines.push(`${rateCount} rate edit${rateCount === 1 ? "" : "s"}`);
+  bodyLines.push(`Supplier: ${opts.supplierName}`);
+  for (const l of flagged.slice(0, 5)) {
+    const name = nameById.get(l.rawMaterialId) ?? "item";
+    if (l.offCard) {
+      bodyLines.push(`• ${name}: off-card @ ₹${l.unitPrice} — ${l.rateChangeReason ?? ""}`);
+    } else {
+      bodyLines.push(
+        `• ${name}: ₹${l.rateChangedFrom} → ₹${l.unitPrice} — ${l.rateChangeReason ?? ""}`
+      );
+    }
+  }
+  if (flagged.length > 5) bodyLines.push(`…and ${flagged.length - 5} more.`);
+  await db.notification.create({
+    data: {
+      outletId: opts.outletId,
+      kind: "WARNING",
+      title,
+      body: bodyLines.join("\n"),
+      link: `/inventory/purchase/${opts.poId}`,
+    },
+  });
 }
 
 /**
@@ -119,9 +174,13 @@ export async function createPO(
           unit: l.unit,
           unitPrice: l.unitPrice,
           lineTotal: l.qty * l.unitPrice,
+          offCard: l.offCard,
+          rateChangedFrom: l.rateChangedFrom,
+          rateChangeReason: l.rateChangeReason,
         })),
       },
     },
+    include: { supplier: { select: { name: true } } },
   });
 
   await logActivity({
@@ -132,6 +191,14 @@ export async function createPO(
       ? `PO ${poNo} drafted for ${inr(grand)} against requisition shortfall`
       : `PO ${poNo} drafted for ${inr(grand)}`,
     outletId: outlet.id,
+  });
+
+  await alertOnRateCardDeviations({
+    outletId: outlet.id,
+    poId: po.id,
+    poNo,
+    supplierName: po.supplier.name,
+    lines: data.lines,
   });
 
   // Optional one-shot: skip the DRAFT step and submit for CC approval.
@@ -230,6 +297,9 @@ export async function updatePO(
             unit: l.unit,
             unitPrice: l.unitPrice,
             lineTotal: l.qty * l.unitPrice,
+            offCard: l.offCard,
+            rateChangedFrom: l.rateChangedFrom,
+            rateChangeReason: l.rateChangeReason,
           })),
         },
       },
@@ -242,6 +312,18 @@ export async function updatePO(
     entityId: data.id,
     summary: `PO ${existing.poNo} draft revised — ${data.lines.length} line(s), ${inr(grand)}`,
     outletId: outlet.id,
+  });
+
+  const supplierForAlert = await db.supplier.findUnique({
+    where: { id: data.supplierId },
+    select: { name: true },
+  });
+  await alertOnRateCardDeviations({
+    outletId: outlet.id,
+    poId: data.id,
+    poNo: existing.poNo,
+    supplierName: supplierForAlert?.name ?? "supplier",
+    lines: data.lines,
   });
 
   // Optional one-shot submit on save (same path as createPO).

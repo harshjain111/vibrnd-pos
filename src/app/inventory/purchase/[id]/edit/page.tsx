@@ -61,7 +61,13 @@ export default async function EditPOPage({
   }
 
   const [suppliers, rms] = await Promise.all([
-    db.supplier.findMany({ orderBy: { name: "asc" } }),
+    db.supplier.findMany({
+      where: { active: true },
+      include: {
+        rmSuppliers: { select: { rawMaterialId: true, negotiatedRate: true, isPrimary: true } },
+      },
+      orderBy: { name: "asc" },
+    }),
     db.rawMaterial.findMany({ where: { outletId: outlet.id }, orderBy: { name: "asc" } }),
   ]);
 
@@ -80,7 +86,16 @@ export default async function EditPOPage({
         }
       />
       <PoBuilder
-        suppliers={suppliers.map((s) => ({ id: s.id, name: s.name }))}
+        suppliers={suppliers.map((s) => ({
+          id: s.id,
+          name: s.name,
+          creditDays: s.creditDays,
+          rateCard: s.rmSuppliers.map((rm) => ({
+            rawMaterialId: rm.rawMaterialId,
+            negotiatedRate: rm.negotiatedRate,
+            isPrimary: rm.isPrimary,
+          })),
+        }))}
         rms={rms.map((r) => ({
           id: r.id,
           name: r.name,

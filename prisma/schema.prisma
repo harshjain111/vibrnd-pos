@@ -554,6 +554,9 @@ model Supplier {
   address         String?  // legacy free-form
   termsOfPayment  String?
   termsOfDelivery String?
+  /// Days of credit this supplier extends — 0 means cash-on-delivery.
+  /// Shown alongside the rate card so the SM remembers what they negotiated.
+  creditDays      Int      @default(0)
   openingBalance  Float    @default(0)
   active          Boolean  @default(true)
   rawMaterials    RawMaterial[]
@@ -619,6 +622,17 @@ model PurchaseOrderLine {
   unit          String
   unitPrice     Float
   lineTotal     Float
+  /// True when this item wasn't on the supplier's rate card at PO time —
+  /// the SM explicitly added it via "Add other item" and acknowledged the
+  /// warning. Surfaces on dashboards as off-card spend.
+  offCard       Boolean       @default(false)
+  /// When the SM edited the rate at PO time, this holds the rate-card rate
+  /// at the moment of override. Null means the rate matches the card (or
+  /// the item was off-card and had no card rate to begin with).
+  rateChangedFrom Float?
+  /// Reason the SM gave when overriding the card rate or adding off-card.
+  /// Required by the client dialog when either of the above is set.
+  rateChangeReason String?
   /// Running tally of how much of this line has been received via GRNs.
   /// Used to drive the PO status transition PARTIALLY_RECEIVED → CLOSED.
   qtyReceived   Float         @default(0)
