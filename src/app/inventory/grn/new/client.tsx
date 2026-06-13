@@ -6,9 +6,9 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
 import { Plus, Trash2, Truck, AlertTriangle } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { createGrn } from "../actions";
 import { inr2 } from "@/lib/utils";
-import { isRedirectError } from "@/lib/next-action";
 
 type PoLine = {
   id: string;
@@ -43,6 +43,7 @@ export function NewGrnForm({
   poLines: PoLine[];
   rawMaterials: Rm[];
 }) {
+  const router = useRouter();
   const { toast } = useToast();
   const [pending, startTransition] = React.useTransition();
   const [notes, setNotes] = React.useState("");
@@ -120,18 +121,22 @@ export function NewGrnForm({
     }
 
     startTransition(async () => {
-      try {
-        await createGrn({
-          poId: poId ?? undefined,
-          notes: notes || undefined,
-          keepOpen,
-          lines,
+      const res = await createGrn({
+        poId: poId ?? undefined,
+        notes: notes || undefined,
+        keepOpen,
+        lines,
+      });
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Couldn't save GRN",
+          description: res.error,
         });
-        // server action redirects to /inventory/grn/[id]
-      } catch (e) {
-        if (isRedirectError(e)) throw e;
-        toast({ variant: "destructive", title: "Couldn't save GRN", description: String(e) });
+        return;
       }
+      toast({ variant: "success", title: "GRN saved · stock moved" });
+      router.push(`/inventory/grn/${res.id}`);
     });
   };
 

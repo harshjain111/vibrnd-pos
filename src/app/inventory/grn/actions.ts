@@ -17,7 +17,6 @@
  *  4. Audit-log + (for ad-hoc) notifies the manager.
  */
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
@@ -72,7 +71,17 @@ async function getStoreDept(outletId: string) {
   return store;
 }
 
-export async function createGrn(input: z.infer<typeof CreateInput>): Promise<{ id: string }> {
+export type CreateGrnResult = { ok: true; id: string } | { ok: false; error: string };
+
+export async function createGrn(input: z.infer<typeof CreateInput>): Promise<CreateGrnResult> {
+  try {
+    return await createGrnInner(input);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function createGrnInner(input: z.infer<typeof CreateInput>): Promise<CreateGrnResult> {
   const user = await requireUser();
   const outlet = await getActiveOutlet();
   const data = CreateInput.parse(input);
@@ -86,8 +95,18 @@ export async function createGrn(input: z.infer<typeof CreateInput>): Promise<{ i
       })
     : null;
   if (data.poId && !po) throw new Error("PO not found");
-  if (po && !["SENT", "PARTIALLY_RECEIVED"].includes(po.status)) {
+  if (po && !["APPROVED", "SENT", "PARTIALLY_RECEIVED"].includes(po.status)) {
     throw new Error(`Cannot receive against a PO in status ${po.status}`);
+  }
+  // If the SM is receiving goods against an APPROVED PO, they implicitly
+  // sent it — auto-promote so the state machine stays consistent. (Picker
+  // surfaces APPROVED on purpose for the common "skip the Mark-Sent step"
+  // path.)
+  if (po && po.status === "APPROVED") {
+    await db.purchaseOrder.update({
+      where: { id: po.id },
+      data: { status: "SENT" },
+    });
   }
 
   // Drop zero-receive lines — they're just noise.
@@ -209,7 +228,7 @@ export async function createGrn(input: z.infer<typeof CreateInput>): Promise<{ i
   revalidatePath("/inventory");
   revalidatePath("/inventory/available");
   if (po) revalidatePath(`/inventory/purchase/${po.id}`);
-  redirect(`/inventory/grn/${grn.id}`);
+  return { ok: true, id: grn.id };
 }
 
 /** Close an OPEN GRN — used when the vendor confirms there will be no
