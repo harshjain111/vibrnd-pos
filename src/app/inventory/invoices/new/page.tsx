@@ -25,8 +25,6 @@ export default async function NewInvoicePage({
 
   /* ── Step 1: no GRN picked → show GRN picker ──────────────── */
   if (!sp.grn) {
-    // Eligible GRNs = received but not fully covered by an invoice yet.
-    // Group by supplier so the user sees their stack in one place.
     const grns = await db.grn.findMany({
       where: { outletId: outlet.id },
       include: {
@@ -43,7 +41,7 @@ export default async function NewInvoicePage({
       <div>
         <PageHeader
           title="New vendor invoice"
-          description="Pick the GRN this invoice covers — supplier, line items, and total auto-fill from the GRN."
+          description="Pick the GRN this invoice covers — the next step lets you tag more GRNs and key in the actual line items from the vendor's bill."
           actions={
             <Button asChild variant="ghost" size="sm">
               <Link href="/inventory/invoices">
@@ -56,11 +54,12 @@ export default async function NewInvoicePage({
 
         <Card className="mb-3">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Step 1 — Link to a Goods Received Note</CardTitle>
+            <CardTitle className="text-base">Step 1 — Pick a starting GRN</CardTitle>
             <CardDescription>
-              Invoice → covers one or more GRNs → which receive against a PO. Picking a
-              GRN here auto-fills the supplier and the line total. You can attach more
-              GRNs to the same invoice in step 2 if the vendor batched their bills.
+              The vendor's invoice is captured manually so any difference between what
+              they billed and what arrived shows up here. Pick any GRN to lock in the
+              supplier — on the next step you can tick more GRNs from the same supplier
+              and add the line items, taxes, and totals exactly as printed.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -149,11 +148,11 @@ export default async function NewInvoicePage({
     );
   }
 
-  /* ── Step 2: GRN picked → show the form ──────────────────── */
+  /* ── Step 2: GRN picked → load supplier + PO context + show form ── */
   const seedGrn = await db.grn.findFirst({
     where: { id: sp.grn, outletId: outlet.id },
     include: {
-      lines: true,
+      lines: { include: { rawMaterial: { select: { name: true, unit: true, taxPct: true } } } },
       po: { include: { supplier: true } },
     },
   });
@@ -170,27 +169,114 @@ export default async function NewInvoicePage({
     );
   }
 
-  let supplierId = sp.supplier ?? seedGrn.po?.supplierId ?? "";
+  const supplierId = sp.supplier ?? seedGrn.po?.supplierId ?? "";
+
+  // More GRNs the user can tick on top of the seed — same supplier, not yet
+  // invoiced. Includes ad-hoc GRNs (no PO) so they can be batched in too.
+  const additionalGrns = await db.grn.findMany({
+    where: {
+      outletId: outlet.id,
+      id: { not: seedGrn.id },
+      vendorInvoiceLinks: { none: {} },
+      OR: [{ poId: null }, { po: supplierId ? { supplierId } : undefined }],
+    },
+    include: {
+      lines: { include: { rawMaterial: { select: { name: true, unit: true, taxPct: true } } } },
+      po: { select: { id: true, poNo: true, supplierId: true } },
+    },
+    orderBy: { receivedAt: "desc" },
+    take: 50,
+  });
+
+  const allEligibleGrns = [seedGrn, ...additionalGrns];
+
+  // Catalog of PO items + remaining qty (ordered − already invoiced against
+  // sibling GRNs). Drives the line picker so the SM can only invoice what's
+  // really left on the order.
+  const linkedPoIds = Array.from(
+    new Set(allEligibleGrns.map((g) => g.poId).filter(Boolean) as string[])
+  );
+  type CatalogRow = {
+    rawMaterialId: string;
+    name: string;
+    unit: string;
+    taxPct: number;
+    ordered: number;
+    alreadyInvoiced: number;
+    remaining: number;
+    lastUnitPrice: number;
+  };
+  let poItemCatalog: CatalogRow[] = [];
+  if (linkedPoIds.length > 0) {
+    const poLines = await db.purchaseOrderLine.findMany({
+      where: { poId: { in: linkedPoIds } },
+      include: {
+        rawMaterial: { select: { id: true, name: true, unit: true, taxPct: true } },
+      },
+    });
+    const aggregated = new Map<
+      string,
+      { name: string; unit: string; taxPct: number; ordered: number; lastUnitPrice: number }
+    >();
+    for (const l of poLines) {
+      const ex = aggregated.get(l.rawMaterialId);
+      if (ex) {
+        ex.ordered += l.qty;
+        ex.lastUnitPrice = l.unitPrice || ex.lastUnitPrice;
+      } else {
+        aggregated.set(l.rawMaterialId, {
+          name: l.rawMaterial.name,
+          unit: l.unit || l.rawMaterial.unit,
+          taxPct: l.rawMaterial.taxPct ?? 0,
+          ordered: l.qty,
+          lastUnitPrice: l.unitPrice,
+        });
+      }
+    }
+    const siblingGrns = await db.grn.findMany({
+      where: { poId: { in: linkedPoIds } },
+      select: { id: true },
+    });
+    const siblingGrnIds = siblingGrns.map((g) => g.id);
+    const priorInvLines = supplierId
+      ? await db.vendorInvoice.findMany({
+          where: {
+            outletId: outlet.id,
+            supplierId,
+            grnLinks: { some: { grnId: { in: siblingGrnIds } } },
+          },
+          select: { lines: { select: { rawMaterialId: true, qty: true } } },
+        })
+      : [];
+    const invoicedByRm = new Map<string, number>();
+    for (const inv of priorInvLines) {
+      for (const l of inv.lines) {
+        invoicedByRm.set(l.rawMaterialId, (invoicedByRm.get(l.rawMaterialId) ?? 0) + l.qty);
+      }
+    }
+    poItemCatalog = Array.from(aggregated.entries())
+      .map(([rmId, v]) => {
+        const already = invoicedByRm.get(rmId) ?? 0;
+        return {
+          rawMaterialId: rmId,
+          name: v.name,
+          unit: v.unit,
+          taxPct: v.taxPct,
+          ordered: v.ordered,
+          alreadyInvoiced: already,
+          remaining: Math.max(0, v.ordered - already),
+          lastUnitPrice: v.lastUnitPrice,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   const suppliers = await db.supplier.findMany({
     where: { active: true },
     orderBy: { name: "asc" },
     select: { id: true, name: true },
   });
 
-  // Eligible additional GRNs to optionally attach (same supplier, not yet invoiced).
-  const additionalGrns = await db.grn.findMany({
-    where: {
-      outletId: outlet.id,
-      id: { not: seedGrn.id },
-      OR: [{ poId: null }, { po: supplierId ? { supplierId } : undefined }],
-      vendorInvoiceLinks: { none: {} },
-    },
-    include: { po: { select: { poNo: true, supplierId: true } }, lines: true },
-    orderBy: { receivedAt: "desc" },
-    take: 50,
-  });
-
-  const eligibleGrns = [seedGrn, ...additionalGrns];
   const seedTotal = seedGrn.lines.reduce((s, l) => s + l.qtyReceived * l.unitCost, 0);
 
   return (
@@ -218,9 +304,9 @@ export default async function NewInvoicePage({
               {seedGrn.po && <> · {seedGrn.po.supplier.name}</>}
             </div>
             <div className="text-sm text-sky-800 mt-0.5">
-              {seedGrn.lines.length} line{seedGrn.lines.length === 1 ? "" : "s"} · estimated
-              value <strong>{inr(Math.round(seedTotal))}</strong>. Override the totals
-              below with whatever's printed on the vendor's invoice.
+              {seedGrn.lines.length} line{seedGrn.lines.length === 1 ? "" : "s"} · receipts worth{" "}
+              <strong>{inr(Math.round(seedTotal))}</strong>. Add line items below from
+              what the vendor billed — qty is capped to the PO budget.
             </div>
           </div>
           {seedGrn.po && (
@@ -240,14 +326,22 @@ export default async function NewInvoicePage({
             suppliers={suppliers}
             initialSupplierId={supplierId}
             initialGrnId={seedGrn.id}
-            seedTotal={Math.round(seedTotal)}
-            eligibleGrns={eligibleGrns.map((g) => ({
+            eligibleGrns={allEligibleGrns.map((g) => ({
               id: g.id,
               grnNo: g.grnNo,
               poNo: g.po?.poNo ?? null,
               supplierId: g.po?.supplierId ?? null,
               receivedAt: g.receivedAt.toISOString(),
               value: Math.round(g.lines.reduce((s, l) => s + l.qtyReceived * l.unitCost, 0)),
+            }))}
+            poItemCatalog={poItemCatalog}
+            grnReceiptHints={seedGrn.lines.map((l) => ({
+              rawMaterialId: l.rawMaterialId,
+              name: l.rawMaterial.name,
+              qtyReceived: l.qtyReceived,
+              unit: l.unit,
+              unitPrice: l.unitCost,
+              taxPct: l.rawMaterial.taxPct ?? 0,
             }))}
           />
         </CardContent>

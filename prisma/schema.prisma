@@ -484,6 +484,7 @@ model RawMaterial {
   rmSuppliers     RawMaterialSupplier[]
   requisitionLines RequisitionLine[]
   grnLines         GrnLine[]
+  vendorInvoiceLines VendorInvoiceLine[]
   createdAt       DateTime @default(now())
 }
 
@@ -1535,12 +1536,40 @@ model VendorInvoice {
   notes           String?
   createdById     String?
   grnLinks        VendorInvoiceGrnLink[]
+  lines           VendorInvoiceLine[]
   payments        VendorPayment[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
   @@unique([supplierId, invoiceNo])
   @@index([outletId, status, invoiceDate])
+}
+
+/// Per-item lines a vendor's invoice carries. Captured manually so the
+/// accountant can reconcile against what the vendor billed (which may
+/// differ from what GRNs received — e.g. vendor invoiced the whole PO
+/// even though only some GRNs are punched). Qty is capped server-side
+/// to the cumulative PO line qty across the invoice's linked GRNs minus
+/// what's already been invoiced elsewhere against those same POs.
+model VendorInvoiceLine {
+  id            String        @id @default(cuid())
+  invoiceId     String
+  invoice       VendorInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  rawMaterialId String
+  rawMaterial   RawMaterial   @relation(fields: [rawMaterialId], references: [id])
+  /// Optional free-text override of the catalog name — for items the
+  /// vendor billed under a different SKU label etc.
+  description   String?
+  qty           Float
+  unit          String
+  unitPrice     Float
+  taxRate       Float         @default(0)
+  lineSubTotal  Float
+  lineTax       Float
+  lineTotal     Float
+
+  @@index([invoiceId])
+  @@index([rawMaterialId])
 }
 
 model VendorInvoiceGrnLink {

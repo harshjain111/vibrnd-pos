@@ -149,7 +149,7 @@ export function ReviewForm({
           </Button>
           <Button type="button" onClick={() => submit(false)} disabled={pending}>
             <Check className="h-4 w-4" />
-            {pending ? "Saving…" : "Save review"}
+            {pending ? "Approving…" : "Approve"}
           </Button>
         </div>
       </div>

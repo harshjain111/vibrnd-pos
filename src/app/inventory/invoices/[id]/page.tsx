@@ -25,6 +25,7 @@ export default async function VendorInvoiceDetailPage({
     include: {
       supplier: true,
       grnLinks: { include: { grn: { select: { id: true, grnNo: true, status: true, receivedAt: true } } } },
+      lines: { include: { rawMaterial: { select: { name: true } } } },
       payments: { orderBy: { occurredAt: "desc" } },
     },
   });
@@ -48,8 +49,53 @@ export default async function VendorInvoiceDetailPage({
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
-        {/* Left: linked GRNs + payment history */}
+        {/* Left: line items + linked GRNs + payment history */}
         <div className="space-y-4">
+          {inv.lines.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Line items ({inv.lines.length})</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Item</TableHead>
+                      <TableHead className="text-right">Qty</TableHead>
+                      <TableHead className="text-right">Unit price</TableHead>
+                      <TableHead className="text-right">Tax %</TableHead>
+                      <TableHead className="text-right">Line total</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {inv.lines.map((l) => (
+                      <TableRow key={l.id}>
+                        <TableCell className="font-medium">
+                          {l.description ?? l.rawMaterial.name}
+                          {l.description && l.description !== l.rawMaterial.name && (
+                            <span className="text-[10px] text-muted-foreground ml-1">
+                              ({l.rawMaterial.name})
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {l.qty} <span className="text-[10px] text-muted-foreground">{l.unit}</span>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{inr(l.unitPrice)}</TableCell>
+                        <TableCell className="text-right text-xs text-muted-foreground tabular-nums">
+                          {l.taxRate}%
+                        </TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">
+                          {inr(Math.round(l.lineTotal))}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">GRNs covered ({inv.grnLinks.length})</CardTitle>

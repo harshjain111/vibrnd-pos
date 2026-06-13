@@ -368,7 +368,7 @@ function ExpandedPanel({
                 </Button>
                 <Button type="button" onClick={() => submitReview(false)} disabled={pending}>
                   <Check className="h-4 w-4" />
-                  {pending ? "Saving…" : "Save review"}
+                  {pending ? "Approving…" : "Approve"}
                 </Button>
               </>
             )}
