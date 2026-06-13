@@ -10,7 +10,7 @@ import { getActiveOutlet } from "@/lib/outlet";
 import { getSessionUser } from "@/lib/session";
 import { canAccess } from "@/lib/permissions";
 import { inr, inr2 } from "@/lib/utils";
-import { ArrowLeft, Send, PackageCheck, XCircle, CheckCircle2, Truck } from "lucide-react";
+import { ArrowLeft, Send, PackageCheck, Pencil, XCircle, CheckCircle2, Truck } from "lucide-react";
 import { markSent, cancelPO } from "../actions";
 import { PrintPoButton, SubmitForApprovalButton, CcApproveButton, CcRejectButton } from "./client";
 
@@ -75,9 +75,17 @@ export default async function PODetailPage({ params }: { params: Promise<{ id: s
             </Button>
             <PrintPoButton />
 
-            {/* DRAFT — submit for CC approval (or skip when gate is off) */}
+            {/* DRAFT — editable until submitted; then submit for CC approval */}
             {po.status === "DRAFT" && (
-              <SubmitForApprovalButton id={po.id} requiresCC={requiresCC} />
+              <>
+                <Button variant="outline" size="sm" asChild>
+                  <Link href={`/inventory/purchase/${po.id}/edit`}>
+                    <Pencil className="h-4 w-4" />
+                    Edit
+                  </Link>
+                </Button>
+                <SubmitForApprovalButton id={po.id} requiresCC={requiresCC} />
+              </>
             )}
 
             {/* PENDING_CC_APPROVAL — only Cost Controller can act */}

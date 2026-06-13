@@ -7,8 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
 import { inr } from "@/lib/utils";
-import { Plus, Trash2 } from "lucide-react";
-import { createPO } from "../actions";
+import { Plus, Save, Send, Trash2 } from "lucide-react";
+import { createPO, updatePO } from "../actions";
 
 type Supplier = { id: string; name: string };
 type Rm = { id: string; name: string; unit: string; avgCost: number; parLevel: number; currentQty: number };
@@ -17,24 +17,43 @@ type Line = { rawMaterialId: string; qty: number; unit: string; unitPrice: numbe
 export function PoBuilder({
   suppliers,
   rms,
+  initialSupplierId,
+  initialNotes,
   initialLines,
   requisitionId,
+  editingPoId,
+  editingPoNo,
 }: {
   suppliers: Supplier[];
   rms: Rm[];
-  /** Lines pre-filled when ?req=<id> is set — the requisition's shortfall. */
+  /** When editing a draft, the previously-saved supplier. Otherwise the
+   *  first supplier in the dropdown is used. */
+  initialSupplierId?: string;
+  initialNotes?: string;
+  /** Lines pre-filled — from a requisition shortfall, or from the draft
+   *  being edited. */
   initialLines?: { rawMaterialId: string; qty: number; unit: string; unitPrice: number }[];
-  /** When set, the PO is recorded with this parent requisition. */
+  /** When set, the new PO is recorded with this parent requisition. */
   requisitionId?: string | null;
+  /** When set, the form runs in edit-mode — updatePO instead of createPO,
+   *  no requisition stamping (the parent link is already on the row). */
+  editingPoId?: string | null;
+  editingPoNo?: string | null;
 }) {
   const router = useRouter();
   const { toast } = useToast();
-  const [supplierId, setSupplierId] = React.useState<string>(suppliers[0]?.id ?? "");
+  const editing = !!editingPoId;
+  const [supplierId, setSupplierId] = React.useState<string>(
+    initialSupplierId ?? suppliers[0]?.id ?? ""
+  );
   const [notes, setNotes] = React.useState(
-    requisitionId ? "Covering shortfall against requisition" : ""
+    initialNotes ?? (requisitionId ? "Covering shortfall against requisition" : "")
   );
   const [lines, setLines] = React.useState<Line[]>(initialLines ?? []);
   const [pending, startTransition] = React.useTransition();
+  /** Tracks which of the two buttons fired so the spinner labels stay tied
+   *  to the right action. */
+  const [pendingMode, setPendingMode] = React.useState<"draft" | "submit" | null>(null);
 
   const rmById = (id: string) => rms.find((r) => r.id === id);
 
@@ -62,7 +81,7 @@ export function PoBuilder({
 
   const total = lines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
 
-  const submit = () => {
+  const submit = (mode: "draft" | "submit") => {
     if (!supplierId) {
       toast({ variant: "destructive", title: "Pick a supplier first" });
       return;
@@ -71,18 +90,39 @@ export function PoBuilder({
       toast({ variant: "destructive", title: "Add at least one line" });
       return;
     }
+    setPendingMode(mode);
     startTransition(async () => {
       try {
-        const res = await createPO({
-          supplierId,
-          notes: notes || undefined,
-          lines,
-          requisitionId: requisitionId ?? undefined,
+        const submitForApproval = mode === "submit";
+        const res = editing
+          ? await updatePO({
+              id: editingPoId!,
+              supplierId,
+              notes: notes || undefined,
+              lines,
+              submitForApproval,
+            })
+          : await createPO({
+              supplierId,
+              notes: notes || undefined,
+              lines,
+              requisitionId: requisitionId ?? undefined,
+              submitForApproval,
+            });
+        toast({
+          variant: "success",
+          title: editing ? `Updated ${res.poNo}` : `Created ${res.poNo}`,
+          description: `Status: ${res.status}`,
         });
-        toast({ variant: "success", title: `Created ${res.poNo}`, description: "Status: DRAFT" });
         router.push(`/inventory/purchase/${res.id}`);
       } catch (e) {
-        toast({ variant: "destructive", title: "Failed to create PO", description: String(e) });
+        toast({
+          variant: "destructive",
+          title: editing ? "Failed to update PO" : "Failed to create PO",
+          description: String(e),
+        });
+      } finally {
+        setPendingMode(null);
       }
     });
   };
@@ -221,12 +261,42 @@ export function PoBuilder({
             <span>Grand total</span>
             <span>{inr(total)}</span>
           </div>
-          <Button onClick={submit} disabled={lines.length === 0 || pending} className="w-full" size="lg">
-            {pending ? "Saving…" : "Create as draft"}
-          </Button>
+          <div className="space-y-2 pt-1">
+            <Button
+              onClick={() => submit("submit")}
+              disabled={lines.length === 0 || pending}
+              className="w-full"
+              size="lg"
+            >
+              <Send className="h-4 w-4" />
+              {pending && pendingMode === "submit"
+                ? "Submitting…"
+                : editing
+                  ? "Save + submit for approval"
+                  : "Submit for approval"}
+            </Button>
+            <Button
+              onClick={() => submit("draft")}
+              disabled={lines.length === 0 || pending}
+              variant="outline"
+              className="w-full"
+              size="lg"
+            >
+              <Save className="h-4 w-4" />
+              {pending && pendingMode === "draft" ? "Saving…" : "Save as draft"}
+            </Button>
+          </div>
           <p className="text-xs text-muted-foreground">
-            Drafts don't change stock. Mark <strong>Received</strong> on the next screen to update inventory.
+            Drafts can be revised anytime. Submit kicks off the cost-control approval
+            flow (auto-approved when the gate is off in Settings). Stock changes only
+            when goods land via a GRN.
           </p>
+          {editing && editingPoNo && (
+            <p className="text-[11px] text-muted-foreground border-t pt-2">
+              Editing draft <span className="font-mono">{editingPoNo}</span>. Lines will
+              be replaced wholesale on save.
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>

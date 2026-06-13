@@ -41,6 +41,10 @@ const POInput = z.object({
   /** Optional — when raised from an APPROVED req's shortfall the SM picked
    *  "Raise PO" on the requisition. Recorded for traceability + dashboards. */
   requisitionId: z.string().optional(),
+  /** When true, the PO is created AND submitted for CC approval in one
+   *  shot (matches the submitPO state transition). Lets the SM skip the
+   *  intermediate draft step when they don't need to revise anything. */
+  submitForApproval: z.boolean().default(false),
 });
 
 async function nextPoNo(outletId: string, outletCode: string) {
@@ -63,11 +67,15 @@ async function getStoreDept(outletId: string) {
 }
 
 /**
- * Create a PO. Lands in DRAFT — the SM needs to explicitly submit it to
- * the CC for approval (or directly to SENT when CC gate is off).
+ * Create a PO. By default lands in DRAFT — the SM revises and then submits
+ * to the CC. Pass `submitForApproval: true` to skip the draft step entirely
+ * and move straight to PENDING_CC_APPROVAL (or APPROVED when the CC gate
+ * is off).
  */
-export async function createPO(input: z.infer<typeof POInput>): Promise<{ id: string; poNo: string }> {
-  await requireUser();
+export async function createPO(
+  input: z.infer<typeof POInput>
+): Promise<{ id: string; poNo: string; status: string }> {
+  const user = await requireUser();
   const data = POInput.parse(input);
   const outlet = await getActiveOutlet();
   const store = await getStoreDept(outlet.id);
@@ -126,8 +134,154 @@ export async function createPO(input: z.infer<typeof POInput>): Promise<{ id: st
     outletId: outlet.id,
   });
 
+  // Optional one-shot: skip the DRAFT step and submit for CC approval.
+  // Mirrors submitPO without the FormData / lookup round-trip.
+  let finalStatus = "DRAFT";
+  if (data.submitForApproval) {
+    const requiresCC = (outlet as any).requireCostControlApproval ?? true;
+    finalStatus = requiresCC ? "PENDING_CC_APPROVAL" : "APPROVED";
+    await db.purchaseOrder.update({
+      where: { id: po.id },
+      data: {
+        status: finalStatus,
+        ccApprovedById: requiresCC ? null : user.id,
+        ccApprovedAt: requiresCC ? null : new Date(),
+      },
+    });
+    await logActivity({
+      action: "UPDATE",
+      entity: "RawMaterial",
+      entityId: po.id,
+      summary: requiresCC
+        ? `PO ${poNo} submitted for cost-control approval`
+        : `PO ${poNo} auto-approved (CC gate off)`,
+      outletId: outlet.id,
+    });
+    if (requiresCC) {
+      await db.notification.create({
+        data: {
+          outletId: outlet.id,
+          kind: "INFO",
+          title: `PO ${poNo} awaiting CC approval`,
+          body: `${inr(grand)} from supplier — open to review.`,
+          link: `/inventory/purchase/${po.id}`,
+        },
+      });
+    }
+  }
+
   revalidatePath("/inventory/purchase");
-  return { id: po.id, poNo };
+  return { id: po.id, poNo, status: finalStatus };
+}
+
+/**
+ * Edit a DRAFT PO. Allowed only while status === "DRAFT" — once it's been
+ * sent for approval, the SM can't tweak lines or supplier any more (use
+ * cancel + new PO if a change is needed at that stage).
+ *
+ * Replaces all lines wholesale (delete + recreate) so the SM can add,
+ * remove, or change qty/price in a single round-trip without us needing
+ * to diff. Totals are recomputed.
+ */
+const POUpdateInput = z.object({
+  id: z.string(),
+  supplierId: z.string(),
+  notes: z.string().optional(),
+  lines: z.array(LineInput).min(1),
+  /** Same as createPO — pick "Save as draft" or "Save + submit for approval". */
+  submitForApproval: z.boolean().default(false),
+});
+
+export async function updatePO(
+  input: z.infer<typeof POUpdateInput>
+): Promise<{ id: string; poNo: string; status: string }> {
+  const user = await requireUser();
+  const data = POUpdateInput.parse(input);
+  const outlet = await getActiveOutlet();
+  const existing = await db.purchaseOrder.findFirst({
+    where: { id: data.id, outletId: outlet.id },
+    select: { id: true, poNo: true, status: true },
+  });
+  if (!existing) throw new Error("PO not found at this outlet");
+  if (existing.status !== "DRAFT") {
+    throw new Error(
+      `PO ${existing.poNo} is ${existing.status} — only DRAFT purchase orders can be edited`
+    );
+  }
+
+  const sub = data.lines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
+  const tax = 0;
+  const grand = Math.round(sub + tax);
+
+  await db.$transaction([
+    db.purchaseOrderLine.deleteMany({ where: { poId: data.id } }),
+    db.purchaseOrder.update({
+      where: { id: data.id },
+      data: {
+        supplierId: data.supplierId,
+        notes: data.notes,
+        subTotal: sub,
+        taxTotal: tax,
+        grandTotal: grand,
+        lines: {
+          create: data.lines.map((l) => ({
+            rawMaterialId: l.rawMaterialId,
+            qty: l.qty,
+            unit: l.unit,
+            unitPrice: l.unitPrice,
+            lineTotal: l.qty * l.unitPrice,
+          })),
+        },
+      },
+    }),
+  ]);
+
+  await logActivity({
+    action: "UPDATE",
+    entity: "RawMaterial",
+    entityId: data.id,
+    summary: `PO ${existing.poNo} draft revised — ${data.lines.length} line(s), ${inr(grand)}`,
+    outletId: outlet.id,
+  });
+
+  // Optional one-shot submit on save (same path as createPO).
+  let finalStatus = "DRAFT";
+  if (data.submitForApproval) {
+    const requiresCC = (outlet as any).requireCostControlApproval ?? true;
+    finalStatus = requiresCC ? "PENDING_CC_APPROVAL" : "APPROVED";
+    await db.purchaseOrder.update({
+      where: { id: data.id },
+      data: {
+        status: finalStatus,
+        ccApprovedById: requiresCC ? null : user.id,
+        ccApprovedAt: requiresCC ? null : new Date(),
+      },
+    });
+    await logActivity({
+      action: "UPDATE",
+      entity: "RawMaterial",
+      entityId: data.id,
+      summary: requiresCC
+        ? `PO ${existing.poNo} submitted for cost-control approval`
+        : `PO ${existing.poNo} auto-approved (CC gate off)`,
+      outletId: outlet.id,
+    });
+    if (requiresCC) {
+      await db.notification.create({
+        data: {
+          outletId: outlet.id,
+          kind: "INFO",
+          title: `PO ${existing.poNo} awaiting CC approval`,
+          body: `${inr(grand)} from supplier — open to review.`,
+          link: `/inventory/purchase/${data.id}`,
+        },
+      });
+    }
+  }
+
+  revalidatePath("/inventory/purchase");
+  revalidatePath(`/inventory/purchase/${data.id}`);
+  return { id: data.id, poNo: existing.poNo, status: finalStatus };
 }
 
 /**
