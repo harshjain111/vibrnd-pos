@@ -23,11 +23,19 @@ import { ROLES as ALL_ROLES } from "@/lib/rbac";
 
 // All roles — POS hierarchy first, then the inventory / procurement
 // roles. Grouped in the select via <optgroup> so the dropdown reads
-// naturally despite being long.
-const POS_ROLE_OPTIONS = ["OWNER", "MANAGER", "BILLER", "CAPTAIN", "RECEPTIONIST"] as const;
-const INVENTORY_ROLE_OPTIONS = ALL_ROLES.filter(
-  (r) => !(POS_ROLE_OPTIONS as readonly string[]).includes(r)
-);
+// naturally despite being long. Each entry carries a one-line label so
+// the SM picking a role doesn't have to remember what each ALLCAPS key
+// actually does.
+const POS_ROLE_OPTIONS: { value: string; label: string }[] = [
+  { value: "OWNER",        label: "OWNER — full access (incl. users / permissions)" },
+  { value: "MANAGER",      label: "MANAGER — operations + reports + void items" },
+  { value: "BILLER",       label: "BILLER — cashier: settle bills, move tables, split, comp" },
+  { value: "CAPTAIN",      label: "CAPTAIN — punch orders + send KOTs" },
+  { value: "RECEPTIONIST", label: "RECEPTIONIST — floor plan: register customers + assign tables" },
+];
+const INVENTORY_ROLE_OPTIONS = ALL_ROLES
+  .filter((r) => !POS_ROLE_OPTIONS.some((p) => p.value === r))
+  .map((r) => ({ value: r, label: r }));
 const ROLES = ALL_ROLES;
 
 export function AddUserDialog({ children }: { children: React.ReactNode }) {
@@ -68,15 +76,15 @@ export function AddUserDialog({ children }: { children: React.ReactNode }) {
             <select name="role" defaultValue="BILLER" className="h-9 w-full rounded-md border bg-background px-3 text-sm">
               <optgroup label="POS / Front of house">
                 {POS_ROLE_OPTIONS.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
+                  <option key={r.value} value={r.value}>
+                    {r.label}
                   </option>
                 ))}
               </optgroup>
               <optgroup label="Inventory / Procurement">
                 {INVENTORY_ROLE_OPTIONS.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
+                  <option key={r.value} value={r.value}>
+                    {r.label}
                   </option>
                 ))}
               </optgroup>
@@ -141,15 +149,15 @@ export function EditUserDialog({
             >
               <optgroup label="POS / Front of house">
                 {POS_ROLE_OPTIONS.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
+                  <option key={r.value} value={r.value}>
+                    {r.label}
                   </option>
                 ))}
               </optgroup>
               <optgroup label="Inventory / Procurement">
                 {INVENTORY_ROLE_OPTIONS.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
+                  <option key={r.value} value={r.value}>
+                    {r.label}
                   </option>
                 ))}
               </optgroup>
