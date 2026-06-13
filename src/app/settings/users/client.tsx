@@ -269,7 +269,14 @@ export function SeedTestUsersButton() {
   const [open, setOpen] = React.useState(false);
   const [pending, startTransition] = React.useTransition();
   const [rows, setRows] = React.useState<
-    { role: string; email: string; name: string; password: string; status: "created" | "existed" }[]
+    {
+      role: string;
+      email: string;
+      name: string;
+      password: string;
+      status: "created" | "existed" | "failed";
+      error?: string;
+    }[]
   >([]);
 
   const run = () => {
@@ -305,6 +312,11 @@ export function SeedTestUsersButton() {
               Existing accounts are kept as-is.
             </DialogDescription>
           </DialogHeader>
+          {rows.some((r) => r.status === "failed") && (
+            <div className="rounded-md border border-rose-300 bg-rose-50/60 p-2 text-xs text-rose-900">
+              One or more rows failed. Hover the red pill for the reason.
+            </div>
+          )}
           <div className="space-y-2">
             {rows.map((r) => (
               <div
@@ -326,10 +338,13 @@ export function SeedTestUsersButton() {
                   className={`text-[10px] uppercase tracking-wider rounded-full px-2 py-0.5 ${
                     r.status === "created"
                       ? "bg-emerald-100 text-emerald-800"
-                      : "bg-muted text-muted-foreground"
+                      : r.status === "failed"
+                        ? "bg-rose-100 text-rose-800"
+                        : "bg-muted text-muted-foreground"
                   }`}
+                  title={r.error ?? ""}
                 >
-                  {r.status}
+                  {r.status === "existed" ? "reset" : r.status}
                 </span>
                 <Button
                   variant="ghost"

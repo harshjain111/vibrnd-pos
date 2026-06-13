@@ -128,9 +128,17 @@ type SeedRow = {
   email: string;
   name: string;
   password: string;
-  status: "created" | "existed";
+  status: "created" | "existed" | "failed";
+  error?: string;
 };
 
+/**
+ * One-click test-user seed. Per-row try/catch so a single failure (existing
+ * email with conflicting role, DB connection blip, etc) doesn't drop the
+ * other rows on the floor — historic gotcha was the receptionist row not
+ * landing because the loop bailed mid-way. Each row reports back its own
+ * status so the dialog can flag which ones need attention.
+ */
 export async function seedTestUsers(): Promise<{ ok: true; rows: SeedRow[] } | { ok: false; error: string }> {
   try {
     await requireUser("OWNER");
@@ -147,28 +155,51 @@ export async function seedTestUsers(): Promise<{ ok: true; rows: SeedRow[] } | {
 
     const rows: SeedRow[] = [];
     for (const t of targets) {
-      const existing = await db.user.findUnique({ where: { email: t.email } });
-      if (existing) {
-        rows.push({ ...t, password, status: "existed" });
-        continue;
+      try {
+        const existing = await db.user.findUnique({ where: { email: t.email } });
+        if (existing) {
+          // Re-attach the test password + activate + ensure the role matches
+          // what the seed wants. Self-heal lets the owner click the button
+          // again to recover from any earlier partial / wrong-role seed.
+          await db.user.update({
+            where: { id: existing.id },
+            data: {
+              role: t.role,
+              active: true,
+              passwordHash: hash,
+              outletId: outlet.id,
+            },
+          });
+          rows.push({ ...t, password, status: "existed" });
+          continue;
+        }
+        await db.user.create({
+          data: {
+            name: t.name,
+            email: t.email,
+            role: t.role,
+            passwordHash: hash,
+            outletId: outlet.id,
+          },
+        });
+        rows.push({ ...t, password, status: "created" });
+      } catch (e) {
+        rows.push({
+          ...t,
+          password,
+          status: "failed",
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
-      await db.user.create({
-        data: {
-          name: t.name,
-          email: t.email,
-          role: t.role,
-          passwordHash: hash,
-          outletId: outlet.id,
-        },
-      });
-      rows.push({ ...t, password, status: "created" });
     }
 
+    const created = rows.filter((r) => r.status === "created").length;
+    const failed = rows.filter((r) => r.status === "failed").length;
     await logActivity({
       action: "CREATE",
       entity: "Outlet",
       entityId: outlet.id,
-      summary: `Seeded ${rows.filter((r) => r.status === "created").length} test user(s) for role testing`,
+      summary: `Seeded test users — ${created} created, ${rows.length - created - failed} reset, ${failed} failed`,
       outletId: outlet.id,
     });
     revalidatePath("/settings/users");

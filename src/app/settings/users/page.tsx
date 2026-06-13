@@ -16,6 +16,7 @@ const ROLE_TONE: Record<string, "default" | "info" | "secondary" | "warning"> = 
   MANAGER: "info",
   BILLER: "secondary",
   CAPTAIN: "warning",
+  RECEPTIONIST: "info",
 };
 
 export default async function UsersPage() {
