@@ -58,7 +58,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { DietaryDot } from "@/components/ui/dietary-dot";
 import { UpiQr } from "@/components/ui/upi-qr";
 import { resolveTagIcon, chipClassForColor } from "@/components/menu/tag-icons";
-import { Info } from "lucide-react";
+import { Info, Printer, Pencil } from "lucide-react";
 
 type Variant = { id: string; name: string; price: number };
 type Addon = { id: string; name: string; priceDelta: number };
@@ -1962,6 +1962,97 @@ function MembershipRedeemRow({
   );
 }
 
+/**
+ * Open a printer-friendly proforma in a new window. Pre-settle, no DB
+ * writes — the cashier can print as many times as the guest wants
+ * before final settlement. Uses window.open + document.write so we
+ * don't need a server route just for the preview.
+ */
+function printProforma(args: {
+  cart: CartLine[];
+  sub: number;
+  tax: number;
+  grand: number;
+  discount: number;
+  appliedCode: { code: string; name: string } | null;
+  serviceChargeAmt: number;
+  serviceChargeOn: boolean;
+  serviceChargePct: number;
+  tip: number;
+  paymentMode: string;
+  customerPhone: string;
+  outletName?: string;
+}) {
+  const fmt = (n: number) => `₹${n.toLocaleString("en-IN")}`;
+  const rows = args.cart
+    .map((l) => {
+      const lineTotal = (l.unitPrice ?? l.item.price) * l.qty;
+      const variant = l.variant ? ` (${l.variant.name})` : "";
+      const addons = l.addons?.length
+        ? `<div style="font-size:11px;color:#666;padding-left:8px">+ ${l.addons.map((a) => a.name).join(", ")}</div>`
+        : "";
+      return `<tr>
+        <td>${l.item.name}${variant}${addons}</td>
+        <td style="text-align:right">${l.qty}</td>
+        <td style="text-align:right">${fmt(l.unitPrice ?? l.item.price)}</td>
+        <td style="text-align:right">${fmt(lineTotal)}</td>
+      </tr>`;
+    })
+    .join("");
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Proforma · ${args.outletName ?? "Bill"}</title>
+<style>
+  body { font-family: ui-sans-serif, system-ui, sans-serif; padding: 24px; max-width: 480px; margin: 0 auto; color: #111; }
+  h1 { margin: 0 0 4px; font-size: 18px; text-align: center; }
+  .meta { text-align: center; color: #666; font-size: 12px; margin-bottom: 16px; }
+  .proforma { text-align: center; background: #fef3c7; border: 1px dashed #d97706; padding: 6px; font-weight: 600; font-size: 11px; letter-spacing: 1px; margin-bottom: 12px; color: #92400e; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 6px 4px; border-bottom: 1px dotted #ddd; }
+  th { text-align: left; font-size: 11px; color: #666; text-transform: uppercase; }
+  .totals { margin-top: 10px; font-size: 13px; }
+  .totals .row { display: flex; justify-content: space-between; padding: 3px 0; }
+  .totals .grand { font-weight: 700; font-size: 16px; border-top: 1px solid #111; padding-top: 6px; margin-top: 6px; }
+  .footer { text-align: center; color: #666; font-size: 11px; margin-top: 18px; }
+  @media print { body { padding: 0; } button { display: none; } }
+</style>
+</head>
+<body>
+  <div class="proforma">PROFORMA · NOT A TAX INVOICE</div>
+  <h1>${args.outletName ?? "Bill preview"}</h1>
+  <div class="meta">${new Date().toLocaleString("en-IN")}${args.customerPhone ? ` · ${args.customerPhone}` : ""}</div>
+  <table>
+    <thead>
+      <tr><th>Item</th><th style="text-align:right">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="totals">
+    <div class="row"><span>Subtotal</span><span>${fmt(args.sub)}</span></div>
+    <div class="row"><span>GST</span><span>${fmt(args.tax)}</span></div>
+    ${args.discount > 0 ? `<div class="row" style="color:#059669"><span>Discount${args.appliedCode ? ` (${args.appliedCode.code})` : ""}</span><span>−${fmt(args.discount)}</span></div>` : ""}
+    ${args.serviceChargeOn && args.serviceChargeAmt > 0 ? `<div class="row"><span>Service charge (${args.serviceChargePct}%)</span><span>${fmt(args.serviceChargeAmt)}</span></div>` : ""}
+    ${args.tip > 0 ? `<div class="row" style="color:#059669"><span>Tip</span><span>+${fmt(args.tip)}</span></div>` : ""}
+    <div class="row grand"><span>Grand total</span><span>${fmt(args.grand)}</span></div>
+    <div class="row" style="font-size:11px;color:#666;margin-top:6px"><span>Pay mode (intent)</span><span>${args.paymentMode}</span></div>
+  </div>
+  <div class="footer">This is a proforma. The tax invoice will print after settlement.</div>
+  <script>setTimeout(function(){ window.print(); }, 200);<\/script>
+</body>
+</html>`;
+  const w = window.open("", "_blank", "width=520,height=720");
+  if (!w) {
+    alert("Couldn't open the print window — allow popups for this site and try again.");
+    return;
+  }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
+
 /* ─── STAGE 3 — Settle ──────────────────────────────────────────────────── */
 
 function SettleStep(props: {
@@ -2319,18 +2410,50 @@ function SettleStep(props: {
             </div>
           )}
 
-          <div className={canSettleBill ? "grid grid-cols-[auto_1fr] gap-2" : "grid grid-cols-1 gap-2"}>
-            <Button type="button" onClick={onBack} variant="outline" size="lg">
-              <ArrowLeft className="h-4 w-4" />
-              Back
+          {/* Spec'd Settle flow (top → bottom):
+                1. Print bill — proforma popup the cashier hands to the
+                   guest for review before payment. Pure client-side
+                   window, no DB write, so it's safe to print multiple
+                   times before final settle.
+                2. Edit bill — back to Menu step to add / remove items.
+                3. Settle ₹X — final commit. Hold bill is the
+                   "save for the next shift" escape hatch at the foot. */}
+          <Button
+            type="button"
+            onClick={() =>
+              printProforma({
+                cart,
+                sub,
+                tax,
+                grand,
+                discount,
+                appliedCode,
+                serviceChargeAmt,
+                serviceChargeOn,
+                serviceChargePct,
+                tip,
+                paymentMode,
+                customerPhone,
+                outletName,
+              })
+            }
+            disabled={cart.length === 0}
+            variant="outline"
+            className="w-full"
+          >
+            <Printer className="h-4 w-4" />
+            Print bill (proforma)
+          </Button>
+          <Button type="button" onClick={onBack} variant="outline" className="w-full">
+            <Pencil className="h-4 w-4" />
+            Edit bill
+          </Button>
+          {canSettleBill && (
+            <Button onClick={onSettle} disabled={cart.length === 0 || pending} className="w-full" size="lg">
+              <Receipt className="h-4 w-4" />
+              {pending ? "Settling…" : `Settle ${inr(grand)}`}
             </Button>
-            {canSettleBill && (
-              <Button onClick={onSettle} disabled={cart.length === 0 || pending} className="w-full" size="lg">
-                <Receipt className="h-4 w-4" />
-                {pending ? "Settling…" : `Settle ${inr(grand)}`}
-              </Button>
-            )}
-          </div>
+          )}
           {!canSettleBill && (
             <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
               Your role can't settle bills. Hold the bill — a Cashier or Manager will close it from /settlements.
