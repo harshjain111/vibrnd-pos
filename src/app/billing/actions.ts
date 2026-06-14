@@ -48,6 +48,11 @@ const PlaceOrderInput = z.object({
   giftCardAmount: z.number().nonnegative().default(0),
   membershipClaims: z.array(MembershipClaim).default([]),
   lines: z.array(CartLine.extend({ lineKey: z.string().optional() })).min(1),
+  /// Set when the cart was resumed from a held/seeded bill. The action
+  /// deletes that source order before creating the new one — keeps the
+  /// table's one-bill invariant intact and stops duplicates from piling
+  /// up after resume → settle / resume → hold cycles.
+  existingOrderId: z.string().optional(),
 });
 
 export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
@@ -67,9 +72,18 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
   //   2. A real bill is already running with items punched. We reject
   //      hard — the captain has to settle / cancel / move the items
   //      before starting a new bill on the same table.
+  // Single-bill-per-table invariant — find any other open bill on this
+  // dine-in table and decide what to do with it:
+  //   • If it IS the bill we're settling (we resumed it from a held
+  //     state and now we're closing it out), delete it cleanly so the
+  //     new PAID order replaces it 1:1.
+  //   • If the only open bill on the table is the receptionist's seed
+  //     (0 items), adopt its captainId and delete it.
+  //   • If it has items AND it isn't ours, reject — that's a real
+  //     concurrent-bill conflict.
   let adoptedCaptainId: string | null = null;
   if (data.orderType === "DINE_IN" && data.tableId) {
-    const open = await db.order.findFirst({
+    const openOnTable = await db.order.findMany({
       where: {
         outletId: outlet.id,
         tableId: data.tableId,
@@ -77,16 +91,29 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
       },
       include: { _count: { select: { items: true } } },
     });
-    if (open) {
-      if (open._count.items === 0) {
-        // Empty seed — adopt + delete
-        adoptedCaptainId = open.captainId;
+    for (const open of openOnTable) {
+      if (open.id === data.existingOrderId) {
+        adoptedCaptainId = adoptedCaptainId ?? open.captainId;
+        await db.order.delete({ where: { id: open.id } });
+      } else if (open._count.items === 0) {
+        adoptedCaptainId = adoptedCaptainId ?? open.captainId;
         await db.order.delete({ where: { id: open.id } });
       } else {
         throw new Error(
           `Table is already running bill ${open.invoiceNo}. Settle or cancel it first, or move the items to a different table.`
         );
       }
+    }
+  } else if (data.existingOrderId) {
+    // Non-dine-in resume: still clean up the source bill so resume →
+    // settle doesn't leave a SAVED row floating around.
+    const src = await db.order.findUnique({
+      where: { id: data.existingOrderId },
+      select: { id: true, captainId: true, status: true },
+    });
+    if (src && !["PAID", "CANCELLED"].includes(src.status)) {
+      adoptedCaptainId = src.captainId;
+      await db.order.delete({ where: { id: src.id } });
     }
   }
 
@@ -912,11 +939,13 @@ export async function holdOrder(input: z.infer<typeof HoldInput>): Promise<{ id:
   const data = HoldInput.parse(input);
   const outlet = await getActiveOutlet();
 
-  // Same adopt-or-reject guard as placeOrder. A held bill is just an
-  // open order with status SAVED; the table-one-bill invariant applies.
+  // Same adopt-or-reject guard as placeOrder. existingOrderId lets a
+  // resume → hold cycle (cart was opened from a held bill, captain
+  // added more items, clicks Hold again) replace the source instead of
+  // duplicating it.
   let adoptedCaptainId: string | null = null;
   if (data.orderType === "DINE_IN" && data.tableId) {
-    const open = await db.order.findFirst({
+    const openOnTable = await db.order.findMany({
       where: {
         outletId: outlet.id,
         tableId: data.tableId,
@@ -924,15 +953,27 @@ export async function holdOrder(input: z.infer<typeof HoldInput>): Promise<{ id:
       },
       include: { _count: { select: { items: true } } },
     });
-    if (open) {
-      if (open._count.items === 0) {
-        adoptedCaptainId = open.captainId;
+    for (const open of openOnTable) {
+      if (open.id === data.existingOrderId) {
+        adoptedCaptainId = adoptedCaptainId ?? open.captainId;
+        await db.order.delete({ where: { id: open.id } });
+      } else if (open._count.items === 0) {
+        adoptedCaptainId = adoptedCaptainId ?? open.captainId;
         await db.order.delete({ where: { id: open.id } });
       } else {
         throw new Error(
           `Table is already running bill ${open.invoiceNo}. Settle / cancel / move it first.`
         );
       }
+    }
+  } else if (data.existingOrderId) {
+    const src = await db.order.findUnique({
+      where: { id: data.existingOrderId },
+      select: { id: true, captainId: true, status: true },
+    });
+    if (src && !["PAID", "CANCELLED"].includes(src.status)) {
+      adoptedCaptainId = src.captainId;
+      await db.order.delete({ where: { id: src.id } });
     }
   }
 

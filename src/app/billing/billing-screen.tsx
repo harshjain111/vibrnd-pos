@@ -562,6 +562,11 @@ export function BillingScreen({
     customerAllergies: allergies || undefined,
     customerBirthday: birthday || undefined,
     customerAnniversary: anniversary || undefined,
+    // When the cart was resumed from a held bill or a receptionist
+    // seed, send the source id so the server deletes it before
+    // creating the new order. Keeps the one-bill-per-table invariant
+    // intact and stops resumed bills from duplicating on the floor plan.
+    existingOrderId: resumed?.id ?? undefined,
     discount: discount || 0,
     discountCode: appliedCode?.code,
     redeemPoints: cappedRedeem,
