@@ -268,6 +268,13 @@ export function DiscountDialog({
     (initial?.bogo?.getScope as any) ?? "ALL"
   );
 
+  // Active tab — kept controlled so a click reliably activates regardless
+  // of what the parent re-render does. The previous uncontrolled
+  // <Tabs defaultValue="details"> silently lost click activations on
+  // certain re-render paths (server-action transition + select-change
+  // both fired). Controlled state is the canonical Radix fix.
+  const [activeTab, setActiveTab] = React.useState<"details" | "bogo" | "validity">("details");
+
   // Reset transient state when dialog reopens.
   React.useEffect(() => {
     if (open) {
@@ -277,8 +284,18 @@ export function DiscountDialog({
       setValidationMode(initial?.validationMode ?? "NONE");
       setBuyScope((initial?.bogo?.buyScope as any) ?? "ALL");
       setGetScope((initial?.bogo?.getScope as any) ?? "ALL");
+      setActiveTab("details");
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When the cashier picks BOGO, auto-jump to the BOGO tab so the
+  // 10+ BOGO-specific fields they now need are front-and-centre. For
+  // other type changes, snap back to Details if they're stuck on a tab
+  // that no longer applies.
+  React.useEffect(() => {
+    if (type === "BOGO" && activeTab === "details") setActiveTab("bogo");
+    if (type !== "BOGO" && activeTab === "bogo") setActiveTab("details");
+  }, [type]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const initOrderTypes = csvToSet(initial?.orderTypes ?? "DELIVERY,PICKUP,DINE_IN");
   const initPayMethods = csvToSet(initial?.paymentMethods);
@@ -311,7 +328,7 @@ export function DiscountDialog({
           }}
         >
           {initial?.id && <input type="hidden" name="id" value={initial.id} />}
-          <Tabs defaultValue="details">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "details" | "bogo" | "validity")}>
             <TabsList className="mb-3 w-full grid grid-cols-3">
               <TabsTrigger value="details">Discount details</TabsTrigger>
               <TabsTrigger value="bogo" disabled={type !== "BOGO"}>
