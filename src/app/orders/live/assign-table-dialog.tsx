@@ -14,6 +14,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
+import { Textarea } from "@/components/ui/textarea";
 import { UserPlus } from "lucide-react";
 import { assignTableToCustomer } from "./actions";
 
@@ -44,6 +45,7 @@ export function AssignTableDialog({
   const [birthday, setBirthday] = React.useState("");
   const [anniversary, setAnniversary] = React.useState("");
   const [allergies, setAllergies] = React.useState("");
+  const [specialNotes, setSpecialNotes] = React.useState("");
 
   // Reset when the dialog closes so the next click starts fresh.
   React.useEffect(() => {
@@ -53,6 +55,7 @@ export function AssignTableDialog({
       setBirthday("");
       setAnniversary("");
       setAllergies("");
+      setSpecialNotes("");
     }
   }, [open]);
 
@@ -73,6 +76,7 @@ export function AssignTableDialog({
         customerBirthday: birthday || undefined,
         customerAnniversary: anniversary || undefined,
         customerAllergies: allergies.trim() || undefined,
+        customerSpecialNotes: specialNotes.trim() || undefined,
       });
       if (!res.ok) {
         toast({
@@ -143,6 +147,15 @@ export function AssignTableDialog({
               value={allergies}
               onChange={(e) => setAllergies(e.target.value)}
               placeholder="e.g. peanut, lactose · stays on the profile"
+            />
+          </div>
+          <div>
+            <Label>Special notes</Label>
+            <Textarea
+              value={specialNotes}
+              onChange={(e) => setSpecialNotes(e.target.value)}
+              placeholder="VIP family · wheelchair seating · son's name Aarav — surfaced to the captain on every future visit"
+              rows={2}
             />
           </div>
         </div>

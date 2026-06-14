@@ -20,7 +20,7 @@ export default async function MenuPage({ searchParams }: { searchParams: Promise
   const sp = await searchParams;
   const outlet = await getActiveOutlet();
 
-  const [items, categories, taxSlabs] = await Promise.all([
+  const [items, categories, taxSlabs, tags] = await Promise.all([
     db.item.findMany({
       where: {
         outletId: outlet.id,
@@ -30,6 +30,7 @@ export default async function MenuPage({ searchParams }: { searchParams: Promise
         category: true,
         variants: { orderBy: { rank: "asc" } },
         addons: { orderBy: { rank: "asc" } },
+        tagAssigns: { select: { tagId: true } },
         _count: { select: { variants: true, addons: true } },
       },
       orderBy: [{ category: { rank: "asc" } }, { name: "asc" }],
@@ -40,7 +41,12 @@ export default async function MenuPage({ searchParams }: { searchParams: Promise
       orderBy: { rank: "asc" },
     }),
     db.taxSlab.findMany({ where: { outletId: outlet.id }, orderBy: { rate: "asc" } }),
+    db.itemTag.findMany({
+      where: { outletId: outlet.id },
+      orderBy: [{ rank: "asc" }, { name: "asc" }],
+    }),
   ]);
+  const allTags = tags.map((t) => ({ id: t.id, name: t.name, icon: t.icon, color: t.color }));
 
   return (
     <div>
@@ -59,6 +65,7 @@ export default async function MenuPage({ searchParams }: { searchParams: Promise
             <ItemDialog
               categories={categories.map((c) => ({ id: c.id, name: c.name }))}
               taxSlabs={taxSlabs.map((t) => ({ name: t.name, rate: t.rate }))}
+              tags={allTags}
             >
               <Button size="sm">
                 <Plus className="h-4 w-4" />
@@ -154,6 +161,7 @@ export default async function MenuPage({ searchParams }: { searchParams: Promise
                           <ItemDialog
                             categories={categories.map((c) => ({ id: c.id, name: c.name }))}
                             taxSlabs={taxSlabs.filter((t) => t.active).map((t) => ({ name: t.name, rate: t.rate }))}
+                            tags={allTags}
                             initial={{
                               id: it.id,
                               name: it.name,
@@ -167,6 +175,7 @@ export default async function MenuPage({ searchParams }: { searchParams: Promise
                               outOfStock: it.outOfStock,
                               variants: it.variants.map((v) => ({ id: v.id, name: v.name, price: v.price })),
                               addons: it.addons.map((a) => ({ id: a.id, name: a.name, priceDelta: a.priceDelta })),
+                              tagIds: it.tagAssigns.map((ta) => ta.tagId),
                             }}
                           >
                             <Button variant="ghost" size="sm">

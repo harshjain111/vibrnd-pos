@@ -32,12 +32,17 @@ export type PageId =
   | "pos.action.assign_table"
   | "pos.action.punch_order"
   | "pos.action.generate_kot"
+  | "pos.action.view_open_tables"
   | "pos.action.move_table"
   | "pos.action.split_bill"
   | "pos.action.change_customer"
   | "pos.action.item_shift"
   | "pos.action.complimentary"
   | "pos.action.void_item"
+  | "pos.action.discount"
+  | "pos.action.print_bill"
+  | "pos.action.settle_bill"
+  | "pos.action.payment_collection"
   // Menu
   | "menu.manager"
   | "menu.discounts"
@@ -109,7 +114,7 @@ export const PAGES: PageDef[] = [
   { id: "kds", label: "KDS", category: "Daily Operations", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
   { id: "orders.kot", label: "KOT History", category: "Daily Operations", defaultRoles: ["MANAGER", "OWNER"] },
   { id: "day-end", label: "Day End", category: "Daily Operations", defaultRoles: ["MANAGER", "OWNER"] },
-  { id: "settlements", label: "Due settlements", category: "Daily Operations", defaultRoles: ["MANAGER", "OWNER"] },
+  { id: "settlements", label: "Due settlements", category: "Daily Operations", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
   { id: "cash", label: "Cash drawer", category: "Daily Operations", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
   { id: "tasks", label: "Tasks", category: "Daily Operations", defaultRoles: ["RECEPTIONIST", "CAPTAIN", "BILLER", "MANAGER", "OWNER"] },
   { id: "orders.online", label: "Online Orders", category: "Daily Operations", defaultRoles: ["MANAGER", "OWNER"] },
@@ -120,15 +125,25 @@ export const PAGES: PageDef[] = [
   // captains punch + KOT, billers (cashier) do moves/splits/comp/customer,
   // managers add void. Each entry stays toggleable from /settings/permissions
   // so an outlet owner can flip a row at will.
-  { id: "pos.action.assign_table",    label: "Assign customer to table",    category: "POS actions", defaultRoles: ["RECEPTIONIST", "BILLER", "MANAGER", "OWNER"] },
-  { id: "pos.action.punch_order",     label: "Punch orders",                category: "POS actions", defaultRoles: ["CAPTAIN", "BILLER", "MANAGER", "OWNER"] },
-  { id: "pos.action.generate_kot",    label: "Generate KOT",                category: "POS actions", defaultRoles: ["CAPTAIN", "BILLER", "MANAGER", "OWNER"] },
-  { id: "pos.action.move_table",      label: "Move table",                  category: "POS actions", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
-  { id: "pos.action.split_bill",      label: "Split bill",                  category: "POS actions", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
-  { id: "pos.action.change_customer", label: "Change customer details",     category: "POS actions", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
-  { id: "pos.action.item_shift",      label: "Shift items between tables",  category: "POS actions", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
-  { id: "pos.action.complimentary",   label: "Complimentary item / order",  category: "POS actions", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
-  { id: "pos.action.void_item",       label: "Void item (post-KOT)",        category: "POS actions", defaultRoles: ["MANAGER", "OWNER"] },
+  // Defaults are the 13-row matrix from the spec image, verbatim:
+  //   Captain  ✓ Punch / KOT / View Open / Print
+  //   Cashier  ✓ everything Captain has  + Move/Split/Change/Item-shift/Comp/Settle/Payment
+  //   Manager  ✓ everything Cashier has  + Void/Discount
+  //   Receptionist owns the assign-table flow (box 1 in the spec).
+  { id: "pos.action.assign_table",       label: "Assign customer to table",   category: "POS actions", defaultRoles: ["RECEPTIONIST", "BILLER", "MANAGER", "OWNER"] },
+  { id: "pos.action.punch_order",        label: "Punch orders",               category: "POS actions", defaultRoles: ["CAPTAIN", "BILLER", "MANAGER", "OWNER"] },
+  { id: "pos.action.generate_kot",       label: "Generate KOT",               category: "POS actions", defaultRoles: ["CAPTAIN", "BILLER", "MANAGER", "OWNER"] },
+  { id: "pos.action.view_open_tables",   label: "View open tables",           category: "POS actions", defaultRoles: ["RECEPTIONIST", "CAPTAIN", "BILLER", "MANAGER", "OWNER"] },
+  { id: "pos.action.move_table",         label: "Move table",                 category: "POS actions", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
+  { id: "pos.action.split_bill",         label: "Split bill",                 category: "POS actions", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
+  { id: "pos.action.change_customer",    label: "Change customer name",       category: "POS actions", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
+  { id: "pos.action.item_shift",         label: "Shift items between tables", category: "POS actions", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
+  { id: "pos.action.complimentary",      label: "Complimentary item / order", category: "POS actions", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
+  { id: "pos.action.print_bill",         label: "Print bill",                 category: "POS actions", defaultRoles: ["CAPTAIN", "BILLER", "MANAGER", "OWNER"] },
+  { id: "pos.action.settle_bill",        label: "Settle bill",                category: "POS actions", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
+  { id: "pos.action.payment_collection", label: "Payment collection",         category: "POS actions", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
+  { id: "pos.action.void_item",          label: "Void item (post-KOT)",       category: "POS actions", defaultRoles: ["MANAGER", "OWNER"] },
+  { id: "pos.action.discount",           label: "Apply discount",             category: "POS actions", defaultRoles: ["MANAGER", "OWNER"] },
 
   // Menu — managers and owners only
   { id: "menu.manager", label: "Menu Manager", category: "Menu", defaultRoles: ["MANAGER", "OWNER"] },

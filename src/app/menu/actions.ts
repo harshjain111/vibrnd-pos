@@ -40,15 +40,110 @@ export async function saveItem(formData: FormData) {
     outOfStock: formData.get("outOfStock") === "on",
   });
 
+  // Tag IDs come in as a CSV under formData("tagIds"). We rewrite the
+  // assignments after the item save so create+update share one path —
+  // the join table is small enough that delete+insert is cheap.
+  const tagIdsRaw = String(formData.get("tagIds") ?? "");
+  const tagIds = tagIdsRaw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  let itemId: string;
   if (parsed.id) {
     await db.item.update({
       where: { id: parsed.id },
       data: { ...parsed, id: undefined },
     });
+    itemId = parsed.id;
   } else {
-    await db.item.create({ data: { ...parsed, id: undefined, outletId: outlet.id } });
+    const created = await db.item.create({
+      data: { ...parsed, id: undefined, outletId: outlet.id },
+    });
+    itemId = created.id;
   }
+
+  // Rewrite tag assignments. Filter the picked tag ids to this outlet so
+  // a tampered form can't attach another outlet's tags.
+  if (tagIdsRaw.length > 0 || parsed.id) {
+    const validTagIds = tagIds.length
+      ? (
+          await db.itemTag.findMany({
+            where: { id: { in: tagIds }, outletId: outlet.id },
+            select: { id: true },
+          })
+        ).map((t) => t.id)
+      : [];
+    await db.itemTagAssign.deleteMany({ where: { itemId } });
+    if (validTagIds.length > 0) {
+      await db.itemTagAssign.createMany({
+        data: validTagIds.map((tagId) => ({ itemId, tagId })),
+      });
+    }
+  }
+
   revalidatePath("/menu");
+  revalidatePath("/billing");
+}
+
+const TagSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().min(1).max(40),
+  icon: z.string().min(1).max(40).default("Tag"),
+  color: z.enum(["red", "orange", "amber", "emerald", "sky", "violet", "pink", "slate"]).default("slate"),
+});
+
+/**
+ * Create or update a menu-item tag. Returns the saved id so the form can
+ * select the new tag immediately after inline-create. Tag names are
+ * unique within an outlet — duplicates surface as a friendly error.
+ */
+export async function saveTag(input: z.infer<typeof TagSchema>): Promise<
+  { ok: true; id: string; name: string; icon: string; color: string } | { ok: false; error: string }
+> {
+  try {
+    await requireUser("MANAGER");
+    const outlet = await getActiveOutlet();
+    const parsed = TagSchema.parse(input);
+
+    if (parsed.id) {
+      const t = await db.itemTag.update({
+        where: { id: parsed.id },
+        data: { name: parsed.name, icon: parsed.icon, color: parsed.color },
+      });
+      revalidatePath("/menu");
+      revalidatePath("/billing");
+      return { ok: true, id: t.id, name: t.name, icon: t.icon, color: t.color };
+    }
+    const t = await db.itemTag.create({
+      data: {
+        name: parsed.name,
+        icon: parsed.icon,
+        color: parsed.color,
+        outletId: outlet.id,
+      },
+    });
+    revalidatePath("/menu");
+    revalidatePath("/billing");
+    return { ok: true, id: t.id, name: t.name, icon: t.icon, color: t.color };
+  } catch (e: any) {
+    const msg = String(e?.message || e || "Save failed");
+    if (msg.includes("Unique constraint")) {
+      return { ok: false, error: "A tag with that name already exists" };
+    }
+    return { ok: false, error: msg.slice(0, 200) };
+  }
+}
+
+export async function deleteTag(fd: FormData) {
+  await requireUser("MANAGER");
+  const id = String(fd.get("id"));
+  if (!id) return;
+  // Cascade clears the join rows — POS items lose this tag silently,
+  // which is the right behaviour for tag-pruning.
+  await db.itemTag.delete({ where: { id } });
+  revalidatePath("/menu");
+  revalidatePath("/billing");
 }
 
 export async function deleteItem(formData: FormData) {

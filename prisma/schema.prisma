@@ -119,6 +119,9 @@ model Outlet {
   requisitions      Requisition[]
   grns              Grn[]
   vendorInvoices    VendorInvoice[]
+  coupons           Coupon[]
+  discountUsages    DiscountUsage[]
+  itemTags          ItemTag[]
 }
 
 /// A stock-holding sub-unit within an outlet. Every outlet has at minimum a
@@ -152,13 +155,30 @@ model Department {
   @@index([outletId, active])
 }
 
+/// Audit trail — every critical action must drop a row here. The
+/// columns mirror Box 8 of the POS-module spec: User / Role / Date /
+/// Action / Reason / Old value / New value. `summary` stays as a
+/// human-readable one-liner; `reason`, `oldValue`, `newValue` are the
+/// structured fields the audit report queries.
 model ActivityLog {
   id        String   @id @default(cuid())
   action    String   // CREATE | UPDATE | DELETE | CANCEL | SETTLE | ACCEPT | REJECT
   entity    String   // Order | Item | Discount | Customer | RawMaterial | KOT | Outlet | Expense
   entityId  String?
   summary   String
-  actor     String   @default("system") // user email / role; "system" for unauthenticated
+  actor     String   @default("system") // user email; "system" for unauthenticated
+  /// Role at time of action — captures the privilege the user was
+  /// exercising. Falls back to whatever the session user was at
+  /// log-time; nullable for legacy rows seeded before this column.
+  role      String?
+  /// Captured reason for void / discount / comp / reprint / cancel
+  /// actions. Nullable so harmless CREATEs don't need to invent text.
+  reason    String?
+  /// JSON snapshot of the prior state for UPDATE-style actions. Stored
+  /// as a string to keep the schema neutral — readers JSON.parse on
+  /// access. Capped at ~2KB by the application layer.
+  oldValue  String?
+  newValue  String?
   outletId  String
   outlet    Outlet   @relation(fields: [outletId], references: [id])
   createdAt DateTime @default(now())
@@ -244,8 +264,40 @@ model Item {
   addons        Addon[]
   membershipBenefits MembershipBenefit[]
   channelPrices ItemChannelPrice[]
+  tagAssigns    ItemTagAssign[]
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+}
+
+/// Menu-item tag (Spicy / Sweet / Chef Special / Contains Nuts / etc).
+/// Tags are managed per outlet so each restaurant can brand their own
+/// labels; the icon is a Lucide icon name (resolved client-side via a
+/// curated registry — no arbitrary HTML). Color is a tailwind hue token
+/// applied to the icon background on POS cards.
+model ItemTag {
+  id        String   @id @default(cuid())
+  name      String
+  icon      String   @default("Tag") // Lucide icon name; resolved client-side
+  color     String   @default("slate") // tailwind hue: red | orange | amber | emerald | sky | violet | pink | slate
+  rank      Int      @default(0)
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  assigns   ItemTagAssign[]
+  createdAt DateTime @default(now())
+
+  @@unique([outletId, name])
+}
+
+/// Join table — many items × many tags. Composite PK avoids dupes when a
+/// tag is toggled twice in the editor.
+model ItemTagAssign {
+  itemId String
+  item   Item    @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  tagId  String
+  tag    ItemTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([itemId, tagId])
+  @@index([tagId])
 }
 
 model ItemVariant {
@@ -277,6 +329,11 @@ model Customer {
   gstin          String?
   tags           String?  // CSV of segment tags
   allergies      String?  // CSV — surfaced to the captain on every visit
+  /// Free-form special notes captured at receptionist intake (Box 1 of
+  /// the POS spec — "Special Notes"). Examples: "Wheelchair seating",
+  /// "VIP family · sons name Aarav", "Wants extra pickle". Surfaced on
+  /// every future visit alongside allergies.
+  specialNotes   String?
   birthday       DateTime?
   anniversary    DateTime?
   loyaltyPoints  Int      @default(0)
@@ -341,6 +398,13 @@ model Order {
   tip           Float        @default(0)
   customerId    String?
   customer      Customer?    @relation(fields: [customerId], references: [id])
+  /// Receipt-facing name + phone snapshot. Captured at place-order so the
+  /// "Change customer name" action (POS access matrix) can edit the bill's
+  /// printed name without retroactively renaming a saved Customer record
+  /// across every historical bill. Nullable — legacy bills fall back to
+  /// the linked Customer.name / Customer.phone in the UI.
+  customerName  String?
+  customerPhone String?
   tableId       String?
   table         DiningTable? @relation(fields: [tableId], references: [id])
   outletId      String
@@ -429,7 +493,16 @@ model OrderItem {
   variantName  String?  // e.g. "Half"
   addonsJson   String?  // JSON snapshot: [{name, priceDelta}]
   note         String?
+  /// Soft-void columns (Phase 2 POS actions). When voidedAt is set, the
+  /// line is excluded from sub/tax/grand totals on the order but the row
+  /// is preserved for audit. voidReason captures why the cashier/manager
+  /// voided it (mandatory at the action layer — DB allows null only for
+  /// rows seeded before this column landed).
+  voidedAt     DateTime?
+  voidReason   String?
   createdAt    DateTime @default(now())
+
+  @@index([orderId, voidedAt])
 }
 
 model RawMaterial {
@@ -698,32 +771,179 @@ model TaxSlab {
   @@unique([outletId, name])
 }
 
+/// Discount master — extended per the Vibrnd discount module spec.
+/// One row drives 4 discount types (Percentage / Fixed / BOGO / Fixed Price)
+/// across 8 channels (POS / Zomato / Swiggy / Online Platform / Kiosk /
+/// GPay / OS Aggregator / Mr Divert / IRCTC). Conditional fields are
+/// stored sparsely — only the columns that the picked type / scope needs
+/// are filled.
+///
+/// Legacy columns (`code`, `name`, `type`, `isAuto`, `hourFrom/To`) are
+/// kept so historical orders / reports continue to work without a
+/// backfill. New entries should use the modern column names instead.
 model Discount {
   id          String   @id @default(cuid())
+  /// Public coupon code. Required by the schema but can be auto-generated
+  /// (e.g. "AUTO-{cuid}") for discounts that don't need a typed code —
+  /// validationMode controls whether the cashier is prompted for it.
   code        String   @unique
+  /// Internal title shown in the discount list. The spec calls this "Title";
+  /// `name` is kept for backward compat with existing queries.
   name        String
-  type        String   // FLAT | PERCENT | BOGO
-  value       Float    // flat ₹ amount, or percent (0-100)
+  /// Discount type — FIXED | PERCENTAGE | BOGO | FIXED_PRICE.
+  /// Legacy values FLAT / PERCENT auto-map to FIXED / PERCENTAGE via the
+  /// save action so existing rows keep working.
+  type        String
+  /// % for PERCENTAGE, ₹ for FIXED / FIXED_PRICE. Ignored for BOGO (uses
+  /// DiscountBogo.bogoValue instead).
+  value       Float
+  /// Min cart core total for the discount to fire. Legacy "minOrder".
   minOrder    Float    @default(0)
-  maxDiscount Float?   // cap for percent type
+  /// Max cart core total — null means no upper bound. Spec §1 field 11.
+  maxOrder    Float?
+  /// % discount rupee cap. Used only for PERCENTAGE.
+  maxDiscount Float?
   active      Boolean  @default(true)
   validFrom   DateTime?
   validTo     DateTime?
-  /// Auto-discount engine (audit TASK 12). When true the discount applies
-  /// automatically at settle without a coupon code — the engine picks the
-  /// single best matching auto-discount for the cart.
+  /// Legacy isAuto flag — superseded by validationMode (NONE = automatic).
+  /// Kept so the existing pickAutoDiscount engine keeps reading it until
+  /// the engine is migrated in Phase 2.
   isAuto      Boolean  @default(false)
-  /// Comma-separated DOW (MON,TUE,…SUN). Empty = all days.
   daysOfWeek  String?
-  /// Hour-of-day window in 24h. Both null = all day.
+
+  /// 24h time-of-day window stored as "HH:MM" strings (Petpooja-style).
+  /// Legacy hourFrom/hourTo (integer hour) are kept for the existing
+  /// engine; new code should read timeFrom/timeTo.
+  timeFrom    String?
+  timeTo      String?
   hourFrom    Int?
   hourTo      Int?
+
+  /// Channel — STICKY after first save. One of: POS · ONLINE_PLATFORM ·
+  /// ZOMATO · SWIGGY · KIOSK · GPAY · OS_AGGREGATOR · MR_DIVERT · IRCTC.
+  channel     String   @default("POS")
+  /// CSV of order types (DELIVERY · PICKUP · DINE_IN). At least one.
+  orderTypes  String   @default("DELIVERY,PICKUP,DINE_IN")
+  /// AMOUNT — applies to bill. PAYMENT_TYPE — applies only when the
+  /// matching payment method is selected at settle.
+  applyOn     String   @default("AMOUNT")
+  /// CSV of payment method ids (cash / card / upi / etc) — only used when
+  /// applyOn = PAYMENT_TYPE.
+  paymentMethods String?
+
+  /// Apply at the pre-tax subtotal (CORE) or the post-tax grand total
+  /// (TOTAL). Spec §1 field 8.
+  applyAt     String   @default("CORE")
+
+  /// Scope — ALL · CATEGORIES · ITEMS. The applicableIds CSV holds the
+  /// matching category ids OR item ids depending on this enum.
+  applicableScope String @default("ALL")
+  applicableIds   String?
+
+  /// Validation mode — NONE (auto) · CODE_ONLY (typed code, no master) ·
+  /// COUPON_VALIDATED (typed code against Coupon master).
+  validationMode String @default("NONE")
+
+  description String?
+  /// T&C — surfaced on POS and printed bill per spec.
+  terms       String?
+
+  outletId    String
+  outlet      Outlet   @relation(fields: [outletId], references: [id])
+  bogo        DiscountBogo?
+  coupons     Coupon[]
+  usages      DiscountUsage[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt @default(now())
+
+  @@index([outletId, active])
+  @@index([outletId, isAuto, active])
+  @@index([outletId, channel, active])
+}
+
+/// 1:1 with Discount when type = BOGO. Sparse table keeps the main row
+/// clean for the 90% of discounts that aren't BOGO.
+model DiscountBogo {
+  discountId         String   @id
+  discount           Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  /// Minimum cart core total — separate from Discount.minOrder so BOGO
+  /// rules can have a higher floor than generic discounts.
+  itemAmountMin      Float?
+  /// Buy-side filter.
+  buyScope           String   @default("ALL") // ALL | CATEGORIES | ITEMS
+  buyScopeIds        String?  // CSV
+  /// Get-side filter (what becomes free / discounted).
+  getScope           String   @default("ALL")
+  getScopeIds        String?
+  buyQty             Int      @default(1)
+  getQty             Int      @default(1)
+  /// PERCENTAGE — bogoValue is %. FIXED — bogoValue is ₹ off the Get items.
+  bogoValueType      String   @default("PERCENTAGE")
+  bogoValue          Float    @default(100)
+  /// Pricing strategy on the Get items: LOWER (cheapest = best for guest) ·
+  /// HIGHER (priciest = clearance win) · SAME (Get must match Buy SKU).
+  getItemPricing     String   @default("LOWER")
+  /// Same for the Buy side when there are extras: LOWER | HIGHER.
+  buyItemPricing     String   @default("LOWER")
+  /// When true the POS prints the free-qty line. When false the discount
+  /// silently spreads across the qualifying items.
+  showFreeQtyOnPos   Boolean  @default(true)
+  /// Optional cap — only this rupee value of the Buy side counts.
+  buyAmountCap       Float?
+}
+
+/// Coupon master — only used when Discount.validationMode = COUPON_VALIDATED.
+/// One Discount can have many Coupon codes (e.g. WELCOME10, WELCOME20).
+model Coupon {
+  id              String   @id @default(cuid())
+  discountId      String
+  discount        Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  code            String
+  outletId        String
+  outlet          Outlet   @relation(fields: [outletId], references: [id])
+  maxRedemptions  Int?     // null = unlimited
+  perUserLimit    Int?     // null = unlimited
+  usedCount       Int      @default(0)
+  expiresAt       DateTime?
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  redemptions     CouponRedemption[]
+
+  @@unique([outletId, code])
+  @@index([code])
+}
+
+model CouponRedemption {
+  id          String   @id @default(cuid())
+  couponId    String
+  coupon      Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  orderId     String
+  customerId  String?
+  redeemedAt  DateTime @default(now())
+
+  @@index([couponId, redeemedAt])
+  @@index([orderId])
+}
+
+/// Per-bill snapshot of a fired discount — immutable audit row. Powers
+/// the "₹ redeemed this month" stat on the list page + any redemption
+/// report.
+model DiscountUsage {
+  id          String   @id @default(cuid())
+  discountId  String
+  discount    Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  orderId     String
+  customerId  String?
+  appliedAmount Float
+  channel     String?
   outletId    String
   outlet      Outlet   @relation(fields: [outletId], references: [id])
   createdAt   DateTime @default(now())
 
-  @@index([outletId, active])
-  @@index([outletId, isAuto, active])
+  @@index([discountId, createdAt])
+  @@index([outletId, createdAt])
+  @@index([orderId])
 }
 
 model SubOrderType {

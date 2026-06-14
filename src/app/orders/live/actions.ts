@@ -32,6 +32,10 @@ const AssignInput = z.object({
   customerBirthday: z.string().optional(),
   customerAnniversary: z.string().optional(),
   customerAllergies: z.string().optional(),
+  /// Special Notes (Box 1 of the POS-module spec) — free-form remarks
+  /// the receptionist captures at intake. Shown to captains on every
+  /// future visit alongside allergies + birthday markers.
+  customerSpecialNotes: z.string().optional(),
 });
 
 export type AssignTableResult =
@@ -80,6 +84,7 @@ export async function assignTableToCustomer(
       update: {
         name: data.customerName,
         allergies: data.customerAllergies ?? undefined,
+        specialNotes: data.customerSpecialNotes ?? undefined,
         birthday,
         anniversary,
       },
@@ -89,6 +94,7 @@ export async function assignTableToCustomer(
         phone: data.customerPhone,
         outletId: outlet.id,
         allergies: data.customerAllergies ?? undefined,
+        specialNotes: data.customerSpecialNotes ?? undefined,
         birthday,
         anniversary,
       },

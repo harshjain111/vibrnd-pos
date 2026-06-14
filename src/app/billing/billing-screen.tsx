@@ -57,9 +57,12 @@ import { lookupDiscount } from "@/app/menu/discounts/actions";
 import { useToast } from "@/components/ui/use-toast";
 import { DietaryDot } from "@/components/ui/dietary-dot";
 import { UpiQr } from "@/components/ui/upi-qr";
+import { resolveTagIcon, chipClassForColor } from "@/components/menu/tag-icons";
+import { Info } from "lucide-react";
 
 type Variant = { id: string; name: string; price: number };
 type Addon = { id: string; name: string; priceDelta: number };
+type Tag = { id: string; name: string; icon: string; color: string };
 type Item = {
   id: string;
   name: string;
@@ -69,8 +72,10 @@ type Item = {
   isVeg: boolean;
   imageUrl?: string | null;
   dietary?: string;
+  description?: string | null;
   variants: Variant[];
   addons: Addon[];
+  tags?: Tag[];
 };
 type Category = { id: string; name: string };
 type Table = { id: string; name: string };
@@ -136,6 +141,8 @@ export function BillingScreen({
   subTypes = [],
   captains = [],
   captainMode = false,
+  canApplyDiscount = true,
+  canSettleBill = true,
   upiVpa = null,
   outletName = "",
   kdsEnabled = true,
@@ -153,6 +160,13 @@ export function BillingScreen({
   /** When true, hides the Settle stage entirely (audit TASK 27).
    *  Captains only take orders + send KOTs; cashiers / managers settle. */
   captainMode?: boolean;
+  /** When false, hides the Coupon card on Settle. Per the POS access
+   *  matrix only Managers can apply discounts; cashiers go through an
+   *  Override request. */
+  canApplyDiscount?: boolean;
+  /** When false, hides the "Settle bill" button at the end of the Settle
+   *  stage. Receptionists and Captains see only "Hold / Save bill". */
+  canSettleBill?: boolean;
   /** UPI VPA used to render the dynamic QR at Settle when UPI is the mode (TASK 20). */
   upiVpa?: string | null;
   outletName?: string;
@@ -223,6 +237,7 @@ export function BillingScreen({
 
   // ─── Stage 2: menu + cart ─────────────────────────────────────────────────
   const [activeCat, setActiveCat] = React.useState<string>("all");
+  const [activeTag, setActiveTag] = React.useState<string>("all");
   const [search, setSearch] = React.useState("");
   // When resuming a held bill, seed the cart from its existing line items so
   // the captain can pick up exactly where the bill was left off.
@@ -745,6 +760,8 @@ export function BillingScreen({
           items={items}
           activeCat={activeCat}
           setActiveCat={setActiveCat}
+          activeTag={activeTag}
+          setActiveTag={setActiveTag}
           search={search}
           setSearch={setSearch}
           cart={cart}
@@ -820,6 +837,8 @@ export function BillingScreen({
           onHold={hold}
           onSettle={submit}
           pending={pending}
+          canApplyDiscount={canApplyDiscount}
+          canSettleBill={canSettleBill}
         />
       )}
 
@@ -1246,6 +1265,8 @@ function MenuStep(props: {
   items: Item[];
   activeCat: string;
   setActiveCat: (s: string) => void;
+  activeTag: string;
+  setActiveTag: (s: string) => void;
   search: string;
   setSearch: (s: string) => void;
   cart: CartLine[];
@@ -1283,6 +1304,8 @@ function MenuStep(props: {
     items,
     activeCat,
     setActiveCat,
+    activeTag,
+    setActiveTag,
     search,
     setSearch,
     cart,
@@ -1316,9 +1339,20 @@ function MenuStep(props: {
 
   const filtered = items.filter((i) => {
     if (activeCat !== "all" && i.categoryId !== activeCat) return false;
+    if (activeTag !== "all" && !(i.tags ?? []).some((t) => t.id === activeTag)) return false;
     if (search && !i.name.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
+
+  // Dedupe tags across all items so the filter row only shows tags
+  // actually used in this outlet's menu. Sorting by name keeps the row
+  // deterministic across renders.
+  const tagRow = React.useMemo(() => {
+    const seen = new Map<string, Tag>();
+    for (const it of items) for (const t of it.tags ?? []) if (!seen.has(t.id)) seen.set(t.id, t);
+    return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [items]);
+  const [infoFor, setInfoFor] = React.useState<Item | null>(null);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-4">
@@ -1354,6 +1388,46 @@ function MenuStep(props: {
                 ))}
               </div>
             </div>
+            {/* Tag filter row — only renders when this outlet's menu has
+                any tagged items, so an unconfigured restaurant doesn't
+                see a confusing empty toolbar. */}
+            {tagRow.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                <span className="text-[11px] uppercase tracking-wider text-muted-foreground mr-1">
+                  Filter by tag
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveTag("all")}
+                  className={
+                    "inline-flex items-center px-2.5 py-1 rounded-full text-xs border transition-colors " +
+                    (activeTag === "all"
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-background border-input hover:bg-accent")
+                  }
+                >
+                  All
+                </button>
+                {tagRow.map((t) => {
+                  const Icon = resolveTagIcon(t.icon);
+                  const on = activeTag === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setActiveTag(on ? "all" : t.id)}
+                      className={
+                        "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border transition-colors " +
+                        (on ? chipClassForColor(t.color) : "bg-background border-input hover:bg-accent")
+                      }
+                    >
+                      <Icon className="h-3 w-3" />
+                      {t.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -1413,6 +1487,22 @@ function MenuStep(props: {
                     <Star className="h-3 w-3" />
                   </span>
                 )}
+                {/* Info button — only renders when we have something to
+                    show (a description or tags). Sits on the top-left
+                    so it doesn't collide with the qty bubble. */}
+                {((it.description?.trim()?.length ?? 0) > 0 || (it.tags?.length ?? 0) > 0) && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setInfoFor(it);
+                    }}
+                    className="absolute top-1.5 left-1.5 h-6 w-6 grid place-items-center rounded-full bg-background/90 border shadow-sm hover:bg-accent z-10"
+                    title="Item details"
+                  >
+                    <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                  </button>
+                )}
                 {it.imageUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={it.imageUrl} alt="" className="h-16 w-full object-cover rounded mb-1.5" />
@@ -1422,6 +1512,31 @@ function MenuStep(props: {
                   <span className="text-[10px] text-muted-foreground">GST {it.taxRate}%</span>
                 </div>
                 <div className="font-medium text-sm leading-tight">{it.name}</div>
+                {/* Tag icon row — small colored bubbles under the name.
+                    We cap at 4 visible icons + "+N" so a heavily tagged
+                    item doesn't blow up the tile height. */}
+                {(it.tags?.length ?? 0) > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {it.tags!.slice(0, 4).map((t) => {
+                      const Icon = resolveTagIcon(t.icon);
+                      return (
+                        <span
+                          key={t.id}
+                          title={t.name}
+                          className={
+                            "h-4 w-4 grid place-items-center rounded-full border " +
+                            chipClassForColor(t.color)
+                          }
+                        >
+                          <Icon className="h-2.5 w-2.5" />
+                        </span>
+                      );
+                    })}
+                    {it.tags!.length > 4 && (
+                      <span className="text-[10px] text-muted-foreground">+{it.tags!.length - 4}</span>
+                    )}
+                  </div>
+                )}
                 <div className="mt-2 flex items-center justify-between">
                   <span className="font-semibold">
                     {it.variants.length > 0 ? `from ${inr(minPrice)}` : inr(it.price)}
@@ -1613,6 +1728,71 @@ function MenuStep(props: {
           </div>
         </CardContent>
       </Card>
+
+      {/* Item details dialog — opened from the info button on a card.
+          We don't add to cart from here; it's purely informational so
+          a wary cashier can read the description + tags first. */}
+      <Dialog open={!!infoFor} onOpenChange={(v) => !v && setInfoFor(null)}>
+        <DialogContent className="max-w-md">
+          {infoFor && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <DietaryDot value={(infoFor as any).dietary || "VEG"} />
+                  {infoFor.name}
+                </DialogTitle>
+              </DialogHeader>
+              {infoFor.imageUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={infoFor.imageUrl} alt="" className="w-full h-40 object-cover rounded-md" />
+              )}
+              {(infoFor.tags?.length ?? 0) > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {infoFor.tags!.map((t) => {
+                    const Icon = resolveTagIcon(t.icon);
+                    return (
+                      <span
+                        key={t.id}
+                        className={
+                          "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border " +
+                          chipClassForColor(t.color)
+                        }
+                      >
+                        <Icon className="h-3 w-3" />
+                        {t.name}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              {infoFor.description?.trim() ? (
+                <p className="text-sm text-muted-foreground whitespace-pre-line">{infoFor.description}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground italic">No description added yet.</p>
+              )}
+              <div className="flex items-center justify-between text-sm pt-2 border-t">
+                <span className="text-muted-foreground">
+                  {infoFor.variants.length > 0 ? `From ${inr(Math.min(...infoFor.variants.map((v) => v.price)))}` : inr(infoFor.price)}
+                </span>
+                <span className="text-xs text-muted-foreground">GST {infoFor.taxRate}%</span>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setInfoFor(null)}>
+                  Close
+                </Button>
+                <Button
+                  onClick={() => {
+                    onTapItem(infoFor);
+                    setInfoFor(null);
+                  }}
+                >
+                  Add to cart
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1770,6 +1950,8 @@ function SettleStep(props: {
   onHold: () => void;
   onSettle: () => void;
   pending: boolean;
+  canApplyDiscount?: boolean;
+  canSettleBill?: boolean;
 }) {
   const {
     cart,
@@ -1813,6 +1995,8 @@ function SettleStep(props: {
     onHold,
     onSettle,
     pending,
+    canApplyDiscount = true,
+    canSettleBill = true,
   } = props;
 
   return (
@@ -1917,11 +2101,19 @@ function SettleStep(props: {
           </Card>
         )}
 
+        {/* Coupon — per the POS access matrix, only Managers can apply
+            discounts. Cashiers/Captains see this card collapsed and the
+            input field disabled. An applied coupon (from an earlier
+            Manager-approved settle attempt) is still shown read-only so
+            the cashier can see what's in effect. */}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base inline-flex items-center gap-2">
               <Tag className="h-4 w-4" />
               Coupon
+              {!canApplyDiscount && (
+                <Badge variant="outline" className="ml-1 text-[10px]">Manager only</Badge>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -1932,11 +2124,13 @@ function SettleStep(props: {
                   <span className="font-mono font-semibold">{appliedCode.code}</span>
                   <span className="text-emerald-600">· −{inr(discount)}</span>
                 </span>
-                <button onClick={removeCoupon} className="text-emerald-700 hover:text-emerald-900">
-                  <X className="h-3.5 w-3.5" />
-                </button>
+                {canApplyDiscount && (
+                  <button onClick={removeCoupon} className="text-emerald-700 hover:text-emerald-900">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
-            ) : (
+            ) : canApplyDiscount ? (
               <div className="flex gap-1.5">
                 <Input
                   value={discountCode}
@@ -1947,6 +2141,10 @@ function SettleStep(props: {
                 <Button type="button" size="sm" variant="outline" onClick={applyCoupon} disabled={!discountCode}>
                   Apply
                 </Button>
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground italic">
+                Ask a Manager to apply a discount, or raise an override request from /overrides.
               </div>
             )}
             {couponErr && <div className="text-xs text-rose-600 mt-1">{couponErr}</div>}
@@ -2065,19 +2263,26 @@ function SettleStep(props: {
             </div>
           )}
 
-          <div className="grid grid-cols-[auto_1fr] gap-2">
+          <div className={canSettleBill ? "grid grid-cols-[auto_1fr] gap-2" : "grid grid-cols-1 gap-2"}>
             <Button type="button" onClick={onBack} variant="outline" size="lg">
               <ArrowLeft className="h-4 w-4" />
               Back
             </Button>
-            <Button onClick={onSettle} disabled={cart.length === 0 || pending} className="w-full" size="lg">
-              <Receipt className="h-4 w-4" />
-              {pending ? "Settling…" : `Settle ${inr(grand)}`}
-            </Button>
+            {canSettleBill && (
+              <Button onClick={onSettle} disabled={cart.length === 0 || pending} className="w-full" size="lg">
+                <Receipt className="h-4 w-4" />
+                {pending ? "Settling…" : `Settle ${inr(grand)}`}
+              </Button>
+            )}
           </div>
+          {!canSettleBill && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              Your role can't settle bills. Hold the bill — a Cashier or Manager will close it from /settlements.
+            </div>
+          )}
           <Button type="button" onClick={onHold} disabled={cart.length === 0 || pending} variant="outline" className="w-full">
             <Pause className="h-4 w-4" />
-            Hold bill
+            {canSettleBill ? "Hold bill" : "Save bill for cashier"}
           </Button>
         </CardContent>
       </Card>

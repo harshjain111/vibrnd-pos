@@ -21,18 +21,52 @@ import { createUser, updateUser, resetPassword, deleteUser, seedTestUsers } from
 
 import { ROLES as ALL_ROLES } from "@/lib/role-types";
 
-// All roles — POS hierarchy first, then the inventory / procurement
-// roles. Grouped in the select via <optgroup> so the dropdown reads
-// naturally despite being long. Each entry carries a one-line label so
-// the SM picking a role doesn't have to remember what each ALLCAPS key
-// actually does.
+// POS role hierarchy — mirrors the "Role Hierarchy" box in the spec
+// image. Each tier inherits everything below it and adds the actions
+// listed in parens. The dropdown reads top-of-pyramid down so a fresh
+// owner picking a role for a new hire sees Manager → Cashier → Captain
+// in the order they appear on the spec card.
 const POS_ROLE_OPTIONS: { value: string; label: string }[] = [
-  { value: "OWNER",        label: "OWNER — full access (incl. users / permissions)" },
-  { value: "MANAGER",      label: "MANAGER — operations + reports + void items" },
-  { value: "BILLER",       label: "BILLER — cashier: settle bills, move tables, split, comp" },
-  { value: "CAPTAIN",      label: "CAPTAIN — punch orders + send KOTs" },
-  { value: "RECEPTIONIST", label: "RECEPTIONIST — floor plan: register customers + assign tables" },
+  { value: "OWNER",        label: "OWNER — full access (users · outlets · permissions)" },
+  { value: "MANAGER",      label: "MANAGER — Cashier rights + Void items + Apply discount" },
+  { value: "BILLER",       label: "CASHIER — Captain rights + Move/Split/Comp/Settle/Payment" },
+  { value: "CAPTAIN",      label: "CAPTAIN — Punch orders + KOT + View open tables + Print" },
+  { value: "RECEPTIONIST", label: "RECEPTIONIST — Customer registration + Allocate table" },
 ];
+
+/**
+ * Matrix rows, role-by-role. Used to render the "What this role can do"
+ * preview card on the users page so the SM doesn't have to flip to
+ * /settings/permissions to remember the matrix.
+ */
+export const ROLE_MATRIX_PREVIEW: Record<string, string[]> = {
+  OWNER: ["Everything Manager can do", "Manage users + outlets + permissions"],
+  MANAGER: [
+    "Everything Cashier can do",
+    "Void items (post-KOT) with reason",
+    "Apply discounts at settle",
+    "Comp / Complimentary orders",
+    "Operations reports + override approvals",
+  ],
+  BILLER: [
+    "Everything Captain can do",
+    "Move tables · Shift items between tables",
+    "Split bill · Change customer name",
+    "Settle bill · Payment collection",
+    "Cash drawer · Memberships",
+  ],
+  CAPTAIN: [
+    "Punch orders",
+    "Generate KOT",
+    "View open tables",
+    "Print bill",
+  ],
+  RECEPTIONIST: [
+    "Register customer + capture details",
+    "Assign table from floor plan",
+    "View open tables",
+  ],
+};
 const INVENTORY_ROLE_LABELS: Record<string, string> = {
   STORE_MANAGER:      "STORE_MANAGER — approve requisitions, raise POs, manage GRNs",
   COST_CONTROLLER:    "COST_CONTROLLER — approve POs, procurement cockpit",

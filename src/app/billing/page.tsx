@@ -4,6 +4,7 @@ import { BillingScreen } from "./billing-screen";
 import { PageHeader } from "@/components/shell/page-header";
 import { getSessionUser } from "@/lib/session";
 import { resumeHeldBill } from "./actions";
+import { canAccess } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,12 @@ export default async function BillingPage({
   const outlet = await getActiveOutlet();
   const user = await getSessionUser();
   const isCaptain = user?.role === "CAPTAIN";
+  // Per the POS access matrix (image spec): only MANAGER/OWNER apply
+  // discounts; only BILLER/MANAGER/OWNER settle bills. Capture once so the
+  // BillingScreen hides controls the role can't use.
+  const role = user?.role ?? "";
+  const canApplyDiscount = canAccess(role, "pos.action.discount");
+  const canSettleBill = canAccess(role, "pos.action.settle_bill");
   const sp = await searchParams;
   // Optional: resume a held bill so the cart, customer, table all rehydrate.
   let resumed = null as Awaited<ReturnType<typeof resumeHeldBill>> | null;
@@ -29,7 +36,11 @@ export default async function BillingPage({
     db.category.findMany({ where: { outletId: outlet.id }, orderBy: { rank: "asc" } }),
     db.item.findMany({
       where: { outletId: outlet.id, active: true, outOfStock: false },
-      include: { variants: { orderBy: { rank: "asc" } }, addons: { orderBy: { rank: "asc" } } },
+      include: {
+        variants: { orderBy: { rank: "asc" } },
+        addons: { orderBy: { rank: "asc" } },
+        tagAssigns: { include: { tag: true } },
+      },
       orderBy: { name: "asc" },
     }),
     db.diningTable.findMany({ where: { outletId: outlet.id }, orderBy: { name: "asc" } }),
@@ -57,6 +68,8 @@ export default async function BillingPage({
       />
       <BillingScreen
         captainMode={isCaptain}
+        canApplyDiscount={canApplyDiscount}
+        canSettleBill={canSettleBill}
         kdsEnabled={(outlet as any).kdsEnabled ?? true}
         serviceChargePct={(outlet as any).serviceChargePct ?? 10}
         resumed={resumed}
@@ -74,9 +87,16 @@ export default async function BillingPage({
           categoryId: i.categoryId,
           isVeg: i.isVeg,
           imageUrl: i.imageUrl,
+          description: i.description,
           dietary: (i as any).dietary,
           variants: i.variants.map((v) => ({ id: v.id, name: v.name, price: v.price })),
           addons: i.addons.map((a) => ({ id: a.id, name: a.name, priceDelta: a.priceDelta })),
+          tags: i.tagAssigns.map((ta) => ({
+            id: ta.tag.id,
+            name: ta.tag.name,
+            icon: ta.tag.icon,
+            color: ta.tag.color,
+          })),
         }))}
         tables={tables.map((t) => ({ id: t.id, name: t.name }))}
         subTypes={subTypes.map((s) => ({ name: s.name, parentType: s.parentType }))}

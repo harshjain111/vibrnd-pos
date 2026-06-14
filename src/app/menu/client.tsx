@@ -14,9 +14,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
+import { Textarea } from "@/components/ui/textarea";
 import { saveItem, saveCategory, deleteItem, toggleOutOfStock, saveVariants, saveAddons } from "./actions";
 import { Trash2, Plus } from "lucide-react";
 import { saveTaxSlab, deleteTaxSlab } from "./taxes/actions";
+import { TagPicker, type Tag } from "@/components/menu/tag-picker";
 
 type Variant = { id?: string; name: string; price: number };
 type Addon = { id?: string; name: string; priceDelta: number };
@@ -34,17 +36,20 @@ type ItemInit = {
   outOfStock: boolean;
   variants?: Variant[];
   addons?: Addon[];
+  tagIds?: string[];
 };
 
 export function ItemDialog({
   children,
   categories,
   taxSlabs,
+  tags,
   initial,
 }: {
   children: React.ReactNode;
   categories: { id: string; name: string }[];
   taxSlabs: { name: string; rate: number }[];
+  tags: Tag[];
   initial?: ItemInit;
 }) {
   const router = useRouter();
@@ -162,7 +167,23 @@ export function ItemDialog({
           </div>
           <div className="col-span-2">
             <Label>Description</Label>
-            <Input name="description" defaultValue={initial?.description} placeholder="Optional" />
+            <Textarea
+              name="description"
+              defaultValue={initial?.description}
+              placeholder="Short description shown when a cashier taps the info button on the POS item card."
+              rows={3}
+            />
+          </div>
+
+          <div className="col-span-2">
+            <Label>Tags</Label>
+            <TagPicker
+              allTags={tags}
+              defaultSelected={initial?.tagIds ?? []}
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Pick tags like Spicy, Sweet, Chef Special, Contains Nuts. They show as icons on the POS card and power the tag filter.
+            </p>
           </div>
 
           <div className="col-span-2">

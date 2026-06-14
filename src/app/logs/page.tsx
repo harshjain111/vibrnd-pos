@@ -93,24 +93,27 @@ export default async function AuditLogPage({
         <CardContent className="p-0">
           <Table>
             <TableHeader>
+              {/* Columns mirror Box 8 of the POS spec image:
+                  When / Action / Entity / Summary / Reason / Δ Old → New / Actor + Role */}
               <TableRow>
                 <TableHead className="w-44">When</TableHead>
                 <TableHead className="w-28">Action</TableHead>
                 <TableHead className="w-32">Entity</TableHead>
                 <TableHead>Summary</TableHead>
-                <TableHead className="w-32">Actor</TableHead>
+                <TableHead className="w-48">Reason · Δ</TableHead>
+                <TableHead className="w-40">Actor · Role</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {logs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-12">
+                  <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-12">
                     No activity yet — settle a bill, edit a menu item, or advance a KOT and it shows up here.
                   </TableCell>
                 </TableRow>
               ) : (
                 logs.map((l) => (
-                  <TableRow key={l.id}>
+                  <TableRow key={l.id} className="align-top">
                     <TableCell className="text-xs text-muted-foreground">
                       {new Date(l.createdAt).toLocaleString("en-IN", {
                         day: "2-digit",
@@ -125,7 +128,17 @@ export default async function AuditLogPage({
                     </TableCell>
                     <TableCell className="text-muted-foreground">{l.entity}</TableCell>
                     <TableCell>{l.summary}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{l.actor}</TableCell>
+                    <TableCell className="text-xs">
+                      <ReasonDelta reason={l.reason} oldValue={l.oldValue} newValue={l.newValue} />
+                    </TableCell>
+                    <TableCell className="text-xs">
+                      <div className="font-mono text-muted-foreground">{l.actor}</div>
+                      {l.role && (
+                        <Badge variant="outline" className="text-[10px] mt-0.5">
+                          {l.role}
+                        </Badge>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))
               )}
@@ -133,6 +146,65 @@ export default async function AuditLogPage({
           </Table>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+/**
+ * Renders the Reason + Old → New cell. JSON snapshots collapse into a
+ * compact diff hint — full payloads are visible on hover via title. We
+ * deliberately don't crash on malformed JSON: bad rows just render the
+ * raw string so the trail remains readable.
+ */
+function ReasonDelta({
+  reason,
+  oldValue,
+  newValue,
+}: {
+  reason: string | null;
+  oldValue: string | null;
+  newValue: string | null;
+}) {
+  const summarise = (s: string | null): string | null => {
+    if (!s) return null;
+    try {
+      const v = JSON.parse(s);
+      if (typeof v === "object" && v !== null) {
+        const entries = Object.entries(v).slice(0, 3);
+        return entries.map(([k, val]) => `${k}=${String(val).slice(0, 20)}`).join(" · ");
+      }
+      return String(v).slice(0, 60);
+    } catch {
+      return s.slice(0, 60);
+    }
+  };
+  const oldSum = summarise(oldValue);
+  const newSum = summarise(newValue);
+  if (!reason && !oldSum && !newSum) {
+    return <span className="text-muted-foreground/50">—</span>;
+  }
+  return (
+    <div className="space-y-1">
+      {reason && (
+        <div className="text-amber-900 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 inline-block">
+          {reason}
+        </div>
+      )}
+      {(oldSum || newSum) && (
+        <div className="text-[11px] text-muted-foreground">
+          {oldSum && (
+            <span title={oldValue ?? undefined} className="line-through">
+              {oldSum}
+            </span>
+          )}
+          {oldSum && newSum && <span className="mx-1">→</span>}
+          {newSum && (
+            <span title={newValue ?? undefined} className="text-foreground">
+              {newSum}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
