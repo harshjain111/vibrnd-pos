@@ -54,6 +54,42 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
   const data = PlaceOrderInput.parse(input);
   const outlet = await getActiveOutlet();
 
+  // CRITICAL state guard: a dine-in table can only have ONE open bill at
+  // a time. There are two real-world cases when this branch fires:
+  //
+  //   1. Receptionist seeded the table — there's a RUNNING order with
+  //      zero items on it. We adopt its captainId (from the table
+  //      group) and delete the seed so the captain's first bill takes
+  //      over cleanly. Without this, every receptionist handoff
+  //      doubles into a second running bill on the same table — that
+  //      was the duplicate-bills bug on /orders/live.
+  //
+  //   2. A real bill is already running with items punched. We reject
+  //      hard — the captain has to settle / cancel / move the items
+  //      before starting a new bill on the same table.
+  let adoptedCaptainId: string | null = null;
+  if (data.orderType === "DINE_IN" && data.tableId) {
+    const open = await db.order.findFirst({
+      where: {
+        outletId: outlet.id,
+        tableId: data.tableId,
+        status: { in: ["RUNNING", "SAVED", "PRINTED"] },
+      },
+      include: { _count: { select: { items: true } } },
+    });
+    if (open) {
+      if (open._count.items === 0) {
+        // Empty seed — adopt + delete
+        adoptedCaptainId = open.captainId;
+        await db.order.delete({ where: { id: open.id } });
+      } else {
+        throw new Error(
+          `Table is already running bill ${open.invoiceNo}. Settle or cancel it first, or move the items to a different table.`
+        );
+      }
+    }
+  }
+
   const items = await db.item.findMany({
     where: { id: { in: data.lines.map((l) => l.itemId) }, outletId: outlet.id },
   });
@@ -161,7 +197,9 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
       amountPaid: data.paymentMode === "DUE" ? 0 : grand,
       tip: data.tip || 0,
       subOrderType: data.subOrderType,
-      captainId: data.captainId,
+      // Captain priority: form input → adopted from receptionist seed.
+      // Both can be null if no captain was attributed anywhere.
+      captainId: data.captainId || adoptedCaptainId || undefined,
       paymentMode: data.paymentMode,
       tableId: data.orderType === "DINE_IN" ? data.tableId : undefined,
       customerId,
@@ -873,6 +911,31 @@ const HoldInput = PlaceOrderInput.omit({ paymentMode: true });
 export async function holdOrder(input: z.infer<typeof HoldInput>): Promise<{ id: string; invoiceNo: string }> {
   const data = HoldInput.parse(input);
   const outlet = await getActiveOutlet();
+
+  // Same adopt-or-reject guard as placeOrder. A held bill is just an
+  // open order with status SAVED; the table-one-bill invariant applies.
+  let adoptedCaptainId: string | null = null;
+  if (data.orderType === "DINE_IN" && data.tableId) {
+    const open = await db.order.findFirst({
+      where: {
+        outletId: outlet.id,
+        tableId: data.tableId,
+        status: { in: ["RUNNING", "SAVED", "PRINTED"] },
+      },
+      include: { _count: { select: { items: true } } },
+    });
+    if (open) {
+      if (open._count.items === 0) {
+        adoptedCaptainId = open.captainId;
+        await db.order.delete({ where: { id: open.id } });
+      } else {
+        throw new Error(
+          `Table is already running bill ${open.invoiceNo}. Settle / cancel / move it first.`
+        );
+      }
+    }
+  }
+
   const items = await db.item.findMany({
     where: { id: { in: data.lines.map((l) => l.itemId) }, outletId: outlet.id },
   });
@@ -945,7 +1008,7 @@ export async function holdOrder(input: z.infer<typeof HoldInput>): Promise<{ id:
       grandTotal: grand,
       tip: data.tip || 0,
       subOrderType: data.subOrderType,
-      captainId: data.captainId,
+      captainId: data.captainId || adoptedCaptainId || undefined,
       tableId: data.orderType === "DINE_IN" ? data.tableId : undefined,
       customerId,
       outletId: outlet.id,

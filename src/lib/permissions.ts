@@ -83,6 +83,7 @@ export type PageId =
   | "settings.users"
   | "settings.permissions"
   | "settings.floor-plan"
+  | "settings.table-groups"
   | "outlets";
 
 export type PageDef = {
@@ -190,6 +191,7 @@ export const PAGES: PageDef[] = [
   { id: "settings", label: "Settings", category: "Management", defaultRoles: ["MANAGER", "OWNER"] },
   { id: "settings.sub-types", label: "Sub-order types", category: "Management", defaultRoles: ["MANAGER", "OWNER"] },
   { id: "settings.floor-plan", label: "Floor plan", category: "Management", defaultRoles: ["MANAGER", "OWNER"] },
+  { id: "settings.table-groups", label: "Table groups", category: "Management", defaultRoles: ["MANAGER", "OWNER"] },
   { id: "settings.users", label: "Users", category: "Management", defaultRoles: ["OWNER"], ownerOnly: true },
   { id: "settings.permissions", label: "Permissions", category: "Management", defaultRoles: ["OWNER"], ownerOnly: true },
   { id: "outlets", label: "Outlets", category: "Management", defaultRoles: ["OWNER"], ownerOnly: true },

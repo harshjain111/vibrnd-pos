@@ -58,6 +58,8 @@ export async function assignTableToCustomer(
     }
 
     // Validate the table belongs to this outlet + isn't already running.
+    // tableGroup is included so we can auto-attribute the captain when
+    // the receptionist hands off — saves them from picking manually.
     const table = await db.diningTable.findFirst({
       where: { id: data.tableId, outletId: outlet.id, active: true },
       include: {
@@ -65,6 +67,7 @@ export async function assignTableToCustomer(
           where: { status: { in: ["RUNNING", "SAVED", "PRINTED"] } },
           select: { id: true, invoiceNo: true },
         },
+        tableGroup: { select: { captainId: true, name: true } },
       },
     });
     if (!table) return { ok: false, error: "Table not found at this outlet" };
@@ -114,6 +117,11 @@ export async function assignTableToCustomer(
     }
     if (!invoiceNo) return { ok: false, error: "Could not allocate invoice number" };
 
+    // Auto-attribute captain from the table-group (if the owner has set
+    // one up at /settings/table-groups). Falls back to null so manager
+    // can still pick later from the order detail page.
+    const captainIdFromGroup = table.tableGroup?.captainId ?? null;
+
     const order = await db.order.create({
       data: {
         invoiceNo,
@@ -122,6 +130,7 @@ export async function assignTableToCustomer(
         outletId: outlet.id,
         tableId: table.id,
         customerId: customer.id,
+        captainId: captainIdFromGroup,
         subTotal: 0,
         taxTotal: 0,
         discount: 0,

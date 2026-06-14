@@ -143,6 +143,7 @@ export function BillingScreen({
   captainMode = false,
   canApplyDiscount = true,
   canSettleBill = true,
+  loggedInUser = null,
   upiVpa = null,
   outletName = "",
   kdsEnabled = true,
@@ -167,6 +168,11 @@ export function BillingScreen({
   /** When false, hides the "Settle bill" button at the end of the Settle
    *  stage. Receptionists and Captains see only "Hold / Save bill". */
   canSettleBill?: boolean;
+  /** Currently signed-in user. When a Captain opens the bill we auto-pin
+   *  them as the captain (no dropdown). When a Cashier (BILLER) opens it
+   *  we render a read-only "Cashier" badge. Managers/Owners still get
+   *  the full dropdown so they can hand the order to any captain. */
+  loggedInUser?: { id: string; name: string; role: string } | null;
   /** UPI VPA used to render the dynamic QR at Settle when UPI is the mode (TASK 20). */
   upiVpa?: string | null;
   outletName?: string;
@@ -225,7 +231,14 @@ export function BillingScreen({
   const [orderType, setOrderType] = React.useState<"DINE_IN" | "PICKUP" | "DELIVERY">(resumed?.orderType ?? "DINE_IN");
   const [subType, setSubType] = React.useState<string>(resumed?.subOrderType ?? "");
   const [tableId, setTableId] = React.useState<string>(resumed?.tableId ?? tables[0]?.id ?? "");
-  const [captainId, setCaptainId] = React.useState<string>(resumed?.captainId ?? "");
+  // Captain attribution. Default precedence:
+  //   1. Held bill being resumed → keep its captain
+  //   2. Logged-in user is a Captain → pin them (their bill, their attribution)
+  //   3. Otherwise empty so Manager/Owner picks from the dropdown
+  const [captainId, setCaptainId] = React.useState<string>(
+    resumed?.captainId ??
+      (loggedInUser?.role === "CAPTAIN" ? loggedInUser.id : "")
+  );
 
   // customer enrichment
   const [customerBalance, setCustomerBalance] = React.useState<number>(0);
@@ -751,6 +764,7 @@ export function BillingScreen({
           onLookup={lookupAndProfile}
           onNext={goToMenu}
           pending={pending}
+          loggedInUser={loggedInUser}
         />
       )}
 
@@ -1042,6 +1056,7 @@ function CustomerStep(props: {
   onLookup: () => void;
   onNext: () => void;
   pending: boolean;
+  loggedInUser?: { id: string; name: string; role: string } | null;
 }) {
   const {
     customerPhone,
@@ -1071,6 +1086,7 @@ function CustomerStep(props: {
     onLookup,
     onNext,
     pending,
+    loggedInUser,
   } = props;
 
   const subTypesForType = subTypes.filter((s) => s.parentType === orderType);
@@ -1113,17 +1129,10 @@ function CustomerStep(props: {
             <Input value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="Aarav Sharma" />
           </div>
 
-          <div>
-            <Label className="flex items-center gap-1.5">
-              <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
-              Allergies <span className="text-xs text-muted-foreground font-normal">— comma separated</span>
-            </Label>
-            <Input
-              value={allergies}
-              onChange={(e) => setAllergies(e.target.value)}
-              placeholder="nuts, dairy"
-            />
-          </div>
+          {/* Allergies intentionally captured only at the receptionist's
+              assign-table step (Box 1 of the spec) and surfaced from the
+              customer profile on lookup. Removed from this form to keep
+              the captain's punch flow focused on the order itself. */}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -1230,22 +1239,64 @@ function CustomerStep(props: {
             </div>
           )}
 
-          {captains.length > 0 && (
+          {/* Captain attribution — role-aware per spec:
+               • CAPTAIN: their bill; pinned to them (no dropdown).
+               • BILLER: cashier-attributed; shown as a read-only badge.
+               • MANAGER/OWNER/anyone else: full dropdown so they can
+                 hand the order off to any captain in the outlet. */}
+          {loggedInUser?.role === "CAPTAIN" ? (
             <div>
               <Label>Captain</Label>
-              <select
-                value={captainId}
-                onChange={(e) => setCaptainId(e.target.value)}
-                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-              >
-                <option value="">— None —</option>
-                {captains.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} · {c.role}
-                  </option>
-                ))}
-              </select>
+              <div className="h-9 w-full rounded-md border border-primary/40 bg-primary/5 px-3 flex items-center justify-between text-sm">
+                <span className="font-medium">{loggedInUser.name}</span>
+                <Badge variant="outline" className="text-[10px]">YOU · CAPTAIN</Badge>
+              </div>
             </div>
+          ) : loggedInUser?.role === "BILLER" ? (
+            <div>
+              <Label>Cashier</Label>
+              <div className="h-9 w-full rounded-md border border-rose-300/40 bg-rose-50/40 px-3 flex items-center justify-between text-sm">
+                <span className="font-medium">{loggedInUser.name}</span>
+                <Badge variant="outline" className="text-[10px]">YOU · CASHIER</Badge>
+              </div>
+              {captains.length > 0 && (
+                <div className="mt-2">
+                  <Label className="text-xs text-muted-foreground">Assign captain (optional)</Label>
+                  <select
+                    value={captainId}
+                    onChange={(e) => setCaptainId(e.target.value)}
+                    className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                  >
+                    <option value="">— None —</option>
+                    {captains
+                      .filter((c) => c.role === "CAPTAIN")
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          ) : (
+            captains.length > 0 && (
+              <div>
+                <Label>Captain</Label>
+                <select
+                  value={captainId}
+                  onChange={(e) => setCaptainId(e.target.value)}
+                  className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                >
+                  <option value="">— None —</option>
+                  {captains.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} · {c.role}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )
           )}
 
           <Button onClick={onNext} disabled={!canProceed || pending} className="w-full" size="lg">

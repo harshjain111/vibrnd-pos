@@ -122,6 +122,8 @@ model Outlet {
   coupons           Coupon[]
   discountUsages    DiscountUsage[]
   itemTags          ItemTag[]
+  tableGroups       TableGroup[]
+  reservations      Reservation[]
 }
 
 /// A stock-holding sub-unit within an outlet. Every outlet has at minimum a
@@ -213,6 +215,7 @@ model User {
   dayCloses      DayClose[]
   requestedOverrides OverrideRequest[] @relation("RequestedOverrides")
   approvedOverrides  OverrideRequest[] @relation("ApprovedOverrides")
+  tableGroups    TableGroup[] @relation("TableGroupCaptain")
   createdAt      DateTime @default(now())
 }
 
@@ -344,6 +347,7 @@ model Customer {
   feedback       Feedback[]
   giftCards      GiftCard[]
   memberships    Membership[]
+  reservations   Reservation[]
   createdAt      DateTime @default(now())
 
   @@index([phone])
@@ -379,7 +383,59 @@ model DiningTable {
   active    Boolean  @default(true)
   outletId  String
   outlet    Outlet   @relation(fields: [outletId], references: [id])
+  /// Optional table-group assignment. When set + the group has a captain
+  /// the receptionist's assign-table flow auto-attributes the order to
+  /// that captain so they don't have to be picked manually.
+  tableGroupId String?
+  tableGroup   TableGroup? @relation(fields: [tableGroupId], references: [id])
   orders    Order[]
+  reservations Reservation[]
+}
+
+/// Section / zone of the floor plan that bundles a set of tables under a
+/// default Captain. Lets the owner say "Aarav owns tables 1-8 every
+/// evening". On receptionist handoff the order's captainId is filled
+/// from the table's group automatically.
+model TableGroup {
+  id        String   @id @default(cuid())
+  name      String
+  captainId String?
+  captain   User?    @relation(fields: [captainId], references: [id], name: "TableGroupCaptain")
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  tables    DiningTable[]
+  createdAt DateTime @default(now())
+
+  @@index([outletId])
+}
+
+/// Future-time table booking. Receptionists create a Reservation when a
+/// guest phones ahead; the floor plan renders the table as Reserved
+/// until status flips to SEATED (auto-creates the linked Order) or
+/// NO_SHOW / CANCELLED (frees the table).
+model Reservation {
+  id            String      @id @default(cuid())
+  tableId       String
+  table         DiningTable @relation(fields: [tableId], references: [id])
+  customerId    String?
+  customer      Customer?   @relation(fields: [customerId], references: [id])
+  customerName  String
+  customerPhone String?
+  reservedFor   DateTime
+  partySize     Int         @default(2)
+  notes         String?
+  /// PENDING (waiting for the guest) · SEATED (guest arrived, order
+  /// created) · NO_SHOW (window passed) · CANCELLED (manually voided).
+  status        String      @default("PENDING")
+  /// Set when status = SEATED — points at the auto-created Order so the
+  /// captain can resume billing immediately.
+  orderId       String?
+  outletId      String
+  outlet        Outlet      @relation(fields: [outletId], references: [id])
+  createdAt     DateTime    @default(now())
+
+  @@index([outletId, reservedFor])
+  @@index([tableId, status])
 }
 
 model Order {

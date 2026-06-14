@@ -70,6 +70,7 @@ export default async function BillingPage({
         captainMode={isCaptain}
         canApplyDiscount={canApplyDiscount}
         canSettleBill={canSettleBill}
+        loggedInUser={user ? { id: user.id, name: user.name, role: user.role } : null}
         kdsEnabled={(outlet as any).kdsEnabled ?? true}
         serviceChargePct={(outlet as any).serviceChargePct ?? 10}
         resumed={resumed}
