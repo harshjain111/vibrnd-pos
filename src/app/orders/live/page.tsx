@@ -12,6 +12,7 @@ import { getActiveOutlet } from "@/lib/outlet";
 import { inr } from "@/lib/utils";
 import { Plus, RefreshCw } from "lucide-react";
 import { FloorPlan } from "./floor-plan";
+import { MyTablesTiles } from "./my-tables-tiles";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,11 @@ export default async function LiveOrdersPage() {
         </TabsList>
 
         <TabsContent value="running" className="space-y-4">
+          {/* Captain-only: every table from their groups, with live
+              status. Renders nothing for other roles or when no groups
+              are assigned, so non-captains see the existing layout. */}
+          <MyTablesTiles />
+
           {/* Summary strip */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <SumCard label="Dine in" count={cnt(running, "DINE_IN")} total={sum(running, "DINE_IN")} />
