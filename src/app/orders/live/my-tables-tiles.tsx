@@ -38,15 +38,29 @@ const STATE_META: Record<TableState, { label: string; tone: string; icon: typeof
 
 export async function MyTablesTiles() {
   const user = await getSessionUser();
-  if (!user || user.role !== "CAPTAIN") return null;
+  if (!user) return null;
 
-  // Every table in every group whose captain is this user. We don't
-  // filter by outlet — the user already has an active outlet set in
-  // session, but TableGroup.outletId is implicitly the same because a
-  // user can only belong to one outlet at a time (per session).
+  // Role gate:
+  //   CAPTAIN   → only the groups assigned to *this* captain — that's
+  //               their personal "tables waiting for me" surface.
+  //   OWNER/MANAGER → every group in the outlet so they can see the
+  //               whole floor at a glance and confirm hand-offs are
+  //               flowing. The card title flips to "All tables" for
+  //               them so the header doesn't lie.
+  //   anyone else → nothing.
+  const isCaptain = user.role === "CAPTAIN";
+  const isOversight = user.role === "OWNER" || user.role === "MANAGER";
+  if (!isCaptain && !isOversight) return null;
+
+  // Captain: just their groups. Owner/Manager: everything in the outlet.
+  const whereClause = isCaptain
+    ? { captainId: user.id }
+    : { outletId: user.outletId };
+
   const groups = await db.tableGroup.findMany({
-    where: { captainId: user.id },
+    where: whereClause,
     include: {
+      captain: { select: { name: true, email: true } },
       tables: {
         where: { active: true },
         orderBy: { name: "asc" },
@@ -64,33 +78,63 @@ export async function MyTablesTiles() {
         },
       },
     },
+    orderBy: { createdAt: "asc" },
   });
 
-  // No groups assigned → render nothing so the section doesn't
-  // shout "empty state" at someone who's never used table groups.
   const totalTables = groups.reduce((s, g) => s + g.tables.length, 0);
-  if (totalTables === 0) return null;
+
+  // Captain with no groups → render nothing rather than badger them
+  // about something only the owner can fix.
+  if (isCaptain && totalTables === 0) return null;
+
+  // Owner/manager with no groups → render a discoverable empty state
+  // pointing at the setup page, so the feature is reachable from the
+  // place where you'd expect to use it.
+  if (isOversight && groups.length === 0) {
+    return (
+      <Card className="border-dashed border-primary/40 bg-primary/5">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Users className="h-4 w-4 text-primary" />
+            <h2 className="text-sm font-semibold text-primary">Table groups</h2>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            No table groups yet. Create one to assign tables to a captain — the captain will then see live tiles for their hand-offs here, and the floor plan will auto-assign new bills to them.{" "}
+            <Link href="/settings/table-groups" className="font-medium text-primary underline underline-offset-2">
+              Set up table groups →
+            </Link>
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const title = isCaptain ? "My tables" : "All tables";
+  const subtitle = isCaptain
+    ? "New hand-offs appear here automatically · click a tile to open the bill"
+    : "Live status of every table group · click a tile to open the bill";
 
   return (
     <Card className="border-primary/30 bg-primary/5">
       <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-primary" />
-            <h2 className="text-sm font-semibold text-primary">My tables</h2>
+            <h2 className="text-sm font-semibold text-primary">{title}</h2>
             <span className="text-xs text-muted-foreground">
               ({totalTables} table{totalTables === 1 ? "" : "s"} across {groups.length} group{groups.length === 1 ? "" : "s"})
             </span>
           </div>
-          <span className="text-[11px] text-muted-foreground">
-            New hand-offs appear here automatically · click a tile to open the bill
-          </span>
+          <span className="text-[11px] text-muted-foreground">{subtitle}</span>
         </div>
 
         {groups.map((g) => (
           <div key={g.id} className="mb-3 last:mb-0">
-            <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5 px-0.5">
-              {g.name} · {g.tables.length} table{g.tables.length === 1 ? "" : "s"}
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5 px-0.5 flex items-center gap-1.5">
+              <span>{g.name} · {g.tables.length} table{g.tables.length === 1 ? "" : "s"}</span>
+              {!isCaptain && g.captain && (
+                <span className="text-muted-foreground/70 normal-case tracking-normal">· captain: {g.captain.name}</span>
+              )}
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2">
               {g.tables.map((t) => {
