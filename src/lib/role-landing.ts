@@ -31,8 +31,14 @@ export function landingPathFor(role: Role | string): string {
       // tables — so we drop them on the live grid.
       return "/orders/live";
     case "CAPTAIN":
+      // Captains land on the floor plan so the very first thing they
+      // see is the table(s) the receptionist handed off to them — a
+      // pinned "My tables waiting" banner sits at the top, plus their
+      // tiles glow primary on the grid.
+      return "/orders/live";
     case "BILLER":
-      // POS roles go straight to the New Bill screen.
+      // Cashier hops between settle queue + new bills; New Bill is the
+      // most common starting task so we drop them there.
       return "/billing";
     default:
       // OWNER + MANAGER + anything unrecognised lands on the dashboard.

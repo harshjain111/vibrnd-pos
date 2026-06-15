@@ -216,6 +216,7 @@ model User {
   requestedOverrides OverrideRequest[] @relation("RequestedOverrides")
   approvedOverrides  OverrideRequest[] @relation("ApprovedOverrides")
   tableGroups    TableGroup[] @relation("TableGroupCaptain")
+  attributedOrders Order[]    @relation("OrderCaptain")
   createdAt      DateTime @default(now())
 }
 
@@ -480,6 +481,11 @@ model Order {
   notes         String?
   subOrderType  String?      // e.g. "Parcel" / "Takeaway" / "Bar"
   captainId     String?      // user id of the captain who took the order
+  /// Captain relation — added so the live floor plan can join in the
+  /// captain's name on the running-order tile without a separate
+  /// User.findMany. FK already existed; this just teaches Prisma about
+  /// the relationship so `include: { captain }` works.
+  captain       User?        @relation(name: "OrderCaptain", fields: [captainId], references: [id])
   amendedAt     DateTime?    // last time the bill was modified post-settlement
   reprintCount  Int          @default(0) // audit TASK 10 — leakage signal
   reprintReason String?      // last reason captured

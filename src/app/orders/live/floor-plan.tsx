@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Prisma } from "@prisma/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { db } from "@/lib/db";
@@ -7,6 +8,30 @@ import { getSessionUser } from "@/lib/session";
 import { canAccess, loadOutletPermissions } from "@/lib/permissions";
 import { Users, Settings } from "lucide-react";
 import { AssignTableDialog } from "./assign-table-dialog";
+
+// Hoist the include shape to a typed Prisma input so the inferred
+// result type carries every included relation through to the JSX.
+// Without this, TS sometimes resolves the `tables` const to a bare
+// DiningTable (with no orders / tableGroup) — likely a generic
+// inference quirk when the awaited findMany sits next to a session
+// helper in the same component. The validator avoids any cast.
+const tableInclude = Prisma.validator<Prisma.DiningTableDefaultArgs>()({
+  include: {
+    tableGroup: { include: { captain: { select: { id: true, name: true } } } },
+    orders: {
+      where: { status: { in: ["RUNNING", "SAVED", "PRINTED"] } },
+      include: {
+        items: { select: { id: true } },
+        kots: { select: { id: true, status: true } },
+        customer: { select: { name: true } },
+        captain: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: "desc" as const },
+      take: 1,
+    },
+  },
+});
+type TableWithRels = Prisma.DiningTableGetPayload<typeof tableInclude>;
 
 /**
  * Floor plan grid — coordinate-based, status-coloured, role-aware.
@@ -28,31 +53,32 @@ import { AssignTableDialog } from "./assign-table-dialog";
  * jump next without opening every card.
  */
 export async function FloorPlan({ outletId }: { outletId: string }) {
-  const [tables, user, overrides] = await Promise.all([
-    db.diningTable.findMany({
-      where: { outletId, active: true },
-      include: {
-        orders: {
-          where: { status: { in: ["RUNNING", "SAVED", "PRINTED"] } },
-          include: {
-            items: { select: { id: true } },
-            kots: { select: { id: true, status: true } },
-            customer: { select: { name: true } },
-          },
-          orderBy: { createdAt: "desc" },
-          take: 1,
-        },
-      },
-      orderBy: [{ area: "asc" }, { name: "asc" }],
-    }),
+  // Cast through TableWithRels — the validator-typed include block
+  // ensures every relation we read below is present at runtime.
+  const tables = (await db.diningTable.findMany({
+    where: { outletId, active: true },
+    ...tableInclude,
+    orderBy: [{ area: "asc" }, { name: "asc" }],
+  })) as TableWithRels[];
+  const [user, overrides] = await Promise.all([
     getSessionUser(),
     loadOutletPermissions(outletId),
   ]);
 
   const canAssignTable = !!user && canAccess(user.role, "pos.action.assign_table", overrides);
+  const isCaptain = user?.role === "CAPTAIN";
 
   const active = tables.filter((t) => t.orders.length > 0);
   const estRevenue = active.reduce((s, t) => s + (t.orders[0]?.grandTotal ?? 0), 0);
+
+  // Captain-specific "what's waiting for me right now" list. Only the
+  // tables whose running order is attributed to the logged-in captain.
+  // Sorted by created time so the oldest unattended bill sits at the top.
+  const myTables = isCaptain
+    ? active
+        .filter((t) => t.orders[0]?.captainId === user!.id)
+        .sort((a, b) => (a.orders[0]?.createdAt?.getTime() ?? 0) - (b.orders[0]?.createdAt?.getTime() ?? 0))
+    : [];
 
   // Group by area for the multi-area view.
   const areas = new Map<string, typeof tables>();
@@ -64,10 +90,64 @@ export async function FloorPlan({ outletId }: { outletId: string }) {
 
   return (
     <div className="space-y-4">
+      {/* Pinned "My tables waiting" banner — only renders for a
+          logged-in CAPTAIN and only when they actually have tables.
+          This is how the receptionist's hand-off becomes visible. */}
+      {isCaptain && myTables.length > 0 && (
+        <Card className="border-primary/40 bg-primary/5">
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4 text-primary" />
+                <span className="text-sm font-semibold text-primary">
+                  {myTables.length} table{myTables.length === 1 ? "" : "s"} waiting for you
+                </span>
+              </div>
+              <span className="text-[11px] text-muted-foreground">
+                Receptionist hand-offs · click to open the bill
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {myTables.map((t) => {
+                const o = t.orders[0]!;
+                const wait = o.createdAt
+                  ? Math.max(0, Math.round((Date.now() - o.createdAt.getTime()) / 60000))
+                  : 0;
+                const itemCount = o.items.length;
+                return (
+                  <Link
+                    key={t.id}
+                    href={`/billing?resume=${o.id}`}
+                    className="flex items-center justify-between gap-3 px-3 py-2 rounded-md border bg-background hover:border-primary hover:shadow-sm transition-all"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-semibold text-sm flex items-center gap-1.5">
+                        {t.name}
+                        <span className="text-[10px] text-muted-foreground font-normal">· {t.area}</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        {o.customer?.name ?? o.customerName ?? "Walk-in"}
+                        {itemCount > 0 && ` · ${itemCount} item${itemCount === 1 ? "" : "s"}`}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-[11px] text-muted-foreground">
+                        {wait < 1 ? "just now" : `${wait}m waiting`}
+                      </div>
+                      <div className="text-xs font-semibold text-primary">Open →</div>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Stat label="Total tables" value={String(tables.length)} />
         <Stat label="Active tables" value={String(active.length)} />
-        <Stat label="Free" value={String(tables.length - active.length)} />
+        <Stat label={isCaptain ? "My tables" : "Free"} value={String(isCaptain ? myTables.length : tables.length - active.length)} />
         <Stat label="Est. revenue" value={inr(estRevenue)} />
       </div>
 
@@ -96,6 +176,13 @@ export async function FloorPlan({ outletId }: { outletId: string }) {
                         ? "BILL"
                         : "OCCUPIED"
                     : "FREE";
+                  // Mine = the logged-in captain owns this running order
+                  // OR the table-group's default captain is them (so a
+                  // captain knows "this empty patio is yours when it fills").
+                  const isMine =
+                    isCaptain &&
+                    ((order?.captainId === user!.id) ||
+                      (status === "FREE" && t.tableGroup?.captainId === user!.id));
                   const tone = {
                     FREE:     "bg-emerald-50 border-emerald-300 text-emerald-900 hover:border-emerald-500",
                     OCCUPIED: "bg-amber-50  border-amber-400   text-amber-900   hover:border-amber-600",
@@ -108,6 +195,16 @@ export async function FloorPlan({ outletId }: { outletId: string }) {
                       : t.shape === "RECT"
                         ? "h-16 w-28 rounded-md"
                         : "h-20 w-20 rounded-full";
+                  // Captain's own tables get a thick primary ring so they
+                  // pop on a busy floor plan.
+                  const mineRing = isMine ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "";
+
+                  // Captain attribution to show under the table name.
+                  // When occupied, prefer the order's captain; when free,
+                  // fall back to the table-group's default.
+                  const captainName =
+                    order?.captain?.name ??
+                    (status === "FREE" ? t.tableGroup?.captain?.name : null);
 
                   // Status pill copy — captains scan these to know what's next.
                   const pill = order
@@ -124,10 +221,10 @@ export async function FloorPlan({ outletId }: { outletId: string }) {
 
                   const inner = (
                     <div
-                      className={`flex flex-col items-center justify-center border-2 shadow-sm transition-all ${shape} ${tone}`}
+                      className={`flex flex-col items-center justify-center border-2 shadow-sm transition-all ${shape} ${tone} ${mineRing}`}
                       title={`${t.name} · ${t.capacity} seats · ${status.toLowerCase()}${
                         order?.customer?.name ? ` · ${order.customer.name}` : ""
-                      }`}
+                      }${captainName ? ` · captain ${captainName}` : ""}`}
                     >
                       <span className="text-sm font-bold leading-none">{t.name}</span>
                       <span className="text-[9px] flex items-center gap-0.5 mt-0.5 opacity-80">
@@ -142,6 +239,19 @@ export async function FloorPlan({ outletId }: { outletId: string }) {
                       {order?.customer?.name && (
                         <span className="text-[8px] mt-0.5 opacity-80 max-w-[68px] truncate">
                           {order.customer.name}
+                        </span>
+                      )}
+                      {captainName && (
+                        <span
+                          className={
+                            "text-[8px] mt-0.5 px-1 py-px rounded leading-none max-w-[72px] truncate " +
+                            (isMine
+                              ? "bg-primary text-primary-foreground font-semibold"
+                              : "bg-white/70 border border-current/30")
+                          }
+                          title={`Captain: ${captainName}`}
+                        >
+                          {isMine ? "YOU · " : ""}{captainName}
                         </span>
                       )}
                       {order && order.grandTotal > 0 && (
