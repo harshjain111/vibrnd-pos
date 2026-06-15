@@ -14,7 +14,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
-import { XCircle, Printer, Split, Check, Gift, ArrowRightLeft, User, Ban, MoveRight, DoorClosed } from "lucide-react";
+import { XCircle, Printer, Split, Check, Gift, ArrowRightLeft, User, Ban, MoveRight, DoorClosed, Percent, Tag, Sparkles, RotateCcw } from "lucide-react";
 import {
   cancelOrder,
   reprintBill,
@@ -25,6 +25,10 @@ import {
   changeCustomerName,
   voidOrderLine,
   closeTable,
+  compOrderLine,
+  uncompOrderLine,
+  applyManualDiscount,
+  removeManualDiscount,
 } from "./actions";
 
 export function CancelOrderButton({ id, invoiceNo }: { id: string; invoiceNo: string }) {
@@ -806,5 +810,291 @@ export function CloseTableButton({
       <DoorClosed className="h-4 w-4" />
       {pending ? 'Closing…' : 'Close table'}
     </Button>
+  );
+}
+
+/**
+ * Per-line complimentary toggle (Box 2 spec — "Complementary Items
+ * flow"). Cashier+ can flip a line to free-of-cost with an optional
+ * reason. Already-comp lines show an Undo button so a typo doesn't
+ * require deleting and re-punching the item.
+ */
+export function CompLineButton({
+  orderId,
+  lineId,
+  lineName,
+  qty,
+  isComp,
+}: {
+  orderId: string;
+  lineId: string;
+  lineName: string;
+  qty: number;
+  isComp: boolean;
+}) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [open, setOpen] = React.useState(false);
+  const [reason, setReason] = React.useState("");
+  const [pending, startTransition] = React.useTransition();
+
+  const submit = () => {
+    startTransition(async () => {
+      try {
+        await compOrderLine({ id: orderId, lineId, reason: reason.trim() || undefined });
+        toast({
+          variant: "success",
+          title: `Comped ${lineName}`,
+          description: reason ? `Reason: ${reason}` : "Marked complimentary",
+        });
+        setOpen(false);
+        setReason("");
+        router.refresh();
+      } catch (e: any) {
+        toast({ variant: "destructive", title: "Comp failed", description: String(e?.message ?? e) });
+      }
+    });
+  };
+
+  const undo = () => {
+    startTransition(async () => {
+      try {
+        await uncompOrderLine({ id: orderId, lineId });
+        toast({ variant: "success", title: `Un-comped ${lineName}` });
+        router.refresh();
+      } catch (e: any) {
+        toast({ variant: "destructive", title: "Couldn't revert", description: String(e?.message ?? e) });
+      }
+    });
+  };
+
+  if (isComp) {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={undo}
+        disabled={pending}
+        className="text-amber-700 hover:text-amber-900"
+        title="Revert complimentary"
+      >
+        <RotateCcw className="h-4 w-4" />
+      </Button>
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-amber-700 hover:text-amber-900"
+          title="Mark complimentary"
+        >
+          <Sparkles className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            Comp {lineName} × {qty}?
+          </DialogTitle>
+          <DialogDescription>
+            Marks this line as complimentary on the bill (₹0.00). The original price stays on the
+            row for reports. A reason is optional but recommended.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label>Reason (optional)</Label>
+            <Input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="VIP guest / kitchen error / service recovery"
+              autoFocus
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={pending}>
+            <Sparkles className="h-4 w-4" />
+            {pending ? "Comping…" : "Mark complimentary"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Manager-only "Apply discount" dialog (Box 2 spec — "Discount Rights
+ * flow"). FLAT ₹ or PERCENT, mandatory reason, audit-trail row with
+ * old → new value. When the bill already has a manual discount, the
+ * dialog includes a Remove button that also asks for a reason.
+ */
+export function ApplyDiscountButton({
+  id,
+  invoiceNo,
+  currentDiscount,
+  currentDiscountCode,
+}: {
+  id: string;
+  invoiceNo: string;
+  currentDiscount: number;
+  currentDiscountCode: string | null;
+}) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [open, setOpen] = React.useState(false);
+  const [kind, setKind] = React.useState<"FLAT" | "PERCENT">("PERCENT");
+  const [value, setValue] = React.useState<string>("");
+  const [reason, setReason] = React.useState("");
+  const [pending, startTransition] = React.useTransition();
+
+  const submit = () => {
+    const v = parseFloat(value);
+    if (!v || v <= 0) {
+      toast({ variant: "destructive", title: "Enter a discount value" });
+      return;
+    }
+    if (reason.trim().length < 3) {
+      toast({ variant: "destructive", title: "Reason is required" });
+      return;
+    }
+    startTransition(async () => {
+      try {
+        const res = await applyManualDiscount({ id, kind, value: v, reason: reason.trim() });
+        toast({
+          variant: "success",
+          title: `Discount applied`,
+          description: `−₹${res.discountAmount} · grand ₹${res.grandTotal}`,
+        });
+        setOpen(false);
+        setValue("");
+        setReason("");
+        router.refresh();
+      } catch (e: any) {
+        toast({ variant: "destructive", title: "Couldn't apply", description: String(e?.message ?? e) });
+      }
+    });
+  };
+
+  const remove = () => {
+    if (reason.trim().length < 3) {
+      toast({ variant: "destructive", title: "Reason for removal is required" });
+      return;
+    }
+    startTransition(async () => {
+      try {
+        await removeManualDiscount({ id, reason: reason.trim() });
+        toast({ variant: "success", title: "Discount removed" });
+        setOpen(false);
+        setReason("");
+        router.refresh();
+      } catch (e: any) {
+        toast({ variant: "destructive", title: "Couldn't remove", description: String(e?.message ?? e) });
+      }
+    });
+  };
+
+  const hasDiscount = currentDiscount > 0;
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className={
+            hasDiscount
+              ? "border-emerald-300 bg-emerald-50/40 text-emerald-900 hover:bg-emerald-100"
+              : ""
+          }
+        >
+          <Percent className="h-4 w-4" />
+          {hasDiscount ? `Discount −₹${currentDiscount}` : "Apply discount"}
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {hasDiscount ? `Discount on ${invoiceNo}` : `Apply discount to ${invoiceNo}`}
+          </DialogTitle>
+          <DialogDescription>
+            Manager-only. Manual discounts are stamped with a code so the audit trail can show who
+            granted them and why. The bill prints with both the discount line and the reason.
+          </DialogDescription>
+        </DialogHeader>
+
+        {hasDiscount && (
+          <div className="rounded-md border border-emerald-300 bg-emerald-50/40 px-3 py-2 text-sm">
+            Currently applied: <strong>{currentDiscountCode}</strong> · −₹{currentDiscount}
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Type</Label>
+              <select
+                value={kind}
+                onChange={(e) => setKind(e.target.value as "FLAT" | "PERCENT")}
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                disabled={hasDiscount}
+              >
+                <option value="PERCENT">Percent off (%)</option>
+                <option value="FLAT">Flat amount (₹)</option>
+              </select>
+            </div>
+            <div>
+              <Label>{kind === "PERCENT" ? "Percent (1-100)" : "Amount (₹)"}</Label>
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                max={kind === "PERCENT" ? "100" : undefined}
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                placeholder={kind === "PERCENT" ? "e.g. 10" : "e.g. 50"}
+                disabled={hasDiscount}
+                autoFocus={!hasDiscount}
+              />
+            </div>
+          </div>
+          <div>
+            <Label>
+              Reason <span className="text-xs text-muted-foreground font-normal">— required</span>
+            </Label>
+            <Input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Loyalty match / service recovery / management approval"
+              autoFocus={hasDiscount}
+            />
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          {hasDiscount ? (
+            <Button variant="destructive" onClick={remove} disabled={pending}>
+              <Ban className="h-4 w-4" />
+              {pending ? "Removing…" : "Remove discount"}
+            </Button>
+          ) : (
+            <Button onClick={submit} disabled={pending}>
+              <Tag className="h-4 w-4" />
+              {pending ? "Applying…" : "Apply discount"}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

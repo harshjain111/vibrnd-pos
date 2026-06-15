@@ -28,16 +28,25 @@ async function gate(action: PageId) {
  * splitBillByItem — so totals never drift from the items on screen.
  */
 async function recomputeOrderTotals(orderId: string) {
-  const lines = await db.orderItem.findMany({
-    where: { orderId, voidedAt: null },
-  });
+  // Voided AND complimentary lines are excluded from the order totals.
+  // The complimentary row preserves its price column for reporting
+  // ("₹X was given away") — the exclusion happens here, not at write
+  // time. Existing Order.discount is honored on grand total so a
+  // manager-applied discount survives a recompute.
+  const [lines, current] = await Promise.all([
+    db.orderItem.findMany({ where: { orderId, voidedAt: null, complimentary: false } }),
+    db.order.findUnique({ where: { id: orderId }, select: { discount: true, tip: true } }),
+  ]);
   const sub = lines.reduce((s, l) => s + l.price * l.qty, 0);
   const tax = lines.reduce((s, l) => s + l.price * l.qty * (l.taxRate / 100), 0);
+  const discount = current?.discount ?? 0;
+  const tip = current?.tip ?? 0;
+  const grand = Math.max(0, Math.round(sub + tax - discount + tip));
   await db.order.update({
     where: { id: orderId },
-    data: { subTotal: sub, taxTotal: tax, grandTotal: Math.round(sub + tax) },
+    data: { subTotal: sub, taxTotal: tax, grandTotal: grand },
   });
-  return { sub, tax, grand: Math.round(sub + tax) };
+  return { sub, tax, grand };
 }
 
 const CancelInput = z.object({
@@ -567,5 +576,174 @@ export async function voidOrderLine(input: z.infer<typeof VoidLineInput>) {
   revalidatePath("/orders/live");
   revalidatePath("/kds");
   revalidatePath("/logs");
+  return { ok: true as const };
+}
+
+const CompLineInput = z.object({
+  id: z.string(),     // order id
+  lineId: z.string(),
+  reason: z.string().optional(),
+});
+
+/**
+ * Per-line complimentary (Box 2 "Complementary Items flow"). Marks a
+ * single OrderItem as comp — the row keeps its original `price` so
+ * reports can still see "₹X was given away", but recomputeOrderTotals
+ * excludes it from sub/tax/grand. Reason is optional per spec. Cashier+.
+ */
+export async function compOrderLine(input: z.infer<typeof CompLineInput>) {
+  const user = await gate("pos.action.complimentary");
+  const { id, lineId, reason } = CompLineInput.parse(input);
+  const o = await db.order.findUnique({ where: { id } });
+  if (!o) throw new Error("Order not found");
+  if (o.status === "CANCELLED") throw new Error("Order already cancelled");
+  await assertOrderEditable(o, user.role);
+
+  const line = await db.orderItem.findUnique({ where: { id: lineId } });
+  if (!line || line.orderId !== id) throw new Error("Line not found on this order");
+  if (line.complimentary) throw new Error("Line is already complimentary");
+  if (line.voidedAt) throw new Error("Cannot comp a voided line — un-void first");
+
+  await db.orderItem.update({
+    where: { id: lineId },
+    data: { complimentary: true, compReason: reason ?? null },
+  });
+  const totals = await recomputeOrderTotals(id);
+
+  await logActivity({
+    action: "UPDATE",
+    entity: "Order",
+    entityId: id,
+    summary: `Comped line "${line.name}" ×${line.qty} on ${o.invoiceNo} — value ₹${Math.round(line.price * line.qty)}`,
+    outletId: o.outletId,
+    reason,
+    oldValue: { lineId, complimentary: false, price: line.price, qty: line.qty },
+    newValue: { lineId, complimentary: true, freeValue: Math.round(line.price * line.qty) },
+  });
+
+  revalidatePath(`/orders/${id}`);
+  revalidatePath("/orders");
+  revalidatePath("/orders/live");
+  revalidatePath("/logs");
+  return { ok: true as const, totals };
+}
+
+const UncompLineInput = z.object({ id: z.string(), lineId: z.string() });
+
+/** Undo a per-line comp. Same role gate so a cashier can mistakes back out. */
+export async function uncompOrderLine(input: z.infer<typeof UncompLineInput>) {
+  const user = await gate("pos.action.complimentary");
+  const { id, lineId } = UncompLineInput.parse(input);
+  const o = await db.order.findUnique({ where: { id } });
+  if (!o) throw new Error("Order not found");
+  await assertOrderEditable(o, user.role);
+  const line = await db.orderItem.findUnique({ where: { id: lineId } });
+  if (!line || line.orderId !== id) throw new Error("Line not found");
+  if (!line.complimentary) return { ok: true as const, alreadyOff: true };
+  await db.orderItem.update({
+    where: { id: lineId },
+    data: { complimentary: false, compReason: null },
+  });
+  const totals = await recomputeOrderTotals(id);
+  await logActivity({
+    action: "UPDATE",
+    entity: "Order",
+    entityId: id,
+    summary: `Reverted comp on "${line.name}" ×${line.qty}`,
+    outletId: o.outletId,
+    oldValue: { lineId, complimentary: true },
+    newValue: { lineId, complimentary: false },
+  });
+  revalidatePath(`/orders/${id}`);
+  return { ok: true as const, totals };
+}
+
+const ManualDiscountInput = z.object({
+  id: z.string(),
+  kind: z.enum(["FLAT", "PERCENT"]),
+  value: z.coerce.number().nonnegative(),
+  reason: z.string().min(3, "Reason is required"),
+});
+
+/**
+ * Manager-applied manual discount (Box 2 "Discount Rights flow"). Sets
+ * Order.discount + .discountCode = "MANUAL-{kind}-{value}" + .discountReason.
+ * Recompute helper folds Order.discount into the grand total, so this
+ * action doesn't touch line items — every recompute downstream still
+ * lands on the right grand.
+ */
+export async function applyManualDiscount(input: z.infer<typeof ManualDiscountInput>) {
+  const user = await gate("pos.action.discount");
+  const { id, kind, value, reason } = ManualDiscountInput.parse(input);
+  if (kind === "PERCENT" && (value <= 0 || value > 100)) {
+    throw new Error("Percentage must be between 1 and 100");
+  }
+  if (kind === "FLAT" && value <= 0) {
+    throw new Error("Discount amount must be greater than 0");
+  }
+  const o = await db.order.findUnique({ where: { id } });
+  if (!o) throw new Error("Order not found");
+  if (o.status === "PAID") throw new Error("Settled bills are immutable — refund instead");
+  if (o.status === "CANCELLED") throw new Error("Order already cancelled");
+  await assertOrderEditable(o, user.role);
+
+  const base = o.subTotal + o.taxTotal;
+  const discountAmount =
+    kind === "FLAT" ? Math.min(value, base) : Math.round((base * value) / 100);
+  const code = `MANUAL-${kind}-${Math.round(value)}`;
+
+  await db.order.update({
+    where: { id },
+    data: { discount: discountAmount, discountCode: code, discountReason: reason },
+  });
+  const totals = await recomputeOrderTotals(id);
+
+  await logActivity({
+    action: "UPDATE",
+    entity: "Order",
+    entityId: id,
+    summary: `Manual discount ${kind === "FLAT" ? `₹${value}` : `${value}%`} on ${o.invoiceNo} — −₹${discountAmount}`,
+    outletId: o.outletId,
+    reason,
+    oldValue: { discount: o.discount, discountCode: o.discountCode, grandTotal: o.grandTotal },
+    newValue: { discount: discountAmount, discountCode: code, grandTotal: totals.grand },
+  });
+
+  revalidatePath(`/orders/${id}`);
+  revalidatePath("/orders");
+  revalidatePath("/orders/live");
+  revalidatePath("/logs");
+  return { ok: true as const, discountAmount, grandTotal: totals.grand };
+}
+
+const RemoveDiscountInput = z.object({ id: z.string(), reason: z.string().min(3, "Reason is required") });
+
+/** Manager removes a previously-applied discount. */
+export async function removeManualDiscount(input: z.infer<typeof RemoveDiscountInput>) {
+  const user = await gate("pos.action.discount");
+  const { id, reason } = RemoveDiscountInput.parse(input);
+  const o = await db.order.findUnique({ where: { id } });
+  if (!o) throw new Error("Order not found");
+  if (o.discount === 0) return { ok: true as const, alreadyZero: true };
+  await assertOrderEditable(o, user.role);
+
+  await db.order.update({
+    where: { id },
+    data: { discount: 0, discountCode: null, discountReason: null },
+  });
+  const totals = await recomputeOrderTotals(id);
+
+  await logActivity({
+    action: "UPDATE",
+    entity: "Order",
+    entityId: id,
+    summary: `Removed discount ${o.discountCode ?? ""} (₹${o.discount}) from ${o.invoiceNo}`,
+    outletId: o.outletId,
+    reason,
+    oldValue: { discount: o.discount, discountCode: o.discountCode, discountReason: o.discountReason },
+    newValue: { discount: 0, discountCode: null, discountReason: null, grandTotal: totals.grand },
+  });
+
+  revalidatePath(`/orders/${id}`);
   return { ok: true as const };
 }

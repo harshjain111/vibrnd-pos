@@ -19,6 +19,8 @@ import {
   ChangeCustomerNameButton,
   VoidLineButton,
   CloseTableButton,
+  CompLineButton,
+  ApplyDiscountButton,
 } from "./client";
 import { reopenOrder } from "./actions";
 import { getAuthorizedUser } from "@/lib/rbac";
@@ -76,6 +78,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const canSettle = canAccess(role, "pos.action.settle_bill");
   const canComp = canAccess(role, "pos.action.complimentary");
   const canSplit = canAccess(role, "pos.action.split_bill");
+  const canDiscount = canAccess(role, "pos.action.discount");
 
   const cancelled2 = order.status === "CANCELLED";
   const settled2 = order.status === "PAID";
@@ -230,6 +233,14 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             {!cancelled && !settled && canComp && (
               <CompOrderButton id={order.id} invoiceNo={order.invoiceNo} />
             )}
+            {!cancelled && !settled && canDiscount && (
+              <ApplyDiscountButton
+                id={order.id}
+                invoiceNo={order.invoiceNo}
+                currentDiscount={order.discount}
+                currentDiscountCode={order.discountCode ?? null}
+              />
+            )}
             {!cancelled && <CancelOrderButton id={order.id} invoiceNo={order.invoiceNo} />}
             {cancelled && (
               <form action={reopenOrder}>
@@ -255,14 +266,25 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                     <TableHead className="text-right">Qty</TableHead>
                     <TableHead className="text-right">Price</TableHead>
                     <TableHead className="text-right">Total</TableHead>
-                    {canVoid && !cancelled2 && !settled2 && <TableHead className="w-20 text-right" />}
+                    {(canVoid || canComp) && !cancelled2 && !settled2 && <TableHead className="w-32 text-right" />}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {lineRows.map((li) => {
                     const voided = !!li.voidedAt;
+                    const comp = !!li.complimentary;
+                    const dimmed = voided || comp;
                     return (
-                      <TableRow key={li.id} className={voided ? "bg-destructive/5" : ""}>
+                      <TableRow
+                        key={li.id}
+                        className={
+                          voided
+                            ? "bg-destructive/5"
+                            : comp
+                            ? "bg-amber-50/50"
+                            : ""
+                        }
+                      >
                         <TableCell>
                           <div className={"font-medium " + (voided ? "line-through text-muted-foreground" : "")}>
                             {li.name}
@@ -279,15 +301,36 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                               {li.voidReason ? <span className="text-muted-foreground">— {li.voidReason}</span> : null}
                             </div>
                           )}
+                          {comp && !voided && (
+                            <div className="mt-1 flex items-center gap-1 text-[11px] text-amber-800">
+                              <span className="font-semibold">COMP</span>
+                              <span>— ₹0.00 on bill</span>
+                              {li.compReason ? <span className="text-muted-foreground">· {li.compReason}</span> : null}
+                            </div>
+                          )}
                         </TableCell>
-                        <TableCell className={"text-right " + (voided ? "text-muted-foreground" : "")}>{li.qty}</TableCell>
-                        <TableCell className={"text-right " + (voided ? "text-muted-foreground" : "")}>{inr2(li.price)}</TableCell>
-                        <TableCell className={"text-right font-medium " + (voided ? "line-through text-muted-foreground" : "")}>
-                          {inr2(li.price * li.qty)}
+                        <TableCell className={"text-right " + (dimmed ? "text-muted-foreground" : "")}>{li.qty}</TableCell>
+                        <TableCell className={"text-right " + (dimmed ? "text-muted-foreground" : "")}>{inr2(li.price)}</TableCell>
+                        <TableCell
+                          className={
+                            "text-right font-medium " +
+                            (voided ? "line-through text-muted-foreground" : comp ? "text-amber-800" : "")
+                          }
+                        >
+                          {comp && !voided ? "₹0.00" : inr2(li.price * li.qty)}
                         </TableCell>
-                        {canVoid && !cancelled2 && !settled2 && (
-                          <TableCell className="text-right">
-                            {!voided && (
+                        {(canVoid || canComp) && !cancelled2 && !settled2 && (
+                          <TableCell className="text-right whitespace-nowrap">
+                            {!voided && canComp && (
+                              <CompLineButton
+                                orderId={order.id}
+                                lineId={li.id}
+                                lineName={li.name}
+                                qty={li.qty}
+                                isComp={comp}
+                              />
+                            )}
+                            {!voided && !comp && canVoid && (
                               <VoidLineButton orderId={order.id} lineId={li.id} lineName={li.name} qty={li.qty} />
                             )}
                           </TableCell>
@@ -369,10 +412,17 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               <Row label="Subtotal" value={inr2(order.subTotal)} />
               <Row label="GST" value={inr2(order.taxTotal)} />
               {order.discount > 0 && (
-                <Row
-                  label={`Discount${order.discountCode ? ` (${order.discountCode})` : ""}`}
-                  value={<span className="text-emerald-700">−{inr2(order.discount)}</span>}
-                />
+                <>
+                  <Row
+                    label={`Discount${order.discountCode ? ` (${order.discountCode})` : ""}`}
+                    value={<span className="text-emerald-700">−{inr2(order.discount)}</span>}
+                  />
+                  {order.discountReason && (
+                    <div className="text-[11px] text-muted-foreground italic -mt-1.5 ml-0">
+                      Reason: {order.discountReason}
+                    </div>
+                  )}
+                </>
               )}
               {order.tip > 0 && <Row label="Tip" value={<span className="text-emerald-700">+{inr2(order.tip)}</span>} />}
               <div className="flex items-center justify-between text-base font-semibold pt-2 border-t">

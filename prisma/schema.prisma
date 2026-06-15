@@ -448,6 +448,12 @@ model Order {
   taxTotal      Float        @default(0)
   discount      Float        @default(0)
   discountCode  String?
+  /// Mandatory reason captured when a Manager applies a manual
+  /// discount (spec Box 2 "Discount Rights — Enter Reason (Required)").
+  /// Nullable so coupon-driven / auto discounts don't have to provide
+  /// one. Surfaced on the printed bill + audit trail alongside the
+  /// discount value.
+  discountReason String?
   grandTotal    Float        @default(0)
   amountPaid    Float        @default(0) // running total of payments received
   paymentMode   String?      // CASH | CARD | UPI | ONLINE | DUE (last-used mode summary)
@@ -556,6 +562,12 @@ model OrderItem {
   /// rows seeded before this column landed).
   voidedAt     DateTime?
   voidReason   String?
+  /// Line-level complimentary (Box 2 of the spec). When true the price
+  /// is preserved on the row (so reports can still see "₹X was given
+  /// away") but is excluded from order subtotal/tax/grand. compReason is
+  /// optional per the spec but recommended.
+  complimentary Boolean   @default(false)
+  compReason    String?
   createdAt    DateTime @default(now())
 
   @@index([orderId, voidedAt])
