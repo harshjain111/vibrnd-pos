@@ -184,9 +184,23 @@ export async function MyTablesTiles() {
                   </div>
                 );
 
-                // Free → start a new bill on the table. Anything else →
-                // resume the existing order.
-                const href = order ? `/billing?resume=${order.id}` : `/billing?table=${t.id}`;
+                // Tile routing:
+                //   FREE / SEATED (no items yet) → /billing?table=ID
+                //     so the captain lands straight on the cart screen.
+                //   TAKING (items, no KOT) → /billing?resume=ID
+                //     so they can keep adding items and send the KOT.
+                //   KOT / READY / BILL (KOT already sent) → /orders/ID
+                //     so they can Split / Void / Comp / Move table /
+                //     Apply discount / Print / Settle — those buttons
+                //     all live on the bill-detail page, not /billing.
+                const hasItems = (order?.items.length ?? 0) > 0;
+                const href = !order
+                  ? `/billing?table=${t.id}`
+                  : state === "SEATED" || (state === "TAKING" && !hasItems)
+                  ? `/billing?resume=${order.id}`
+                  : state === "TAKING"
+                  ? `/billing?resume=${order.id}`
+                  : `/orders/${order.id}`;
                 return (
                   <Link key={t.id} href={href} className="block" title={meta.copy}>
                     {tile}

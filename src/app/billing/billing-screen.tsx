@@ -583,8 +583,14 @@ export function BillingScreen({
     startTransition(async () => {
       try {
         await placeOrder({ ...commonOrderInput(), paymentMode });
-      } catch (e) {
-        toast({ variant: "destructive", title: "Couldn't settle", description: String(e) });
+      } catch (e: any) {
+        // Show the actual server message (not "Error: <msg>") so the
+        // cashier can act on it — the most common cause is the
+        // single-bill-per-table guard tripping when a stale receptionist
+        // seed wasn't cleared.
+        const msg = e?.message ?? String(e).replace(/^Error:\s*/, "");
+        toast({ variant: "destructive", title: "Couldn't settle", description: msg });
+        if (typeof console !== "undefined") console.error("placeOrder failed:", e);
       }
     });
   };

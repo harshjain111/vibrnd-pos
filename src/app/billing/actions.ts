@@ -81,6 +81,11 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
   //     (0 items), adopt its captainId and delete it.
   //   • If it has items AND it isn't ours, reject — that's a real
   //     concurrent-bill conflict.
+  // Collect the source orders that need to be cleared and the captain we
+  // should adopt — but defer the actual delete until the create is staged.
+  // The pair runs inside a single $transaction below so a half-settled
+  // bill can't ever exist (delete commits, create fails → source gone).
+  const toDelete: string[] = [];
   let adoptedCaptainId: string | null = null;
   if (data.orderType === "DINE_IN" && data.tableId) {
     const openOnTable = await db.order.findMany({
@@ -94,10 +99,10 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
     for (const open of openOnTable) {
       if (open.id === data.existingOrderId) {
         adoptedCaptainId = adoptedCaptainId ?? open.captainId;
-        await db.order.delete({ where: { id: open.id } });
+        toDelete.push(open.id);
       } else if (open._count.items === 0) {
         adoptedCaptainId = adoptedCaptainId ?? open.captainId;
-        await db.order.delete({ where: { id: open.id } });
+        toDelete.push(open.id);
       } else {
         throw new Error(
           `Table is already running bill ${open.invoiceNo}. Settle or cancel it first, or move the items to a different table.`
@@ -113,7 +118,7 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
     });
     if (src && !["PAID", "CANCELLED"].includes(src.status)) {
       adoptedCaptainId = src.captainId;
-      await db.order.delete({ where: { id: src.id } });
+      toDelete.push(src.id);
     }
   }
 
@@ -210,46 +215,54 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
     if (!invoiceNo) throw new Error("Could not allocate an invoice number");
   }
 
-  const order = await db.order.create({
-    data: {
-      invoiceNo,
-      orderType: data.orderType,
-      status: data.paymentMode === "DUE" ? "PRINTED" : "PAID",
-      channel: "POS",
-      subTotal: sub,
-      taxTotal: tax,
-      discount: totalDiscount,
-      discountCode: data.discountCode,
-      grandTotal: grand,
-      amountPaid: data.paymentMode === "DUE" ? 0 : grand,
-      tip: data.tip || 0,
-      subOrderType: data.subOrderType,
-      // Captain priority: form input → adopted from receptionist seed.
-      // Both can be null if no captain was attributed anywhere.
-      captainId: data.captainId || adoptedCaptainId || undefined,
-      paymentMode: data.paymentMode,
-      tableId: data.orderType === "DINE_IN" ? data.tableId : undefined,
-      customerId,
-      outletId: outlet.id,
-      loyaltyEarned: earned,
-      loyaltyRedeemed: redeemPts,
-      closedAt: data.paymentMode === "DUE" ? null : new Date(),
-      items: {
-        create: data.lines.map((l) => {
-          const it = itemMap.get(l.itemId)!;
-          const displayName = l.variantName ? `${it.name} (${l.variantName})` : it.name;
-          return {
-            itemId: it.id,
-            name: displayName,
-            price: l.unitPrice,
-            qty: l.qty,
-            taxRate: it.taxRate,
-            variantName: l.variantName,
-            addonsJson: l.addons.length ? JSON.stringify(l.addons) : null,
-          };
-        }),
+  // Source-delete + new-order-create as one atomic step. If create
+  // fails (FK conflict, invoice collision, anything), the source bill
+  // is preserved — the cashier can retry safely.
+  const order = await db.$transaction(async (tx) => {
+    for (const id of toDelete) {
+      await tx.order.delete({ where: { id } });
+    }
+    return tx.order.create({
+      data: {
+        invoiceNo,
+        orderType: data.orderType,
+        status: data.paymentMode === "DUE" ? "PRINTED" : "PAID",
+        channel: "POS",
+        subTotal: sub,
+        taxTotal: tax,
+        discount: totalDiscount,
+        discountCode: data.discountCode,
+        grandTotal: grand,
+        amountPaid: data.paymentMode === "DUE" ? 0 : grand,
+        tip: data.tip || 0,
+        subOrderType: data.subOrderType,
+        // Captain priority: form input → adopted from receptionist seed.
+        // Both can be null if no captain was attributed anywhere.
+        captainId: data.captainId || adoptedCaptainId || undefined,
+        paymentMode: data.paymentMode,
+        tableId: data.orderType === "DINE_IN" ? data.tableId : undefined,
+        customerId,
+        outletId: outlet.id,
+        loyaltyEarned: earned,
+        loyaltyRedeemed: redeemPts,
+        closedAt: data.paymentMode === "DUE" ? null : new Date(),
+        items: {
+          create: data.lines.map((l) => {
+            const it = itemMap.get(l.itemId)!;
+            const displayName = l.variantName ? `${it.name} (${l.variantName})` : it.name;
+            return {
+              itemId: it.id,
+              name: displayName,
+              price: l.unitPrice,
+              qty: l.qty,
+              taxRate: it.taxRate,
+              variantName: l.variantName,
+              addonsJson: l.addons.length ? JSON.stringify(l.addons) : null,
+            };
+          }),
+        },
       },
-    },
+    });
   });
 
   // Membership redemption rows — DB unique on (member,benefit,businessDay) enforces daily cap

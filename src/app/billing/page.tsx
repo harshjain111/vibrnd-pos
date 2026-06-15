@@ -1,10 +1,13 @@
+import Link from "next/link";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { BillingScreen } from "./billing-screen";
 import { PageHeader } from "@/components/shell/page-header";
+import { Button } from "@/components/ui/button";
 import { getSessionUser } from "@/lib/session";
 import { resumeHeldBill } from "./actions";
 import { canAccess } from "@/lib/permissions";
+import { Settings2 } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +67,20 @@ export default async function BillingPage({
             : outlet.taxInclusive
               ? "Prices include GST · build an order and settle payment"
               : "Build an order and settle payment"
+        }
+        actions={
+          resumed ? (
+            // Jump-link to the bill-detail page where Split, Void,
+            // Comp, Move-table, Apply-discount, Print and Settle CTAs
+            // all live — those don't fit on the cart-building UI but
+            // captains need to reach them from a running bill.
+            <Button variant="outline" size="sm" asChild>
+              <Link href={`/orders/${resumed.id}`}>
+                <Settings2 className="h-4 w-4" />
+                More actions
+              </Link>
+            </Button>
+          ) : undefined
         }
       />
       <BillingScreen
