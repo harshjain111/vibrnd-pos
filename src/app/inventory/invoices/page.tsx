@@ -72,13 +72,13 @@ export default async function VendorInvoicesPage({
   return (
     <div>
       <PageHeader
-        title="Vendor invoices"
-        description="Accounts payable — invoices from suppliers against GRNs received"
+        title="Stock Purchase"
+        description="Accounts payable — supplier bills (stock purchases) against GRNs received"
         actions={
           <Button asChild size="sm">
             <Link href="/inventory/invoices/new">
               <Plus className="h-4 w-4" />
-              New invoice
+              New stock purchase
             </Link>
           </Button>
         }
@@ -118,8 +118,8 @@ export default async function VendorInvoicesPage({
         <CardContent className="p-0">
           {invoices.length === 0 ? (
             <Empty
-              title="No invoices yet"
-              desc="Open a GRN and click 'Record vendor invoice' to start tracking AP."
+              title="No stock purchases yet"
+              desc="Open a GRN and click 'Record stock purchase' to start tracking AP."
             />
           ) : (
             <Table>

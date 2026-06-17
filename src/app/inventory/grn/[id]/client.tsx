@@ -11,7 +11,7 @@ export function CreateInvoiceLink({ grnId }: { grnId: string }) {
     <Button asChild variant="outline" size="sm" className="w-full">
       <Link href={`/inventory/invoices/new?grn=${grnId}`}>
         <FileText className="h-3.5 w-3.5" />
-        Record vendor invoice
+        Record stock purchase
       </Link>
     </Button>
   );

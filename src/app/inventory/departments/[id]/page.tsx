@@ -41,17 +41,18 @@ export default async function DepartmentStockPage({
   });
   if (!dept) return notFound();
 
-  // For non-STORE depts surface the approved requisitions this dept can
-  // pull against — the "Raise GRN" button opens them in a dialog.
-  const eligibleReqs =
+  // For non-STORE depts surface the pending inbound transfers (the store has
+  // dispatched them; this dept receives them via "Raise GRN", which is when
+  // the dept's stock rises).
+  const pendingTransfers =
     dept.kind === "STORE"
       ? []
-      : await db.requisition.findMany({
+      : await db.transfer.findMany({
           where: {
-            outletId: outlet.id,
-            fromDepartmentId: dept.id,
-            status: { in: ["APPROVED", "PARTIAL"] },
-            transfer: null,
+            kind: "INTERNAL",
+            status: "SENT",
+            toDepartmentId: dept.id,
+            receiverOutletId: outlet.id,
           },
           include: {
             lines: {
@@ -140,20 +141,20 @@ export default async function DepartmentStockPage({
               <>
                 <RaiseGrnButton
                   deptName={dept.name}
-                  requisitions={eligibleReqs.map((r) => ({
-                    id: r.id,
-                    reqNo: r.reqNo,
-                    raisedAtLabel: r.createdAt.toLocaleString("en-IN", {
+                  transfers={pendingTransfers.map((t) => ({
+                    id: t.id,
+                    label: t.challanNo ?? t.id.slice(0, 8),
+                    sentAtLabel: t.createdAt.toLocaleString("en-IN", {
                       day: "2-digit",
                       month: "short",
                       hour: "2-digit",
                       minute: "2-digit",
                     }),
-                    lines: r.lines
-                      .filter((l) => l.qtyApproved > 0)
+                    lines: t.lines
+                      .filter((l) => l.qtySent > 0)
                       .map((l) => ({
                         name: l.rawMaterial.name,
-                        qtyApproved: l.qtyApproved,
+                        qtySent: l.qtySent,
                         unit: l.unit,
                       })),
                   }))}

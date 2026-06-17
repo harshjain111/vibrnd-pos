@@ -210,7 +210,7 @@ export default async function ProcurementCockpitPage() {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-base">AP aging — chain-wide</CardTitle>
-            <CardDescription>Outstanding vendor invoices by age</CardDescription>
+            <CardDescription>Outstanding stock purchases by age</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 gap-2 mb-3">
@@ -325,7 +325,7 @@ export default async function ProcurementCockpitPage() {
           </CardHeader>
           <CardContent className="p-0">
             {topSuppliers.length === 0 ? (
-              <Empty title="No spend" desc="No vendor invoices recorded in the last 90 days." />
+              <Empty title="No spend" desc="No stock purchases recorded in the last 90 days." />
             ) : (
               <Table>
                 <TableHeader>

@@ -94,17 +94,17 @@ export async function HodDashboard({
     take: 10,
   });
 
-  // Reqs ready to be pulled into the dept — APPROVED or PARTIAL, not yet
-  // transferred. The Raise GRN dialog ships the stock from STORE → dept
-  // and stamps the transfer back on the requisition.
+  // Transfers the store has dispatched to this dept and that haven't been
+  // received yet (INTERNAL + SENT). The Raise GRN dialog pulls them into the
+  // dept ledger and flips the transfer to RECEIVED.
   const fromDeptId = dept?.id;
   const readyToReceive = fromDeptId
-    ? await db.requisition.findMany({
+    ? await db.transfer.findMany({
         where: {
-          outletId,
-          fromDepartmentId: fromDeptId,
-          status: { in: ["APPROVED", "PARTIAL"] },
-          transfer: null,
+          kind: "INTERNAL",
+          status: "SENT",
+          toDepartmentId: fromDeptId,
+          receiverOutletId: outletId,
         },
         include: {
           lines: { include: { rawMaterial: { select: { name: true } } } },
@@ -114,6 +114,21 @@ export async function HodDashboard({
       })
     : [];
 
+  // Shared mapping for the Raise GRN button (used in the header + banner).
+  const grnTransfers = readyToReceive.map((t) => ({
+    id: t.id,
+    label: t.challanNo ?? t.id.slice(0, 8),
+    sentAtLabel: t.createdAt.toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+    lines: t.lines
+      .filter((l) => l.qtySent > 0)
+      .map((l) => ({ name: l.rawMaterial.name, qtySent: l.qtySent, unit: l.unit })),
+  }));
+
   return (
     <div>
       <PageHeader
@@ -122,26 +137,7 @@ export async function HodDashboard({
         actions={
           <>
             {dept && readyToReceive.length > 0 && (
-              <RaiseGrnButton
-                deptName={dept.name}
-                requisitions={readyToReceive.map((r) => ({
-                  id: r.id,
-                  reqNo: r.reqNo,
-                  raisedAtLabel: r.createdAt.toLocaleString("en-IN", {
-                    day: "2-digit",
-                    month: "short",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  }),
-                  lines: r.lines
-                    .filter((l) => l.qtyApproved > 0)
-                    .map((l) => ({
-                      name: l.rawMaterial.name,
-                      qtyApproved: l.qtyApproved,
-                      unit: l.unit,
-                    })),
-                }))}
-              />
+              <RaiseGrnButton deptName={dept.name} transfers={grnTransfers} />
             )}
             <Button asChild size="sm">
               <Link href="/inventory/requisitions/new">
@@ -162,33 +158,14 @@ export async function HodDashboard({
             <PackageCheck className="h-5 w-5 text-emerald-700 mt-0.5 shrink-0" />
             <div className="flex-1">
               <div className="font-semibold text-emerald-900 text-sm">
-                {readyToReceive.length} requisition{readyToReceive.length === 1 ? "" : "s"} ready for collection
+                {readyToReceive.length} transfer{readyToReceive.length === 1 ? "" : "s"} ready to receive
               </div>
               <div className="text-sm text-emerald-800 mt-0.5">
-                The store manager has approved your request{readyToReceive.length === 1 ? "" : "s"}. Click <strong>Raise GRN</strong> to receive
-                the stock — that moves it from the store into your department's ledger.
+                The store has dispatched stock to your department. Click <strong>Raise GRN</strong> to receive
+                it — that moves it from the store into your department's ledger.
               </div>
             </div>
-            <RaiseGrnButton
-              deptName={dept.name}
-              requisitions={readyToReceive.map((r) => ({
-                id: r.id,
-                reqNo: r.reqNo,
-                raisedAtLabel: r.createdAt.toLocaleString("en-IN", {
-                  day: "2-digit",
-                  month: "short",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                }),
-                lines: r.lines
-                  .filter((l) => l.qtyApproved > 0)
-                  .map((l) => ({
-                    name: l.rawMaterial.name,
-                    qtyApproved: l.qtyApproved,
-                    unit: l.unit,
-                  })),
-              }))}
-            />
+            <RaiseGrnButton deptName={dept.name} transfers={grnTransfers} />
           </CardContent>
         </Card>
       )}

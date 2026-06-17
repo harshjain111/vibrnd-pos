@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
-import { Truck, X, Check, AlertTriangle } from "lucide-react";
-import { reviewRequisition, fulfilRequisition, cancelRequisition } from "../actions";
+import { X, Check, AlertTriangle } from "lucide-react";
+import { reviewRequisition, cancelRequisition } from "../actions";
 
 type LineRow = {
   id: string;
@@ -154,30 +154,6 @@ export function ReviewForm({
         </div>
       </div>
     </div>
-  );
-}
-
-export function FulfilButton({ id }: { id: string }) {
-  const router = useRouter();
-  const { toast } = useToast();
-  return (
-    <form
-      action={async (fd) => {
-        const res = await fulfilRequisition(fd);
-        if (!res.ok) {
-          toast({ variant: "destructive", title: "Couldn't transfer", description: res.error });
-          return;
-        }
-        toast({ variant: "success", title: "Transferred to requester" });
-        router.refresh();
-      }}
-    >
-      <input type="hidden" name="id" value={id} />
-      <Button type="submit" size="sm">
-        <Truck className="h-4 w-4" />
-        Transfer to requester
-      </Button>
-    </form>
   );
 }
 

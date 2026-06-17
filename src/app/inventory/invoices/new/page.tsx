@@ -40,13 +40,13 @@ export default async function NewInvoicePage({
     return (
       <div>
         <PageHeader
-          title="New vendor invoice"
-          description="Pick the GRN this invoice covers — the next step lets you tag more GRNs and key in the actual line items from the vendor's bill."
+          title="New stock purchase"
+          description="Pick the GRN this stock purchase covers — the next step lets you tag more GRNs and key in the actual line items from the supplier's bill."
           actions={
             <Button asChild variant="ghost" size="sm">
               <Link href="/inventory/invoices">
                 <ArrowLeft className="h-4 w-4" />
-                All invoices
+                All stock purchases
               </Link>
             </Button>
           }
@@ -282,7 +282,7 @@ export default async function NewInvoicePage({
   return (
     <div>
       <PageHeader
-        title="Record vendor invoice"
+        title="Record stock purchase"
         description={`Against ${seedGrn.grnNo}${seedGrn.po ? ` · PO ${seedGrn.po.poNo}` : ""}`}
         actions={
           <Button asChild variant="ghost" size="sm">

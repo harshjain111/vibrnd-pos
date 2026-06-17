@@ -160,7 +160,7 @@ export const PAGES: PageDef[] = [
   { id: "inventory.requisitions.approve", label: "Approve requisitions", category: "Inventory", defaultRoles: ["STORE_MANAGER", "MANAGER", "OWNER"] },
   { id: "inventory.purchase.approve", label: "Approve POs", category: "Inventory", defaultRoles: ["COST_CONTROLLER", "OWNER"] },
   { id: "inventory.grn", label: "Goods received notes", category: "Inventory", defaultRoles: ["STORE_MANAGER", "ACCOUNTANT", "MANAGER", "OWNER"] },
-  { id: "inventory.invoices", label: "Vendor invoices", category: "Inventory", defaultRoles: ["ACCOUNTANT", "OWNER"] },
+  { id: "inventory.invoices", label: "Stock Purchase", category: "Inventory", defaultRoles: ["ACCOUNTANT", "OWNER"] },
   { id: "inventory.payments", label: "Vendor payments", category: "Inventory", defaultRoles: ["ACCOUNTANT", "OWNER"] },
   { id: "inventory.production", label: "Production", category: "Inventory", defaultRoles: ["PRODUCTION_MANAGER", "MANAGER", "OWNER"] },
   { id: "inventory.reports.chain-stock", label: "Chain stock matrix", category: "Inventory", defaultRoles: ["MANAGER", "OWNER"] },

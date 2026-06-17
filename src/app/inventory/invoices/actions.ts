@@ -198,7 +198,7 @@ export async function createVendorInvoice(
     action: "CREATE",
     entity: "RawMaterial",
     entityId: invoice.id,
-    summary: `Vendor invoice ${data.invoiceNo} recorded for ${inr(grandTotal)} (${
+    summary: `Stock purchase ${data.invoiceNo} recorded for ${inr(grandTotal)} (${
       lines.length
     } line${lines.length === 1 ? "" : "s"})`,
     outletId: outlet.id,

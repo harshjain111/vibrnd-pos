@@ -70,7 +70,7 @@ export const ROLE_MATRIX_PREVIEW: Record<string, string[]> = {
 const INVENTORY_ROLE_LABELS: Record<string, string> = {
   STORE_MANAGER:      "STORE_MANAGER — approve requisitions, raise POs, manage GRNs",
   COST_CONTROLLER:    "COST_CONTROLLER — approve POs, procurement cockpit",
-  ACCOUNTANT:         "ACCOUNTANT — vendor invoices, payments, GRN review",
+  ACCOUNTANT:         "ACCOUNTANT — stock purchases, payments, GRN review",
   CHEF_HOD:           "CHEF_HOD — kitchen requisitions + dept stock view",
   BARTENDER_HOD:      "BARTENDER_HOD — bar requisitions + dept stock view",
   HOUSEKEEPING_HOD:   "HOUSEKEEPING_HOD — housekeeping requisitions + dept stock view",

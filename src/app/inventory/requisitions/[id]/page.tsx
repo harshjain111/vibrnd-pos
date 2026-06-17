@@ -12,7 +12,7 @@ import { requireUser, hasAtLeast } from "@/lib/rbac";
 import { getSessionUser } from "@/lib/session";
 import { canAccess } from "@/lib/permissions";
 import { stockAtDepartment } from "@/lib/stock";
-import { ReviewForm, FulfilButton, CancelButton } from "./client";
+import { ReviewForm, CancelButton } from "./client";
 
 export const dynamic = "force-dynamic";
 
@@ -119,7 +119,12 @@ export default async function RequisitionDetailPage({
                 </Link>
               </Button>
             )}
-            {canFulfil && <FulfilButton id={req.id} />}
+            {canFulfil && (
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50/60 px-3 py-1.5 text-xs text-sky-900">
+                <Truck className="h-3.5 w-3.5" />
+                Approved — dispatch this from the Transfers tab
+              </span>
+            )}
             {canCancel && <CancelButton id={req.id} />}
           </div>
         </CardContent>
@@ -138,17 +143,20 @@ export default async function RequisitionDetailPage({
         </Card>
       )}
 
-      {/* Fulfilment banner */}
+      {/* Fulfilment banner — dispatched (awaiting dept GRN) vs received */}
       {req.status === "FULFILLED" && req.transfer && (
         <Card className="mb-3 border-emerald-300 bg-emerald-50/50">
           <CardContent className="p-3 flex items-start gap-2">
             <Truck className="h-4 w-4 text-emerald-700 mt-0.5 shrink-0" />
             <div>
               <div className="font-semibold text-emerald-900 text-sm">
-                Delivered via transfer {req.transfer.challanNo ?? req.transfer.id}
+                {req.transfer.status === "RECEIVED" ? "Received" : "Dispatched"} via transfer{" "}
+                {req.transfer.challanNo ?? req.transfer.id}
               </div>
               <div className="text-sm text-emerald-800 mt-0.5">
-                Stock moved from {req.toDepartment.name} → {req.fromDepartment.name}.
+                {req.transfer.status === "RECEIVED"
+                  ? `Stock received into ${req.fromDepartment.name} from ${req.toDepartment.name}.`
+                  : `Stock dispatched from ${req.toDepartment.name}. Awaiting GRN at ${req.fromDepartment.name} (Raise GRN on the department page).`}
               </div>
             </div>
           </CardContent>

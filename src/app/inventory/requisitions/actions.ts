@@ -24,7 +24,7 @@ import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
 import { getSessionUser } from "@/lib/session";
 import { logActivity } from "@/lib/audit";
-import { postInternalTransferMovement, stockAtDepartment, moveStock } from "@/lib/stock";
+import { postInternalTransferSend, postInternalTransferReceive, stockAtDepartment, moveStock } from "@/lib/stock";
 import { ownedDepartmentKind } from "@/lib/rbac";
 
 const LineInput = z.object({
@@ -413,31 +413,42 @@ async function fulfilRequisitionInner(fd: FormData): Promise<ActionResult> {
   }
 
   if (!isCrossOutlet) {
-    // ─── INTERNAL flow ──────────────────────────────────────────────────
-    // Stock-at-dept lookups run in parallel — each one fans into 3-4
-    // Prisma queries and the sequential version was causing the dialog
-    // to feel like it had hung on multi-line reqs (especially on Vercel's
-    // serverless 10s budget). Same call topology, much less wall-clock.
+    // ─── INTERNAL flow — dispatch (partial by availability) ─────────────
+    // The store dispatches as much as it currently holds. Any shortfall is
+    // covered by a PO (manual, linked back to the requisition) — we never
+    // throw on insufficient stock. The transfer goes out at SENT; the
+    // requesting department confirms receipt with a GRN on its dept page,
+    // which is when *their* stock rises.
+    //
+    // Stock-at-dept lookups run in parallel — each fans into 3-4 Prisma
+    // queries and the sequential version made the dialog feel hung on
+    // multi-line reqs (especially on Vercel's serverless 10s budget).
     const onHandPairs = await Promise.all(
       linesToMove.map(async (l) => ({
         line: l,
         onHand: await stockAtDepartment(l.rawMaterialId, req.toDepartmentId),
       }))
     );
-    for (const { line, onHand } of onHandPairs) {
-      if (onHand < line.qtyApproved) {
-        throw new Error(
-          `Insufficient stock of ${line.rawMaterial.name} at STORE (have ${onHand}, need ${line.qtyApproved})`
-        );
-      }
+    const dispatch = onHandPairs
+      .map(({ line, onHand }) => ({
+        line,
+        qtyToSend: Math.max(0, Math.min(line.qtyApproved, Number(onHand.toFixed(4)))),
+      }))
+      .filter((d) => d.qtyToSend > 0);
+
+    if (dispatch.length === 0) {
+      throw new Error(
+        "Nothing to transfer — the store is out of stock for every approved line. Raise a PO to restock first."
+      );
     }
+
     const challanNo = `${req.reqNo}-T`;
     await db.$transaction(async (tx) => {
       await tx.transfer.create({
         data: {
           challanNo,
           transferDate: new Date(),
-          status: "RECEIVED",
+          status: "SENT",
           senderOutletId: outlet.id,
           receiverOutletId: outlet.id,
           fromDepartmentId: req.toDepartmentId,
@@ -445,15 +456,13 @@ async function fulfilRequisitionInner(fd: FormData): Promise<ActionResult> {
           kind: "INTERNAL",
           requisitionId: req.id,
           sentById: user.id,
-          receivedById: user.id,
-          receivedAt: new Date(),
-          notes: `Auto-fulfilment of ${req.reqNo}`,
+          notes: `Dispatch of ${req.reqNo} — awaiting GRN at requesting department`,
           lines: {
-            create: linesToMove.map((l) => ({
-              rawMaterialId: l.rawMaterialId,
-              qtySent: l.qtyApproved,
-              qtyReceived: l.qtyApproved,
-              unit: l.unit,
+            create: dispatch.map((d) => ({
+              rawMaterialId: d.line.rawMaterialId,
+              qtySent: d.qtyToSend,
+              qtyReceived: 0,
+              unit: d.line.unit,
               priceAtTransfer: 0,
             })),
           },
@@ -461,17 +470,16 @@ async function fulfilRequisitionInner(fd: FormData): Promise<ActionResult> {
       });
       await tx.requisition.update({ where: { id: req.id }, data: { status: "FULFILLED" } });
     });
-    // Per-line ledger writes — fan out instead of waiting one-by-one.
+    // Per-line dispatch ledger writes (−store) — fan out.
     await Promise.all(
-      linesToMove.map((l) =>
-        postInternalTransferMovement({
-          rawMaterialId: l.rawMaterialId,
-          qty: l.qtyApproved,
+      dispatch.map((d) =>
+        postInternalTransferSend({
+          rawMaterialId: d.line.rawMaterialId,
+          qty: d.qtyToSend,
           fromDepartmentId: req.toDepartmentId,
-          toDepartmentId: req.fromDepartmentId,
           refType: "Requisition",
           refId: req.id,
-          note: `${req.reqNo} fulfilment`,
+          note: `${req.reqNo} dispatch`,
         })
       )
     );
@@ -563,9 +571,9 @@ async function fulfilRequisitionInner(fd: FormData): Promise<ActionResult> {
     action: "UPDATE",
     entity: "RawMaterial",
     entityId: req.id,
-    summary: `Requisition ${req.reqNo} fulfilled — ${linesToMove.length} item(s) ${
-      isCrossOutlet ? "shipped (chain)" : "transferred"
-    }`,
+    summary: `Requisition ${req.reqNo} ${
+      isCrossOutlet ? "shipped (chain)" : "dispatched"
+    } — ${linesToMove.length} item(s)`,
     outletId: outlet.id,
   });
 
@@ -574,10 +582,10 @@ async function fulfilRequisitionInner(fd: FormData): Promise<ActionResult> {
       data: {
         outletId: receiverOutletId,
         kind: "INFO",
-        title: `Requisition ${req.reqNo} ${isCrossOutlet ? "shipped" : "delivered"}`,
+        title: `Requisition ${req.reqNo} ${isCrossOutlet ? "shipped" : "dispatched"}`,
         body: isCrossOutlet
           ? `${linesToMove.length} item(s) en route. Confirm receipt at /inventory/transfers.`
-          : `${linesToMove.length} item(s) moved to your department.`,
+          : `Stock dispatched from store. Receive it via "Raise GRN" on your department page.`,
         link: `/inventory/requisitions/${req.id}`,
       },
     });
@@ -589,5 +597,83 @@ async function fulfilRequisitionInner(fd: FormData): Promise<ActionResult> {
   // HOD dashboard surfaces approved reqs in an "Ready for collection"
   // banner — refresh so the banner drops as soon as fulfilment lands.
   revalidatePath("/inventory/dashboard");
+  return { ok: true };
+}
+
+/**
+ * Department-side receipt of a SENT internal transfer ("Raise GRN" on the
+ * department page). This is the second half of the two-step internal move:
+ * the store already dropped its stock on dispatch; here the receiving
+ * department's stock rises (one +qty ledger row per line) and the transfer
+ * flips to RECEIVED.
+ */
+export async function receiveInternalTransfer(fd: FormData): Promise<ActionResult> {
+  try {
+    return await receiveInternalTransferInner(fd);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function receiveInternalTransferInner(fd: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const transferId = String(fd.get("transferId") ?? "");
+  if (!transferId) throw new Error("Transfer id is required");
+  const outlet = await getActiveOutlet();
+
+  const transfer = await db.transfer.findUnique({
+    where: { id: transferId },
+    include: { lines: { include: { rawMaterial: true } }, toDepartment: true },
+  });
+  if (!transfer) throw new Error("Transfer not found");
+  if (transfer.kind !== "INTERNAL") {
+    throw new Error("Use the Transfers tab to receive cross-outlet (chain) transfers");
+  }
+  if (transfer.status !== "SENT") {
+    throw new Error(`Transfer already ${transfer.status.toLowerCase()}`);
+  }
+  if (transfer.receiverOutletId !== outlet.id) {
+    throw new Error("Switch to the receiving outlet before raising this GRN");
+  }
+  if (!transfer.toDepartmentId) throw new Error("Transfer has no destination department");
+
+  await db.$transaction(async (tx) => {
+    for (const l of transfer.lines) {
+      await tx.transferLine.update({ where: { id: l.id }, data: { qtyReceived: l.qtySent } });
+    }
+    await tx.transfer.update({
+      where: { id: transfer.id },
+      data: { status: "RECEIVED", receivedById: user.id, receivedAt: new Date() },
+    });
+  });
+
+  // +dept ledger writes — fan out.
+  await Promise.all(
+    transfer.lines
+      .filter((l) => l.qtySent > 0)
+      .map((l) =>
+        postInternalTransferReceive({
+          rawMaterialId: l.rawMaterialId,
+          qty: l.qtySent,
+          toDepartmentId: transfer.toDepartmentId!,
+          refType: "Transfer",
+          refId: transfer.id,
+          note: `${transfer.challanNo ?? transfer.id} GRN`,
+        })
+      )
+  );
+
+  await logActivity({
+    action: "ACCEPT",
+    entity: "Transfer",
+    entityId: transfer.id,
+    summary: `Transfer ${transfer.challanNo ?? transfer.id} received into ${transfer.toDepartment?.name ?? "department"} — ${transfer.lines.length} item(s)`,
+    outletId: outlet.id,
+  });
+
+  revalidatePath("/inventory/transfers");
+  revalidatePath("/inventory/dashboard");
+  revalidatePath("/inventory/available");
+  if (transfer.toDepartmentId) revalidatePath(`/inventory/departments/${transfer.toDepartmentId}`);
   return { ok: true };
 }

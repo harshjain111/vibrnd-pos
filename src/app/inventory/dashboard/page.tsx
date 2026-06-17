@@ -128,7 +128,7 @@ export default async function InventoryDashboardPage() {
         <QuickLink
           href="/inventory/invoices"
           icon={<FileText className="h-4 w-4" />}
-          label="Vendor invoices"
+          label="Stock Purchase"
           badge={openInvoiceCount}
           badgeTone={openInvoiceCount > 0 ? "warn" : "neutral"}
           badgeLabel="unpaid"

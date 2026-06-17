@@ -89,14 +89,96 @@ export async function moveStock(input: MoveInput) {
 
 /**
  * Internal department-to-department transfer within the SAME outlet (Store →
- * Kitchen / Bar / Housekeeping). Logs as TWO ledger entries on the same
- * RawMaterial — one negative at the source dept, one positive at the
- * destination dept — without touching `currentQty` (the outlet still has
- * the same total). Per-dept qty is reconstructed from the ledger via
- * `stockAtDepartment`.
+ * Kitchen / Bar / Housekeeping). The move is two-step:
+ *
+ *   • DISPATCH (Store Manager transfers)  → postInternalTransferSend  (−Store)
+ *   • RECEIPT  (department raises a GRN)   → postInternalTransferReceive (+Dept)
+ *
+ * Each half writes ONE ledger row tagged to the relevant department, and
+ * neither touches `currentQty` (stock never leaves the outlet — it just moves
+ * between departments). Per-dept qty is reconstructed from the ledger via
+ * `stockAtDepartment`, which subtracts in-transit (SENT-not-received) transfers
+ * from the STORE balance so the dispatch shows up immediately.
  *
  * Kept here next to moveStock so anything mutating stock goes through one
  * file we can audit.
+ */
+async function postInternalTransferRow(input: {
+  rawMaterialId: string;
+  delta: number; // signed
+  departmentId: string;
+  refType: string; // "Transfer" | "Requisition"
+  refId: string;
+  note?: string;
+}) {
+  const rm = await db.rawMaterial.findUnique({ where: { id: input.rawMaterialId } });
+  if (!rm) throw new Error("Raw material not found");
+  // qtyBefore/qtyAfter stay equal to currentQty because outlet-total didn't
+  // change. Per-dept totals are derived from the sum of entries per dept.
+  await db.stockMovement.create({
+    data: {
+      rawMaterialId: input.rawMaterialId,
+      delta: input.delta,
+      reason: "INTERNAL_TRANSFER",
+      refType: input.refType,
+      refId: input.refId,
+      qtyBefore: rm.currentQty,
+      qtyAfter: rm.currentQty,
+      outletId: rm.outletId,
+      departmentId: input.departmentId,
+      note: input.note,
+    },
+  });
+}
+
+/** Dispatch half — store drops now. Records a −qty row at the STORE dept.
+ *  This row is for audit/movements only; `stockAtDepartment` derives the
+ *  STORE balance from currentQty − distributed − in-transit, so it isn't
+ *  double-counted. */
+export async function postInternalTransferSend(input: {
+  rawMaterialId: string;
+  qty: number; // always positive
+  fromDepartmentId: string;
+  refType: string;
+  refId: string;
+  note?: string;
+}) {
+  await postInternalTransferRow({
+    rawMaterialId: input.rawMaterialId,
+    delta: -input.qty,
+    departmentId: input.fromDepartmentId,
+    refType: input.refType,
+    refId: input.refId,
+    note: input.note,
+  });
+}
+
+/** Receipt half — department rises now. Records a +qty row at the receiving
+ *  dept. Called when the department raises a GRN against a SENT transfer. */
+export async function postInternalTransferReceive(input: {
+  rawMaterialId: string;
+  qty: number; // always positive
+  toDepartmentId: string;
+  refType: string;
+  refId: string;
+  note?: string;
+}) {
+  await postInternalTransferRow({
+    rawMaterialId: input.rawMaterialId,
+    delta: input.qty,
+    departmentId: input.toDepartmentId,
+    refType: input.refType,
+    refId: input.refId,
+    note: input.note,
+  });
+}
+
+/**
+ * One-shot internal transfer (dispatch + receive together). Retained as a
+ * convenience wrapper for callers that move stock between departments
+ * instantaneously (no pending-receipt step). The requisition flow no longer
+ * uses this — it calls the two halves separately so the receiving department
+ * confirms via a GRN.
  */
 export async function postInternalTransferMovement(input: {
   rawMaterialId: string;
@@ -107,38 +189,21 @@ export async function postInternalTransferMovement(input: {
   refId: string;
   note?: string;
 }) {
-  const rm = await db.rawMaterial.findUnique({ where: { id: input.rawMaterialId } });
-  if (!rm) throw new Error("Raw material not found");
-  // Two ledger rows — qtyBefore/qtyAfter stay equal to currentQty because
-  // outlet-total didn't change. Per-dept totals are derived from the sum
-  // of all entries with that departmentId.
-  await db.stockMovement.createMany({
-    data: [
-      {
-        rawMaterialId: input.rawMaterialId,
-        delta: -input.qty,
-        reason: "INTERNAL_TRANSFER",
-        refType: input.refType,
-        refId: input.refId,
-        qtyBefore: rm.currentQty,
-        qtyAfter: rm.currentQty,
-        outletId: rm.outletId,
-        departmentId: input.fromDepartmentId,
-        note: input.note,
-      },
-      {
-        rawMaterialId: input.rawMaterialId,
-        delta: input.qty,
-        reason: "INTERNAL_TRANSFER",
-        refType: input.refType,
-        refId: input.refId,
-        qtyBefore: rm.currentQty,
-        qtyAfter: rm.currentQty,
-        outletId: rm.outletId,
-        departmentId: input.toDepartmentId,
-        note: input.note,
-      },
-    ],
+  await postInternalTransferSend({
+    rawMaterialId: input.rawMaterialId,
+    qty: input.qty,
+    fromDepartmentId: input.fromDepartmentId,
+    refType: input.refType,
+    refId: input.refId,
+    note: input.note,
+  });
+  await postInternalTransferReceive({
+    rawMaterialId: input.rawMaterialId,
+    qty: input.qty,
+    toDepartmentId: input.toDepartmentId,
+    refType: input.refType,
+    refId: input.refId,
+    note: input.note,
   });
 }
 
@@ -252,21 +317,37 @@ export async function stockAtDepartment(rawMaterialId: string, departmentId: str
   if (dept.kind === "STORE") {
     const rm = await db.rawMaterial.findUnique({ where: { id: rawMaterialId } });
     if (!rm) return 0;
-    // Sum movements at every OTHER department at the same outlet.
+    // Sum movements at every OTHER department at the same outlet — these are
+    // the amounts the departments have *received* and now hold.
     const otherDepts = await db.department.findMany({
       where: { outletId: dept.outletId, active: true, NOT: { id: dept.id } },
       select: { id: true },
     });
-    if (otherDepts.length === 0) return rm.currentQty;
-    const agg = await db.stockMovement.aggregate({
+    const distributed =
+      otherDepts.length === 0
+        ? 0
+        : Number(
+            (
+              await db.stockMovement.aggregate({
+                where: { rawMaterialId, departmentId: { in: otherDepts.map((d) => d.id) } },
+                _sum: { delta: true },
+              })
+            )._sum.delta ?? 0
+          );
+
+    // In-transit: stock the store has dispatched on an INTERNAL transfer that
+    // the receiving department hasn't GRN'd yet. It's left the store but isn't
+    // yet counted in any dept's holdings, so subtract it too.
+    const inTransitAgg = await db.transferLine.aggregate({
       where: {
         rawMaterialId,
-        departmentId: { in: otherDepts.map((d) => d.id) },
+        transfer: { kind: "INTERNAL", status: "SENT", fromDepartmentId: dept.id },
       },
-      _sum: { delta: true },
+      _sum: { qtySent: true },
     });
-    const distributed = Number(agg._sum.delta ?? 0);
-    return Number((rm.currentQty - distributed).toFixed(4));
+    const inTransit = Number(inTransitAgg._sum.qtySent ?? 0);
+
+    return Number((rm.currentQty - distributed - inTransit).toFixed(4));
   }
 
   // Non-STORE: pure ledger sum.

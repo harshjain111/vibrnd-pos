@@ -6,8 +6,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Empty } from "@/components/ui/empty";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
+import { stockAtDepartment } from "@/lib/stock";
 import { Plus } from "lucide-react";
-import { NewTransferDialog, ReceiveBtn } from "./client";
+import { NewTransferDialog, ReceiveBtn, PendingRequisitions } from "./client";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,36 @@ export default async function TransfersPage() {
     db.unit.findMany({ where: { outletId: outlet.id, active: true }, orderBy: { name: "asc" } }),
   ]);
 
+  // Internal requisitions (raised at this outlet, dept → own STORE) become
+  // actionable "pending transfers" the SM dispatches from here — constrained
+  // to what the store actually holds. Compute per-line availability so the
+  // SM sees the shortfall before transferring.
+  const internalReqs = eligibleReqs.filter(
+    (r) => r.fromDepartment.outletId === r.toDepartment.outletId
+  );
+  const pendingReqs = await Promise.all(
+    internalReqs.map(async (r) => {
+      const lines = await Promise.all(
+        r.lines
+          .filter((l) => l.qtyApproved > 0)
+          .map(async (l) => ({
+            name: l.rawMaterial.name,
+            unit: l.unit,
+            approved: l.qtyApproved,
+            available: Number((await stockAtDepartment(l.rawMaterialId, r.toDepartmentId)).toFixed(2)),
+          }))
+      );
+      return {
+        id: r.id,
+        reqNo: r.reqNo,
+        requesterDeptName: r.fromDepartment.name,
+        lines,
+        hasShortfall: lines.some((l) => l.available < l.approved),
+        canTransfer: lines.some((l) => l.available > 0),
+      };
+    })
+  );
+
   return (
     <div>
       <PageHeader
@@ -86,6 +117,9 @@ export default async function TransfersPage() {
           </NewTransferDialog>
         }
       />
+
+      <PendingRequisitions requisitions={pendingReqs} />
+
       {transfers.length === 0 ? (
         <Card><CardContent><Empty title="No transfers yet" desc="Tap New transfer to send raw material to another outlet." /></CardContent></Card>
       ) : (

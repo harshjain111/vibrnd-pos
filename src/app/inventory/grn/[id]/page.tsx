@@ -167,7 +167,7 @@ export default async function GrnDetailPage({ params }: { params: Promise<{ id: 
 
             <div className="pt-2 border-t space-y-1.5">
               <div className="text-xs uppercase tracking-wider text-muted-foreground">
-                Vendor invoice
+                Stock Purchase
               </div>
               {linkedInvoices > 0 ? (
                 <ul className="space-y-1">

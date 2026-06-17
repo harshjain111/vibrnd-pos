@@ -1,10 +1,12 @@
 "use client";
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -15,9 +17,133 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
-import { ClipboardList, Plus, Trash2 } from "lucide-react";
+import { ClipboardList, Plus, Trash2, Truck, ShoppingCart, AlertTriangle } from "lucide-react";
 import { createTransfer, receiveTransfer } from "./actions";
 import { fulfilRequisition } from "../requisitions/actions";
+
+export type PendingReq = {
+  id: string;
+  reqNo: string;
+  requesterDeptName: string;
+  lines: { name: string; unit: string; approved: number; available: number }[];
+  hasShortfall: boolean;
+  canTransfer: boolean;
+};
+
+/**
+ * Approved internal requisitions waiting for the Store Manager to dispatch.
+ * Shows approved-vs-available per line so the shortfall is visible up front.
+ * "Transfer" dispatches as much as the store holds (partial allowed); the
+ * remainder is covered by a PO via "Raise PO for shortfall".
+ */
+export function PendingRequisitions({ requisitions }: { requisitions: PendingReq[] }) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [pendingId, setPendingId] = React.useState<string | null>(null);
+
+  if (requisitions.length === 0) return null;
+
+  const transfer = (req: PendingReq) => {
+    const fd = new FormData();
+    fd.set("id", req.id);
+    setPendingId(req.id);
+    (async () => {
+      const res = await fulfilRequisition(fd);
+      setPendingId(null);
+      if (!res.ok) {
+        toast({ variant: "destructive", title: "Couldn't transfer", description: res.error });
+        return;
+      }
+      toast({
+        variant: "success",
+        title: `Dispatched ${req.reqNo}`,
+        description: "The department receives it via Raise GRN.",
+      });
+      router.refresh();
+    })();
+  };
+
+  return (
+    <Card className="mb-4 border-sky-200">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base flex items-center gap-1.5">
+          <ClipboardList className="h-4 w-4 text-sky-700" />
+          Pending requisitions
+        </CardTitle>
+        <CardDescription>
+          Approved requests awaiting dispatch. Transfer moves only what the store currently
+          holds — raise a PO for any shortfall.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {requisitions.map((r) => (
+          <div key={r.id} className="rounded-md border p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <div className="text-sm">
+                <span className="font-mono font-medium">{r.reqNo}</span>
+                <span className="text-muted-foreground"> · {r.requesterDeptName}</span>
+                {r.hasShortfall && (
+                  <Badge variant="warning" className="ml-2 text-[9px]">
+                    <AlertTriangle className="h-3 w-3" /> short on stock
+                  </Badge>
+                )}
+              </div>
+              <div className="flex gap-1.5">
+                {r.hasShortfall && (
+                  <Button asChild size="sm" variant="outline" className="border-amber-300 text-amber-800 hover:bg-amber-50">
+                    <Link href={`/inventory/purchase/new?req=${r.id}`}>
+                      <ShoppingCart className="h-4 w-4" />
+                      Raise PO for shortfall
+                    </Link>
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  onClick={() => transfer(r)}
+                  disabled={!r.canTransfer || pendingId === r.id}
+                  title={r.canTransfer ? "Dispatch available stock" : "Nothing in store to transfer"}
+                >
+                  <Truck className="h-4 w-4" />
+                  {pendingId === r.id ? "Transferring…" : "Transfer"}
+                </Button>
+              </div>
+            </div>
+            <table className="w-full text-sm">
+              <thead className="text-xs text-muted-foreground">
+                <tr className="border-b">
+                  <th className="text-left font-medium py-1">Item</th>
+                  <th className="text-right font-medium py-1 w-28">Approved</th>
+                  <th className="text-right font-medium py-1 w-28">In store</th>
+                  <th className="text-right font-medium py-1 w-28">Will send</th>
+                </tr>
+              </thead>
+              <tbody>
+                {r.lines.map((l, i) => {
+                  const willSend = Math.max(0, Math.min(l.approved, l.available));
+                  const short = l.available < l.approved;
+                  return (
+                    <tr key={i} className="border-b last:border-0">
+                      <td className="py-1 font-medium">{l.name}</td>
+                      <td className="py-1 text-right text-muted-foreground tabular-nums">
+                        {l.approved} {l.unit}
+                      </td>
+                      <td className={`py-1 text-right tabular-nums ${short ? "text-rose-700 font-semibold" : "text-muted-foreground"}`}>
+                        {l.available} {l.unit}
+                      </td>
+                      <td className="py-1 text-right tabular-nums font-medium">
+                        {willSend} {l.unit}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
 
 type Outlet = { id: string; name: string };
 type RM = { id: string; name: string; unit: string; price: number };
@@ -204,12 +330,22 @@ export function NewTransferDialog({
                   <Badge variant={pickedReq.kind === "INTERNAL" ? "secondary" : "info"} className="text-[9px]">
                     {pickedReq.kind === "INTERNAL" ? "internal" : "chain"}
                   </Badge>
-                  Stock moves from <strong>this outlet's STORE</strong> →{" "}
-                  <strong>
-                    {pickedReq.requesterDeptName}
-                    {pickedReq.kind === "CHAIN" ? ` @ ${pickedReq.requesterOutletName}` : ""}
-                  </strong>
-                  . Items + qty come from the approved requisition.
+                  {pickedReq.kind === "INTERNAL" ? (
+                    <>
+                      Dispatched from <strong>this outlet&apos;s STORE</strong> →{" "}
+                      <strong>{pickedReq.requesterDeptName}</strong>. Store stock drops now; the
+                      department&apos;s stock rises when they receive it via Raise GRN. Only
+                      what the store holds is sent.
+                    </>
+                  ) : (
+                    <>
+                      Stock moves from <strong>this outlet&apos;s STORE</strong> →{" "}
+                      <strong>
+                        {pickedReq.requesterDeptName} @ {pickedReq.requesterOutletName}
+                      </strong>
+                      . Items + qty come from the approved requisition.
+                    </>
+                  )}
                 </div>
               )}
             </div>

@@ -14,55 +14,51 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { ClipboardCheck } from "lucide-react";
-import { fulfilRequisition } from "../../requisitions/actions";
+import { receiveInternalTransfer } from "../../requisitions/actions";
 
-export type RaiseGrnReq = {
+export type PendingTransfer = {
   id: string;
-  reqNo: string;
-  raisedAtLabel: string;
-  lines: { name: string; qtyApproved: number; unit: string }[];
+  label: string;
+  sentAtLabel: string;
+  lines: { name: string; qtySent: number; unit: string }[];
 };
 
 /**
- * Dept-side counterpart to the SM's "Transfer to requester" button. Shown on
- * the department detail page so the dept lead can pull stock against an
- * approved requisition without bouncing to the requisitions screen.
- *
- * Picking a requisition shows the approved lines for confirmation; the
- * submit calls `fulfilRequisition` server-side — same path the SM uses, so
- * stock moves STORE → this dept atomically and the requisition flips to
- * FULFILLED.
+ * Department-side receipt step. The store dispatched a requisition as an
+ * INTERNAL transfer (status SENT); the dept lead "raises a GRN" against it
+ * here to pull the stock in. Confirming calls `receiveInternalTransfer`,
+ * which credits this department's ledger and flips the transfer to RECEIVED.
  */
 export function RaiseGrnButton({
   deptName,
-  requisitions,
+  transfers,
 }: {
   deptName: string;
-  requisitions: RaiseGrnReq[];
+  transfers: PendingTransfer[];
 }) {
   const router = useRouter();
   const { toast } = useToast();
   const [open, setOpen] = React.useState(false);
   const [pickedId, setPickedId] = React.useState<string>("");
   const [pending, startTransition] = React.useTransition();
-  const picked = requisitions.find((r) => r.id === pickedId) ?? null;
+  const picked = transfers.find((t) => t.id === pickedId) ?? null;
 
   const reset = () => setPickedId("");
 
   const submit = () => {
     if (!picked) return;
     const fd = new FormData();
-    fd.set("id", picked.id);
+    fd.set("transferId", picked.id);
     startTransition(async () => {
-      const res = await fulfilRequisition(fd);
+      const res = await receiveInternalTransfer(fd);
       if (!res.ok) {
-        toast({ variant: "destructive", title: "Couldn't pull stock", description: res.error });
+        toast({ variant: "destructive", title: "Couldn't receive stock", description: res.error });
         return;
       }
       toast({
         variant: "success",
-        title: `Stock moved to ${deptName}`,
-        description: `${picked.reqNo} fulfilled.`,
+        title: `Stock received into ${deptName}`,
+        description: `${picked.label} received.`,
       });
       setOpen(false);
       reset();
@@ -86,31 +82,33 @@ export function RaiseGrnButton({
       </DialogTrigger>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Raise GRN against a requisition</DialogTitle>
+          <DialogTitle>Receive a transfer into {deptName}</DialogTitle>
           <DialogDescription>
-            Pull stock from store into <strong>{deptName}</strong> against one of your approved requisitions.
-            Items + approved quantities are loaded from the requisition slip — review and confirm to apply.
+            Confirm a transfer the store has dispatched to <strong>{deptName}</strong>. The
+            dispatched items + quantities are loaded from the transfer challan — review and
+            confirm to add them to your department&apos;s stock.
           </DialogDescription>
         </DialogHeader>
-        {requisitions.length === 0 ? (
+        {transfers.length === 0 ? (
           <div className="rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">
-            No approved requisitions for {deptName} yet.
+            No pending transfers for {deptName} yet.
             <br />
-            Raise one first — the store manager approves, then come back here.
+            Raise a requisition, the store manager approves and dispatches it from the
+            Transfers tab, then it shows up here to receive.
           </div>
         ) : (
           <div className="space-y-3">
             <div>
-              <Label>Requisition</Label>
+              <Label>Transfer</Label>
               <select
                 value={pickedId}
                 onChange={(e) => setPickedId(e.target.value)}
                 className="h-9 w-full rounded-md border bg-background px-3 text-sm"
               >
-                <option value="">Pick a requisition…</option>
-                {requisitions.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.reqNo} · {r.lines.length} item(s) · raised {r.raisedAtLabel}
+                <option value="">Pick a transfer…</option>
+                {transfers.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label} · {t.lines.length} item(s) · dispatched {t.sentAtLabel}
                   </option>
                 ))}
               </select>
@@ -119,20 +117,20 @@ export function RaiseGrnButton({
             {picked && (
               <div className="rounded-md border bg-muted/30 p-2">
                 <div className="text-xs text-muted-foreground mb-2">
-                  Items in <strong>{picked.reqNo}</strong> (approved quantities):
+                  Items in <strong>{picked.label}</strong> (dispatched quantities):
                 </div>
                 <ul className="divide-y bg-background rounded">
                   {picked.lines.map((l, i) => (
                     <li key={i} className="px-2 py-1.5 flex items-center justify-between gap-2 text-sm">
                       <span className="font-medium">{l.name}</span>
                       <span className="tabular-nums text-muted-foreground">
-                        {l.qtyApproved} {l.unit}
+                        {l.qtySent} {l.unit}
                       </span>
                     </li>
                   ))}
                 </ul>
                 <div className="text-[11px] text-muted-foreground mt-2">
-                  On confirm, stock will be decremented from store and credited to {deptName}.
+                  On confirm, these quantities are credited to {deptName}&apos;s stock.
                 </div>
               </div>
             )}
@@ -143,7 +141,7 @@ export function RaiseGrnButton({
             Cancel
           </Button>
           <Button type="button" onClick={submit} disabled={!picked || pending}>
-            {pending ? "Pulling…" : "Confirm + receive stock"}
+            {pending ? "Receiving…" : "Confirm + receive stock"}
           </Button>
         </DialogFooter>
       </DialogContent>
