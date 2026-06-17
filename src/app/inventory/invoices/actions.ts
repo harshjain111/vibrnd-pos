@@ -42,62 +42,58 @@ const CreateInput = z.object({
   /** Path to the uploaded invoice file in Supabase Storage. Optional. */
   fileUrl: z.string().optional(),
   notes: z.string().optional(),
-  /** GRNs this invoice covers. amount can be 0 (auto-split equally). */
+  /** Purchase Order this stock purchase is raised against. Preferred path —
+   *  selecting the PO pulls in the supplier + lines and bounds qty against
+   *  the order. Stock itself moves on GRN, not here. */
+  poId: z.string().optional(),
+  /** Legacy GRN linkage. Optional now — only used by the old GRN-first flow. */
   grnLinks: z
     .array(z.object({ grnId: z.string(), amount: z.coerce.number().nonnegative().default(0) }))
-    .min(1),
+    .optional()
+    .default([]),
   /** Per-item lines captured from the vendor's bill. Drives sub/tax/grand. */
   lines: z.array(LineInput).min(1),
 });
 
 export async function createVendorInvoice(
-  input: z.infer<typeof CreateInput>
+  input: z.input<typeof CreateInput>
 ): Promise<{ id: string }> {
   const user = await requireUser();
   const data = CreateInput.parse(input);
   const outlet = await getActiveOutlet();
 
-  // 1. Validate every GRN belongs to this outlet + supplier matches PO supplier.
-  const grns = await db.grn.findMany({
-    where: { id: { in: data.grnLinks.map((l) => l.grnId) }, outletId: outlet.id },
-    include: { po: { select: { id: true, supplierId: true } } },
-  });
-  if (grns.length !== data.grnLinks.length) throw new Error("One or more GRNs not found");
-  for (const g of grns) {
-    if (g.po && g.po.supplierId !== data.supplierId) {
-      throw new Error("GRN supplier doesn't match invoice supplier");
-    }
+  const draftByRm = new Map<string, number>();
+  for (const l of data.lines) {
+    draftByRm.set(l.rawMaterialId, (draftByRm.get(l.rawMaterialId) ?? 0) + l.qty);
   }
+  const rmNames = new Map(
+    (
+      await db.rawMaterial.findMany({
+        where: { id: { in: Array.from(draftByRm.keys()) }, outletId: outlet.id },
+        select: { id: true, name: true },
+      })
+    ).map((r) => [r.id, r.name])
+  );
 
-  // 2. Collect the POs behind these GRNs. If every linked GRN is ad-hoc
-  //    (no PO), we skip the qty cap — there's no order to bound against.
-  const linkedPoIds = Array.from(new Set(grns.map((g) => g.poId).filter(Boolean) as string[]));
-  const hasPoContext = linkedPoIds.length > 0;
-
-  if (hasPoContext) {
-    // Aggregate ordered qty per RM across all linked POs.
-    const poLines = await db.purchaseOrderLine.findMany({
-      where: { poId: { in: linkedPoIds } },
-      select: { rawMaterialId: true, qty: true },
+  if (data.poId) {
+    // ── PO-first flow ───────────────────────────────────────────────────
+    // Validate the PO, bound each line against (ordered − already invoiced
+    // against this PO), and stamp the link. No GRN needed.
+    const po = await db.purchaseOrder.findFirst({
+      where: { id: data.poId, outletId: outlet.id },
+      include: { lines: { select: { rawMaterialId: true, qty: true } } },
     });
+    if (!po) throw new Error("Purchase order not found at this outlet");
+    if (po.supplierId !== data.supplierId) {
+      throw new Error("PO supplier doesn't match the stock-purchase supplier");
+    }
+
     const orderedByRm = new Map<string, number>();
-    for (const l of poLines) {
+    for (const l of po.lines) {
       orderedByRm.set(l.rawMaterialId, (orderedByRm.get(l.rawMaterialId) ?? 0) + l.qty);
     }
-
-    // What's already been invoiced against ANY GRN tied to these POs (not
-    // counting this draft). Subtract from ordered to get remaining budget.
-    const siblingGrns = await db.grn.findMany({
-      where: { poId: { in: linkedPoIds } },
-      select: { id: true },
-    });
-    const siblingGrnIds = siblingGrns.map((g) => g.id);
     const priorInvoices = await db.vendorInvoice.findMany({
-      where: {
-        outletId: outlet.id,
-        supplierId: data.supplierId,
-        grnLinks: { some: { grnId: { in: siblingGrnIds } } },
-      },
+      where: { outletId: outlet.id, poId: po.id },
       select: { lines: { select: { rawMaterialId: true, qty: true } } },
     });
     const invoicedByRm = new Map<string, number>();
@@ -106,41 +102,85 @@ export async function createVendorInvoice(
         invoicedByRm.set(l.rawMaterialId, (invoicedByRm.get(l.rawMaterialId) ?? 0) + l.qty);
       }
     }
-
-    // Sum this draft's qty per RM, then check against (ordered − already invoiced).
-    const draftByRm = new Map<string, number>();
-    for (const l of data.lines) {
-      draftByRm.set(l.rawMaterialId, (draftByRm.get(l.rawMaterialId) ?? 0) + l.qty);
-    }
-
-    // Item identity check + qty cap.
-    const rmIds = Array.from(draftByRm.keys());
-    const rms = await db.rawMaterial.findMany({
-      where: { id: { in: rmIds }, outletId: outlet.id },
-      select: { id: true, name: true },
-    });
-    const rmNameById = new Map(rms.map((r) => [r.id, r.name]));
-
     for (const [rmId, draftQty] of draftByRm) {
       const ordered = orderedByRm.get(rmId);
       if (ordered === undefined) {
-        throw new Error(
-          `${rmNameById.get(rmId) ?? "Item"} isn't on any of the linked POs — can't invoice it here`
-        );
+        throw new Error(`${rmNames.get(rmId) ?? "Item"} isn't on this PO — can't bill it here`);
       }
       const already = invoicedByRm.get(rmId) ?? 0;
       const available = ordered - already;
       if (draftQty > available + 0.001) {
         throw new Error(
-          `${rmNameById.get(rmId) ?? "Item"}: invoiced qty ${draftQty} exceeds remaining PO budget ${available.toFixed(
+          `${rmNames.get(rmId) ?? "Item"}: billed qty ${draftQty} exceeds remaining PO budget ${available.toFixed(
             2
-          )} (ordered ${ordered}, already invoiced ${already})`
+          )} (ordered ${ordered}, already billed ${already})`
         );
       }
     }
+  } else if (data.grnLinks.length > 0) {
+    // ── Legacy GRN-first flow (kept for back-compat) ────────────────────
+    const grns = await db.grn.findMany({
+      where: { id: { in: data.grnLinks.map((l) => l.grnId) }, outletId: outlet.id },
+      include: { po: { select: { id: true, supplierId: true } } },
+    });
+    if (grns.length !== data.grnLinks.length) throw new Error("One or more GRNs not found");
+    for (const g of grns) {
+      if (g.po && g.po.supplierId !== data.supplierId) {
+        throw new Error("GRN supplier doesn't match invoice supplier");
+      }
+    }
+    const linkedPoIds = Array.from(new Set(grns.map((g) => g.poId).filter(Boolean) as string[]));
+    if (linkedPoIds.length > 0) {
+      const poLines = await db.purchaseOrderLine.findMany({
+        where: { poId: { in: linkedPoIds } },
+        select: { rawMaterialId: true, qty: true },
+      });
+      const orderedByRm = new Map<string, number>();
+      for (const l of poLines) {
+        orderedByRm.set(l.rawMaterialId, (orderedByRm.get(l.rawMaterialId) ?? 0) + l.qty);
+      }
+      const siblingGrns = await db.grn.findMany({
+        where: { poId: { in: linkedPoIds } },
+        select: { id: true },
+      });
+      const siblingGrnIds = siblingGrns.map((g) => g.id);
+      const priorInvoices = await db.vendorInvoice.findMany({
+        where: {
+          outletId: outlet.id,
+          supplierId: data.supplierId,
+          grnLinks: { some: { grnId: { in: siblingGrnIds } } },
+        },
+        select: { lines: { select: { rawMaterialId: true, qty: true } } },
+      });
+      const invoicedByRm = new Map<string, number>();
+      for (const inv of priorInvoices) {
+        for (const l of inv.lines) {
+          invoicedByRm.set(l.rawMaterialId, (invoicedByRm.get(l.rawMaterialId) ?? 0) + l.qty);
+        }
+      }
+      for (const [rmId, draftQty] of draftByRm) {
+        const ordered = orderedByRm.get(rmId);
+        if (ordered === undefined) {
+          throw new Error(
+            `${rmNames.get(rmId) ?? "Item"} isn't on any of the linked POs — can't invoice it here`
+          );
+        }
+        const already = invoicedByRm.get(rmId) ?? 0;
+        const available = ordered - already;
+        if (draftQty > available + 0.001) {
+          throw new Error(
+            `${rmNames.get(rmId) ?? "Item"}: invoiced qty ${draftQty} exceeds remaining PO budget ${available.toFixed(
+              2
+            )} (ordered ${ordered}, already invoiced ${already})`
+          );
+        }
+      }
+    }
+  } else {
+    throw new Error("Select a purchase order (or link a GRN) for this stock purchase");
   }
 
-  // 3. Compute line totals + roll the invoice header.
+  // Compute line totals + roll the invoice header.
   const lines = data.lines.map((l) => {
     const lineSubTotal = round2(l.qty * l.unitPrice);
     const lineTax = round2((lineSubTotal * l.taxRate) / 100);
@@ -161,18 +201,22 @@ export async function createVendorInvoice(
   const taxTotal = round2(lines.reduce((s, l) => s + l.lineTax, 0));
   const grandTotal = round2(lines.reduce((s, l) => s + l.lineTotal, 0));
 
-  // 4. Auto-split grandTotal across linked GRNs when no explicit amounts.
-  const explicit = data.grnLinks.filter((l) => l.amount > 0);
-  let links: { grnId: string; amount: number }[];
-  if (explicit.length === 0) {
-    const per = round2(grandTotal / data.grnLinks.length);
-    links = data.grnLinks.map((l, i) => ({
-      grnId: l.grnId,
-      amount:
-        i === data.grnLinks.length - 1 ? round2(grandTotal - per * (data.grnLinks.length - 1)) : per,
-    }));
-  } else {
-    links = data.grnLinks.map((l) => ({ grnId: l.grnId, amount: l.amount }));
+  // Auto-split grandTotal across any linked GRNs (legacy path only).
+  let links: { grnId: string; amount: number }[] = [];
+  if (data.grnLinks.length > 0) {
+    const explicit = data.grnLinks.filter((l) => l.amount > 0);
+    if (explicit.length === 0) {
+      const per = round2(grandTotal / data.grnLinks.length);
+      links = data.grnLinks.map((l, i) => ({
+        grnId: l.grnId,
+        amount:
+          i === data.grnLinks.length - 1
+            ? round2(grandTotal - per * (data.grnLinks.length - 1))
+            : per,
+      }));
+    } else {
+      links = data.grnLinks.map((l) => ({ grnId: l.grnId, amount: l.amount }));
+    }
   }
 
   const invoice = await db.vendorInvoice.create({
@@ -180,6 +224,7 @@ export async function createVendorInvoice(
       supplierId: data.supplierId,
       invoiceNo: data.invoiceNo.trim(),
       invoiceDate: new Date(data.invoiceDate),
+      poId: data.poId ?? null,
       outletId: outlet.id,
       subTotal,
       taxTotal,
@@ -189,7 +234,7 @@ export async function createVendorInvoice(
       fileUrl: data.fileUrl,
       notes: data.notes,
       createdById: user.id,
-      grnLinks: { create: links },
+      grnLinks: links.length > 0 ? { create: links } : undefined,
       lines: { create: lines },
     },
   });

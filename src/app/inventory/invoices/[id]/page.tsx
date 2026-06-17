@@ -24,6 +24,7 @@ export default async function VendorInvoiceDetailPage({
     where: { id, outletId: outlet.id },
     include: {
       supplier: true,
+      po: { select: { id: true, poNo: true } },
       grnLinks: { include: { grn: { select: { id: true, grnNo: true, status: true, receivedAt: true } } } },
       lines: { include: { rawMaterial: { select: { name: true } } } },
       payments: { orderBy: { occurredAt: "desc" } },
@@ -96,43 +97,61 @@ export default async function VendorInvoiceDetailPage({
             </Card>
           )}
 
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">GRNs covered ({inv.grnLinks.length})</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>GRN</TableHead>
-                    <TableHead>Received</TableHead>
-                    <TableHead className="text-right">Amount on invoice</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {inv.grnLinks.map((vl) => (
-                    <TableRow key={vl.grnId}>
-                      <TableCell>
-                        <Link href={`/inventory/grn/${vl.grnId}`} className="font-mono text-xs hover:underline">
-                          {vl.grn.grnNo}
-                        </Link>
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {vl.grn.receivedAt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}
-                      </TableCell>
-                      <TableCell className="text-right font-medium">{inr(Math.round(vl.amount))}</TableCell>
-                      <TableCell>
-                        <Badge variant={vl.grn.status === "CLOSED" ? "success" : "warning"} className="text-[10px]">
-                          {vl.grn.status}
-                        </Badge>
-                      </TableCell>
+          {inv.po && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Against purchase order</CardTitle>
+              </CardHeader>
+              <CardContent className="p-3">
+                <Link
+                  href={`/inventory/purchase/${inv.po.id}`}
+                  className="font-mono text-sm hover:underline text-primary"
+                >
+                  {inv.po.poNo}
+                </Link>
+              </CardContent>
+            </Card>
+          )}
+
+          {inv.grnLinks.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">GRNs covered ({inv.grnLinks.length})</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>GRN</TableHead>
+                      <TableHead>Received</TableHead>
+                      <TableHead className="text-right">Amount on invoice</TableHead>
+                      <TableHead>Status</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {inv.grnLinks.map((vl) => (
+                      <TableRow key={vl.grnId}>
+                        <TableCell>
+                          <Link href={`/inventory/grn/${vl.grnId}`} className="font-mono text-xs hover:underline">
+                            {vl.grn.grnNo}
+                          </Link>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {vl.grn.receivedAt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}
+                        </TableCell>
+                        <TableCell className="text-right font-medium">{inr(Math.round(vl.amount))}</TableCell>
+                        <TableCell>
+                          <Badge variant={vl.grn.status === "CLOSED" ? "success" : "warning"} className="text-[10px]">
+                            {vl.grn.status}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader className="pb-2">

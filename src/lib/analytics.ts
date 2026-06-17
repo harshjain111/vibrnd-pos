@@ -40,9 +40,28 @@ export function rangeBounds(key: RangeKey): { from: Date; to: Date; label: strin
 export async function dashboardKpis(outletId: string, key: RangeKey = "last7") {
   const { from, to, label } = rangeBounds(key);
 
-  const orders = await db.order.findMany({
-    where: { outletId, createdAt: { gte: from, lte: to }, status: { in: ["PAID", "PRINTED", "SAVED"] } },
-  });
+  // The trend chart always covers the last 7 calendar days, independent of the
+  // selected range. Fetch its window in ONE query and bucket by day in JS
+  // instead of firing 7 separate day queries.
+  const now = new Date();
+  const trendStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+
+  // All independent reads run in parallel — sequential round-trips were the
+  // dashboard's bottleneck (and, with a small pooled connection limit, a
+  // P2024 timeout risk on serverless). One Promise.all keeps the whole page
+  // to a single batch of DB work.
+  const PAID_STATES = ["PAID", "PRINTED", "SAVED"] as const;
+  const [orders, expenses, cancelled, trendOrders] = await Promise.all([
+    db.order.findMany({
+      where: { outletId, createdAt: { gte: from, lte: to }, status: { in: [...PAID_STATES] } },
+    }),
+    db.expense.findMany({ where: { outletId, createdAt: { gte: from, lte: to } } }),
+    db.order.count({ where: { outletId, status: "CANCELLED", createdAt: { gte: from, lte: to } } }),
+    db.order.findMany({
+      where: { outletId, createdAt: { gte: trendStart, lte: now }, status: { in: [...PAID_STATES] } },
+      select: { createdAt: true, grandTotal: true },
+    }),
+  ]);
 
   const totalSales = orders.reduce((s, o) => s + o.grandTotal, 0);
   const totalTax = orders.reduce((s, o) => s + o.taxTotal, 0);
@@ -61,7 +80,6 @@ export async function dashboardKpis(outletId: string, key: RangeKey = "last7") {
     other: byPayment("DUE"),
   };
 
-  const expenses = await db.expense.findMany({ where: { outletId, createdAt: { gte: from, lte: to } } });
   const expensesTotal = expenses.reduce((s, e) => s + e.amount, 0);
 
   // Hourly distribution (0-23) for chart
@@ -72,16 +90,13 @@ export async function dashboardKpis(outletId: string, key: RangeKey = "last7") {
     hourly[h].sales += o.grandTotal;
   }
 
-  // Per-day for last 7 days (regardless of range — used in trend chart)
+  // Per-day for last 7 days — bucket the single trend query in memory.
   const trend: { date: string; sales: number; orders: number }[] = [];
-  const now = new Date();
   for (let i = 6; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
     const next = new Date(d);
     next.setDate(d.getDate() + 1);
-    const dayOrders = await db.order.findMany({
-      where: { outletId, createdAt: { gte: d, lt: next }, status: { in: ["PAID", "PRINTED", "SAVED"] } },
-    });
+    const dayOrders = trendOrders.filter((o) => o.createdAt >= d && o.createdAt < next);
     trend.push({
       date: d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" }),
       sales: dayOrders.reduce((s, o) => s + o.grandTotal, 0),
@@ -111,7 +126,7 @@ export async function dashboardKpis(outletId: string, key: RangeKey = "last7") {
     trend,
     statusCounts: {
       successful: orders.filter((o) => o.status === "PAID").length,
-      cancelled: await db.order.count({ where: { outletId, status: "CANCELLED", createdAt: { gte: from, lte: to } } }),
+      cancelled,
     },
   };
 }

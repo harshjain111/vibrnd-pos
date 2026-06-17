@@ -55,6 +55,7 @@ export type PageId =
   | "inventory.purchase.approve"
   | "inventory.grn"
   | "inventory.invoices"
+  | "inventory.purchase_return"
   | "inventory.payments"
   | "inventory.production"
   | "inventory.reports.chain-stock"
@@ -161,6 +162,7 @@ export const PAGES: PageDef[] = [
   { id: "inventory.purchase.approve", label: "Approve POs", category: "Inventory", defaultRoles: ["COST_CONTROLLER", "OWNER"] },
   { id: "inventory.grn", label: "Goods received notes", category: "Inventory", defaultRoles: ["STORE_MANAGER", "ACCOUNTANT", "MANAGER", "OWNER"] },
   { id: "inventory.invoices", label: "Stock Purchase", category: "Inventory", defaultRoles: ["ACCOUNTANT", "OWNER"] },
+  { id: "inventory.purchase_return", label: "Purchase Return", category: "Inventory", defaultRoles: ["STORE_MANAGER", "ACCOUNTANT", "MANAGER", "OWNER"] },
   { id: "inventory.payments", label: "Vendor payments", category: "Inventory", defaultRoles: ["ACCOUNTANT", "OWNER"] },
   { id: "inventory.production", label: "Production", category: "Inventory", defaultRoles: ["PRODUCTION_MANAGER", "MANAGER", "OWNER"] },
   { id: "inventory.reports.chain-stock", label: "Chain stock matrix", category: "Inventory", defaultRoles: ["MANAGER", "OWNER"] },

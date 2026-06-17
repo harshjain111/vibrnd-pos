@@ -759,6 +759,8 @@ model PurchaseOrder {
   lines        PurchaseOrderLine[]
   purchases    Purchase[]
   grns         Grn[]
+  /// Stock Purchases (vendor bills) recorded against this PO.
+  stockPurchases VendorInvoice[]
   receivedAt   DateTime?
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
@@ -1839,6 +1841,11 @@ model VendorInvoice {
   invoiceDate     DateTime
   supplierId      String
   supplier        Supplier @relation(fields: [supplierId], references: [id])
+  /// Optional link to the Purchase Order this stock purchase was raised
+  /// against. The PO-first flow records this so qty caps + "already invoiced
+  /// against PO" can be computed directly, without going through GRNs.
+  poId            String?
+  po              PurchaseOrder? @relation(fields: [poId], references: [id])
   outletId        String
   outlet          Outlet   @relation(fields: [outletId], references: [id])
   subTotal        Float    @default(0)
