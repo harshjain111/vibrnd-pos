@@ -864,6 +864,7 @@ export function BillingScreen({
           pending={pending}
           canApplyDiscount={canApplyDiscount}
           canSettleBill={canSettleBill}
+          resumedOrderId={resumedOrderId}
         />
       )}
 
@@ -2105,6 +2106,11 @@ function SettleStep(props: {
   pending: boolean;
   canApplyDiscount?: boolean;
   canSettleBill?: boolean;
+  /** If set, this is a resumed bill — render the "Bill actions" panel
+   *  with quick links to the bill-detail page so the cashier can void,
+   *  split, comp, move the table, change the customer, or apply a
+   *  manual discount without leaving the Settle step manually. */
+  resumedOrderId?: string | null;
 }) {
   const {
     cart,
@@ -2150,12 +2156,54 @@ function SettleStep(props: {
     pending,
     canApplyDiscount = true,
     canSettleBill = true,
+    resumedOrderId,
   } = props;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4">
       {/* Adjustments */}
       <div className="space-y-3">
+        {resumedOrderId && (
+          // Bill actions panel — same buttons that live on /orders/[id],
+          // surfaced here as quick links so the cashier doesn't have to
+          // hunt for them. Each link opens the bill-detail page where
+          // the action's dialog can be triggered. Role gating happens
+          // server-side on /orders/[id] (canAccess), so we render them
+          // all here and let the destination page hide what the role
+          // can't use.
+          <Card className="border-primary/30 bg-primary/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                Bill actions
+                <span className="text-[10px] font-normal text-muted-foreground uppercase tracking-wider">
+                  Opens full bill page
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                <Button asChild variant="outline" size="sm" className="justify-start">
+                  <Link href={`/orders/${resumedOrderId}`}>Split bill</Link>
+                </Button>
+                <Button asChild variant="outline" size="sm" className="justify-start">
+                  <Link href={`/orders/${resumedOrderId}`}>Void item</Link>
+                </Button>
+                <Button asChild variant="outline" size="sm" className="justify-start">
+                  <Link href={`/orders/${resumedOrderId}`}>Comp item</Link>
+                </Button>
+                <Button asChild variant="outline" size="sm" className="justify-start">
+                  <Link href={`/orders/${resumedOrderId}`}>Move table</Link>
+                </Button>
+                <Button asChild variant="outline" size="sm" className="justify-start">
+                  <Link href={`/orders/${resumedOrderId}`}>Change customer</Link>
+                </Button>
+                <Button asChild variant="outline" size="sm" className="justify-start">
+                  <Link href={`/orders/${resumedOrderId}`}>Apply discount</Link>
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Items</CardTitle>
