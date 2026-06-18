@@ -1922,6 +1922,13 @@ model GrnLine {
   /// Snapshot of unit cost at the moment of receipt — used for avg-cost
   /// roll-forward on the receiving dept's stock.
   unitCost      Float
+  /// Per-line tax + discount captured from the vendor's challan, per
+  /// the GRN spec. The line's contribution to the GRN header's tax
+  /// total is taxAmount; discountAmount is netted out of the landed
+  /// cost calculation for this line.
+  taxRate       Float              @default(0)  // % GST applied to this item
+  taxAmount     Float              @default(0)  // = qtyReceived × unitCost × taxRate / 100
+  lineDiscount  Float              @default(0)  // ₹ discount on this line
   batchNo       String?
   expiryDate    DateTime?
   note          String?

@@ -27,11 +27,21 @@ type AdHocLine = {
   rawMaterialId: string;
   qtyReceived: string;
   unitCost: string;
+  taxRate: string;
+  lineDiscount: string;
   note: string;
 };
 
 function newAdHocLine(): AdHocLine {
-  return { key: Math.random().toString(36).slice(2), rawMaterialId: "", qtyReceived: "", unitCost: "", note: "" };
+  return {
+    key: Math.random().toString(36).slice(2),
+    rawMaterialId: "",
+    qtyReceived: "",
+    unitCost: "",
+    taxRate: "",
+    lineDiscount: "",
+    note: "",
+  };
 }
 
 export function NewGrnForm({
@@ -47,21 +57,25 @@ export function NewGrnForm({
   const { toast } = useToast();
   const [pending, startTransition] = React.useTransition();
   const [notes, setNotes] = React.useState("");
-  const [keepOpen, setKeepOpen] = React.useState(false);
-  // Challan / Invoice header — spec section 3. These feed apportioned
-  // landed-cost on the FIFO batches the server creates per line.
+  // Bill-level charges only — per-line tax + discount land in the
+  // line-item table now (spec section 3).
   const [vendorInvoiceNo, setVendorInvoiceNo] = React.useState("");
   const [vendorInvoiceDate, setVendorInvoiceDate] = React.useState("");
   const [freightCharges, setFreightCharges] = React.useState("");
   const [deliveryCharges, setDeliveryCharges] = React.useState("");
-  const [discountAmount, setDiscountAmount] = React.useState("");
   const [otherCharges, setOtherCharges] = React.useState("");
-  const [taxAmount, setTaxAmount] = React.useState("");
+
+  type PoRowState = {
+    qtyReceived: string;
+    qtyDamaged: string;
+    batchNo: string;
+    note: string;
+    taxRate: string;
+    lineDiscount: string;
+  };
 
   /* ── PO mode ─────────────────────────────────────────────── */
-  const [poReceive, setPoReceive] = React.useState<
-    Record<string, { qtyReceived: string; qtyDamaged: string; batchNo: string; note: string }>
-  >(() =>
+  const [poReceive, setPoReceive] = React.useState<Record<string, PoRowState>>(() =>
     Object.fromEntries(
       poLines.map((l) => [
         l.id,
@@ -70,14 +84,14 @@ export function NewGrnForm({
           qtyDamaged: "",
           batchNo: "",
           note: "",
+          taxRate: "",
+          lineDiscount: "",
         },
       ])
     )
   );
-  const updPo = (
-    id: string,
-    patch: Partial<{ qtyReceived: string; qtyDamaged: string; batchNo: string; note: string }>
-  ) => setPoReceive((s) => ({ ...s, [id]: { ...s[id], ...patch } }));
+  const updPo = (id: string, patch: Partial<PoRowState>) =>
+    setPoReceive((s) => ({ ...s, [id]: { ...s[id], ...patch } }));
 
   /* ── Ad-hoc mode ─────────────────────────────────────────── */
   const [adHocLines, setAdHocLines] = React.useState<AdHocLine[]>([newAdHocLine()]);
@@ -88,7 +102,7 @@ export function NewGrnForm({
   const updAdHoc = (key: string, patch: Partial<AdHocLine>) =>
     setAdHocLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
-  const submit = () => {
+  const submit = (keepPoOpen: boolean) => {
     const lines = poId
       ? poLines
           .map((pl) => {
@@ -104,6 +118,8 @@ export function NewGrnForm({
               qtyShort: Math.max(0, pl.qtyOrdered - pl.qtyAlreadyReceived - qtyReceived - qtyDamaged),
               unit: pl.unit,
               unitCost: pl.unitPrice,
+              taxRate: Number(r?.taxRate) || 0,
+              lineDiscount: Number(r?.lineDiscount) || 0,
               batchNo: r?.batchNo || undefined,
               note: r?.note || undefined,
             };
@@ -120,6 +136,8 @@ export function NewGrnForm({
               qtyShort: 0,
               unit: rm?.unit ?? "kg",
               unitCost: Number(l.unitCost) || rm?.avgCost || 0,
+              taxRate: Number(l.taxRate) || 0,
+              lineDiscount: Number(l.lineDiscount) || 0,
               note: l.note || undefined,
             };
           });
@@ -133,14 +151,12 @@ export function NewGrnForm({
       const res = await createGrn({
         poId: poId ?? undefined,
         notes: notes || undefined,
-        keepOpen,
+        keepOpen: keepPoOpen,
         vendorInvoiceNo: vendorInvoiceNo || undefined,
         vendorInvoiceDate: vendorInvoiceDate || undefined,
         freightCharges: Number(freightCharges) || 0,
         deliveryCharges: Number(deliveryCharges) || 0,
-        discountAmount: Number(discountAmount) || 0,
         otherCharges: Number(otherCharges) || 0,
-        taxAmount: Number(taxAmount) || 0,
         lines,
       });
       if (!res.ok) {
@@ -151,7 +167,10 @@ export function NewGrnForm({
         });
         return;
       }
-      toast({ variant: "success", title: "GRN saved · stock moved" });
+      toast({
+        variant: "success",
+        title: keepPoOpen ? "GRN saved · PO kept open" : "GRN saved · PO closed",
+      });
       router.push(`/inventory/grn/${res.id}`);
     });
   };
@@ -172,12 +191,10 @@ export function NewGrnForm({
         />
       )}
 
-      {/* Challan / Invoice details — captured per spec section 3.
-          The freight/delivery/discount/other figures apportion across
-          the line items so each stock batch carries its true landed
-          cost (not just the bare invoice rate). */}
+      {/* Challan / Invoice — bill level only. Per-line tax + discount
+          live in the line-item table above. */}
       <div className="rounded-md border bg-card p-3 space-y-3">
-        <div className="text-sm font-semibold">Challan / Invoice details</div>
+        <div className="text-sm font-semibold">Bill-level charges (challan / invoice)</div>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           <div>
             <Label>Vendor invoice no</Label>
@@ -193,17 +210,6 @@ export function NewGrnForm({
               type="date"
               value={vendorInvoiceDate}
               onChange={(e) => setVendorInvoiceDate(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label>Tax amount (₹)</Label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              value={taxAmount}
-              onChange={(e) => setTaxAmount(e.target.value)}
-              placeholder="0"
             />
           </div>
           <div>
@@ -239,52 +245,44 @@ export function NewGrnForm({
               placeholder="0"
             />
           </div>
-          <div className="col-span-2 md:col-span-3">
-            <Label>Discount (₹)</Label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              value={discountAmount}
-              onChange={(e) => setDiscountAmount(e.target.value)}
-              placeholder="0 — vendor's invoice discount, applied before landed cost"
-            />
-          </div>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Freight, delivery, tax + other charges apportion across the line
-          items by ₹-weight, so each batch's landed rate reflects its
-          true cost. Discount reduces the landed rate proportionally.
+          Per-item rate, tax %, and discount go on each line above. Bill-level
+          freight, delivery + other charges apportion across the lines by
+          ₹-weight so each batch's landed rate reflects its true cost.
         </p>
       </div>
 
-      {/* Notes + keep-open + submit */}
-      <div className="grid md:grid-cols-2 gap-3">
-        <div>
-          <Label>Notes (optional)</Label>
-          <Input
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="e.g. driver waited 20 min for security clearance"
-          />
-        </div>
-        <div className="flex items-end">
-          <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
-            <input
-              type="checkbox"
-              checked={keepOpen}
-              onChange={(e) => setKeepOpen(e.target.checked)}
-              className="h-4 w-4"
-            />
-            <span>Keep this GRN OPEN — vendor will drop more later</span>
-          </label>
-        </div>
+      {/* Notes */}
+      <div>
+        <Label>Notes (optional)</Label>
+        <Input
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="e.g. driver waited 20 min for security clearance"
+        />
       </div>
 
-      <div className="flex items-center justify-end gap-2 pt-2 border-t">
-        <Button onClick={submit} disabled={pending}>
+      {/* Two buttons per the spec section 3 decision branch:
+          ALL ITEMS RECEIVED? → Close PO & Save GRN
+          NO + more expected → Keep PO open & Save GRN
+          The SM picks the path on receipt. The ad-hoc case ignores
+          keepOpen since there's no PO to keep open. */}
+      <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2 pt-2 border-t">
+        {poId && (
+          <Button
+            onClick={() => submit(true)}
+            disabled={pending}
+            variant="outline"
+            size="lg"
+          >
+            <Truck className="h-4 w-4" />
+            {pending ? "Saving…" : "Keep PO open & save GRN"}
+          </Button>
+        )}
+        <Button onClick={() => submit(false)} disabled={pending} size="lg">
           <Truck className="h-4 w-4" />
-          {pending ? "Saving…" : "Save GRN & move stock"}
+          {pending ? "Saving…" : poId ? "Close PO & save GRN" : "Save GRN & move stock"}
         </Button>
       </div>
     </div>
@@ -297,7 +295,14 @@ function PoLines({
   update,
 }: {
   lines: PoLine[];
-  state: Record<string, { qtyReceived: string; qtyDamaged: string; batchNo: string; note: string }>;
+  state: Record<string, {
+    qtyReceived: string;
+    qtyDamaged: string;
+    batchNo: string;
+    note: string;
+    taxRate: string;
+    lineDiscount: string;
+  }>;
   update: (id: string, patch: any) => void;
 }) {
   return (
@@ -308,12 +313,15 @@ function PoLines({
           <thead className="bg-muted/40">
             <tr>
               <th className="text-left p-2">Item</th>
-              <th className="text-right p-2 w-24">Ordered</th>
-              <th className="text-right p-2 w-24">Already</th>
-              <th className="text-right p-2 w-28">Receiving</th>
-              <th className="text-right p-2 w-24">Damaged</th>
-              <th className="text-right p-2 w-24">Unit cost</th>
-              <th className="text-left p-2 w-40">Batch / note</th>
+              <th className="text-right p-2 w-20">Ordered</th>
+              <th className="text-right p-2 w-20">Already</th>
+              <th className="text-right p-2 w-24">Receiving</th>
+              <th className="text-right p-2 w-20">Damaged</th>
+              <th className="text-right p-2 w-20">Rate (₹)</th>
+              <th className="text-right p-2 w-16">Tax %</th>
+              <th className="text-right p-2 w-20">Disc (₹)</th>
+              <th className="text-right p-2 w-24">Line total</th>
+              <th className="text-left p-2 w-32">Batch</th>
             </tr>
           </thead>
           <tbody>
@@ -358,6 +366,38 @@ function PoLines({
                   </td>
                   <td className="p-2 text-right text-xs text-muted-foreground">
                     {inr2(l.unitPrice)}
+                  </td>
+                  <td className="p-2 text-right">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={r?.taxRate ?? ""}
+                      onChange={(e) => update(l.id, { taxRate: e.target.value })}
+                      placeholder="0"
+                      className="h-8 w-16 text-right ml-auto"
+                    />
+                  </td>
+                  <td className="p-2 text-right">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={r?.lineDiscount ?? ""}
+                      onChange={(e) => update(l.id, { lineDiscount: e.target.value })}
+                      placeholder="0"
+                      className="h-8 w-20 text-right ml-auto"
+                    />
+                  </td>
+                  <td className="p-2 text-right text-xs tabular-nums">
+                    {(() => {
+                      const qty = Number(r?.qtyReceived) || 0;
+                      const rate = l.unitPrice;
+                      const tax = qty * rate * (Number(r?.taxRate) || 0) / 100;
+                      const disc = Number(r?.lineDiscount) || 0;
+                      const total = qty * rate + tax - disc;
+                      return total > 0 ? inr2(total) : "—";
+                    })()}
                   </td>
                   <td className="p-2">
                     <Input
@@ -405,8 +445,11 @@ function AdHocLines({
           <thead className="bg-muted/40">
             <tr>
               <th className="text-left p-2">Raw material</th>
-              <th className="text-right p-2 w-28">Qty</th>
-              <th className="text-right p-2 w-28">Unit cost ₹</th>
+              <th className="text-right p-2 w-24">Qty</th>
+              <th className="text-right p-2 w-24">Rate (₹)</th>
+              <th className="text-right p-2 w-16">Tax %</th>
+              <th className="text-right p-2 w-20">Disc (₹)</th>
+              <th className="text-right p-2 w-24">Line total</th>
               <th className="text-left p-2">Note</th>
               <th className="text-right p-2 w-10"></th>
             </tr>
@@ -451,6 +494,38 @@ function AdHocLines({
                       placeholder={rm ? String(rm.avgCost) : "0"}
                       className="h-8 w-24 text-right ml-auto"
                     />
+                  </td>
+                  <td className="p-2 text-right">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={l.taxRate}
+                      onChange={(e) => update(l.key, { taxRate: e.target.value })}
+                      placeholder="0"
+                      className="h-8 w-16 text-right ml-auto"
+                    />
+                  </td>
+                  <td className="p-2 text-right">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={l.lineDiscount}
+                      onChange={(e) => update(l.key, { lineDiscount: e.target.value })}
+                      placeholder="0"
+                      className="h-8 w-20 text-right ml-auto"
+                    />
+                  </td>
+                  <td className="p-2 text-right text-xs tabular-nums">
+                    {(() => {
+                      const qty = Number(l.qtyReceived) || 0;
+                      const rate = Number(l.unitCost) || 0;
+                      const tax = qty * rate * (Number(l.taxRate) || 0) / 100;
+                      const disc = Number(l.lineDiscount) || 0;
+                      const total = qty * rate + tax - disc;
+                      return total > 0 ? inr2(total) : "—";
+                    })()}
                   </td>
                   <td className="p-2">
                     <Input

@@ -34,6 +34,11 @@ const LineInput = z.object({
   qtyShort: z.coerce.number().nonnegative().default(0),
   unit: z.string().min(1),
   unitCost: z.coerce.number().nonnegative(),
+  /// Per-line tax + discount captured from the vendor's challan, per the
+  /// GRN spec. taxRate (%) drives a derived taxAmount on the line and
+  /// rolls up into Grn.taxAmount on the header.
+  taxRate: z.coerce.number().nonnegative().default(0),
+  lineDiscount: z.coerce.number().nonnegative().default(0),
   batchNo: z.string().optional(),
   expiryDate: z.string().optional(),
   note: z.string().optional(),
@@ -54,11 +59,11 @@ const CreateInput = z.object({
   /// StockBatch.ratePerUnit.
   vendorInvoiceNo: z.string().optional(),
   vendorInvoiceDate: z.string().optional(),
+  /// Bill-level charges only. Per-line tax + discount land on each
+  /// LineInput now (spec section 3).
   freightCharges: z.coerce.number().nonnegative().default(0),
   deliveryCharges: z.coerce.number().nonnegative().default(0),
-  discountAmount: z.coerce.number().nonnegative().default(0),
   otherCharges: z.coerce.number().nonnegative().default(0),
-  taxAmount: z.coerce.number().nonnegative().default(0),
   lines: z.array(LineInput).min(1, "At least one line is required"),
 });
 
@@ -127,30 +132,36 @@ async function createGrnInner(input: z.infer<typeof CreateInput>): Promise<Creat
   const grnNo = await nextGrnNo(outlet.id, outlet.code);
 
   // Landed cost math — spec section 3.
-  // landedSubTotal = sum(qtyReceived × unitCost) across lines.
-  // landedTotal    = subTotal + overheads − discount.
-  // Each line's landed rate carries an apportioned share of the
-  // overheads, so FIFO consumption sees the real per-unit cost
-  // (not just the bare invoice rate). Apportionment is weighted by
-  // each line's contribution to the subTotal so heavier-spend lines
-  // absorb more of the freight/etc.
-  const landedSubTotal = lines.reduce((s, l) => s + l.qtyReceived * l.unitCost, 0);
+  //   Per line (vendor's challan):
+  //     lineGross   = qtyReceived × unitCost
+  //     lineTax     = lineGross × taxRate / 100
+  //     lineNet     = lineGross − lineDiscount + lineTax
+  //   Header (bill-level):
+  //     subTotal    = sum(lineNet)  ← what the AP team would reconcile
+  //                                   the vendor's tax invoice against
+  //     overheads   = freight + delivery + other (apportioned by line
+  //                                                  share of subTotal)
+  //     landedTotal = subTotal + overheads
+  //   Per-line landed rate (= StockBatch.ratePerUnit) carries the line's
+  //   own tax/discount + an apportioned share of the bill-level
+  //   overheads, so FIFO consumption sees true landed cost.
+  const taxAmountPerLine = lines.map((l) => (l.qtyReceived * l.unitCost * (l.taxRate || 0)) / 100);
+  const linesNet = lines.map((l, i) => l.qtyReceived * l.unitCost - (l.lineDiscount || 0) + taxAmountPerLine[i]);
+  const landedSubTotal = linesNet.reduce((s, n) => s + n, 0);
   const overheads =
     (data.freightCharges || 0) +
     (data.deliveryCharges || 0) +
-    (data.otherCharges || 0) +
-    (data.taxAmount || 0);
-  const landedTotal = Math.max(0, landedSubTotal + overheads - (data.discountAmount || 0));
-  // Per-line apportionment ratio. Falls back to even-split when
-  // landedSubTotal is 0 (entirely zero-rate receipt — rare but possible).
-  const apportionedRates = lines.map((l) => {
-    const lineSub = l.qtyReceived * l.unitCost;
+    (data.otherCharges || 0);
+  const landedTotal = Math.max(0, landedSubTotal + overheads);
+  const totalTaxAmount = taxAmountPerLine.reduce((s, n) => s + n, 0);
+  const totalDiscount = lines.reduce((s, l) => s + (l.lineDiscount || 0), 0);
+  // Apportion overheads across lines proportional to each line's net
+  // contribution. Falls back to even-split when subTotal is 0.
+  const apportionedRates = lines.map((l, i) => {
+    const lineNet = linesNet[i];
     const ratio =
-      landedSubTotal > 0
-        ? lineSub / landedSubTotal
-        : 1 / Math.max(1, lines.length);
-    const lineOverhead = overheads * ratio - (data.discountAmount || 0) * ratio;
-    const landedLineTotal = lineSub + lineOverhead;
+      landedSubTotal > 0 ? lineNet / landedSubTotal : 1 / Math.max(1, lines.length);
+    const landedLineTotal = lineNet + overheads * ratio;
     return l.qtyReceived > 0 ? landedLineTotal / l.qtyReceived : l.unitCost;
   });
 
@@ -169,13 +180,15 @@ async function createGrnInner(input: z.infer<typeof CreateInput>): Promise<Creat
       vendorInvoiceDate: data.vendorInvoiceDate ? new Date(data.vendorInvoiceDate) : null,
       freightCharges: data.freightCharges,
       deliveryCharges: data.deliveryCharges,
-      discountAmount: data.discountAmount,
+      // Header tax + discount are roll-ups of the per-line values — the
+      // form no longer exposes them on the bill-level card.
+      discountAmount: totalDiscount,
       otherCharges: data.otherCharges,
-      taxAmount: data.taxAmount,
+      taxAmount: totalTaxAmount,
       landedSubTotal,
       landedTotal,
       lines: {
-        create: lines.map((l) => ({
+        create: lines.map((l, i) => ({
           poLineId: l.poLineId ?? null,
           rawMaterialId: l.rawMaterialId,
           qtyReceived: l.qtyReceived,
@@ -183,6 +196,9 @@ async function createGrnInner(input: z.infer<typeof CreateInput>): Promise<Creat
           qtyShort: l.qtyShort ?? 0,
           unit: l.unit,
           unitCost: l.unitCost,
+          taxRate: l.taxRate ?? 0,
+          taxAmount: taxAmountPerLine[i],
+          lineDiscount: l.lineDiscount ?? 0,
           batchNo: l.batchNo,
           expiryDate: l.expiryDate ? new Date(l.expiryDate) : null,
           note: l.note,
