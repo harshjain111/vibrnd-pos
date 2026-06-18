@@ -111,12 +111,6 @@ export default async function POListPage({
                 Inventory
               </Link>
             </Button>
-            <Button variant="outline" size="sm" asChild>
-              <Link href="/inventory/purchase/auto-new">
-                <Plus className="h-4 w-4" />
-                Auto-create (multi-supplier)
-              </Link>
-            </Button>
             <Button size="sm" asChild>
               <Link href="/inventory/purchase/new">
                 <Plus className="h-4 w-4" />
