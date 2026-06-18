@@ -77,7 +77,7 @@ const GROUPS: Group[] = [
     items: [
       { label: "Purchase Orders", href: "/inventory/purchase" },
       { label: "Goods received (GRN)", href: "/inventory/grn" },
-      { label: "Stock Purchase", href: "/inventory/invoices" },
+      { label: "Invoicing", href: "/inventory/invoices" },
       { label: "Purchase Return", href: "/inventory/purchase-return" },
     ],
   },

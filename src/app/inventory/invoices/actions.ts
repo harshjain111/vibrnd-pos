@@ -42,6 +42,12 @@ const CreateInput = z.object({
   /** Path to the uploaded invoice file in Supabase Storage. Optional. */
   fileUrl: z.string().optional(),
   notes: z.string().optional(),
+  /** Vendor's stated invoice amount (the headline number on their bill).
+   *  Compared against expectedAmount (sum of selected GRNs' landedTotal)
+   *  to decide whether the invoice goes straight to MATCHED or routes
+   *  through the CC variance review (DISPUTED). When omitted, falls back
+   *  to grandTotal computed from lines. */
+  invoiceAmount: z.coerce.number().nonnegative().optional(),
   /** Purchase Order this stock purchase is raised against. Preferred path —
    *  selecting the PO pulls in the supplier + lines and bounds qty against
    *  the order. Stock itself moves on GRN, not here. */
@@ -54,6 +60,10 @@ const CreateInput = z.object({
   /** Per-item lines captured from the vendor's bill. Drives sub/tax/grand. */
   lines: z.array(LineInput).min(1),
 });
+
+/// Variance tolerance (₹). Differences smaller than this round to zero —
+/// avoids routing rounding noise through the CC queue.
+const VARIANCE_TOLERANCE = 1;
 
 export async function createVendorInvoice(
   input: z.input<typeof CreateInput>
@@ -219,6 +229,35 @@ export async function createVendorInvoice(
     }
   }
 
+  // ── Variance computation (spec section 5) ──────────────────────────
+  // expectedAmount = sum of landedTotal across the GRNs this invoice
+  // references. When linked via legacy grnLinks we use those rows; for
+  // the PO-first flow we infer the GRNs from the PO. The vendor's
+  // stated amount is invoiceAmount (or grandTotal as fallback when the
+  // form doesn't pass it). variance = invoiceAmount − expectedAmount.
+  let expectedAmount = 0;
+  if (data.grnLinks.length > 0) {
+    const grnTotals = await db.grn.findMany({
+      where: { id: { in: data.grnLinks.map((l) => l.grnId) }, outletId: outlet.id },
+      select: { landedTotal: true },
+    });
+    expectedAmount = grnTotals.reduce((s, g) => s + (g.landedTotal || 0), 0);
+  } else if (data.poId) {
+    const poGrns = await db.grn.findMany({
+      where: { poId: data.poId, outletId: outlet.id },
+      select: { landedTotal: true },
+    });
+    expectedAmount = poGrns.reduce((s, g) => s + (g.landedTotal || 0), 0);
+  }
+  expectedAmount = round2(expectedAmount);
+  const invoiceAmount = round2(data.invoiceAmount ?? grandTotal);
+  const rawVariance = round2(invoiceAmount - expectedAmount);
+  const variance = Math.abs(rawVariance) < VARIANCE_TOLERANCE ? 0 : rawVariance;
+  // Auto-route per spec:
+  //   variance ≤ 0 (vendor billed ≤ expected) → MATCHED (accountant verifies)
+  //   variance > 0 (vendor billed more) → DISPUTED (CC reviews)
+  const reviewStatus = variance > 0 ? "DISPUTED" : "MATCHED";
+
   const invoice = await db.vendorInvoice.create({
     data: {
       supplierId: data.supplierId,
@@ -229,6 +268,10 @@ export async function createVendorInvoice(
       subTotal,
       taxTotal,
       grandTotal,
+      invoiceAmount,
+      expectedAmount,
+      variance,
+      reviewStatus,
       status: "UNPAID",
       amountPaid: 0,
       fileUrl: data.fileUrl,
@@ -239,19 +282,121 @@ export async function createVendorInvoice(
     },
   });
 
+  // Fire a CC bell for disputed invoices so the variance queue isn't
+  // silent — same pattern as PO PENDING_CC_APPROVAL.
+  if (reviewStatus === "DISPUTED") {
+    await db.notification.create({
+      data: {
+        outletId: outlet.id,
+        kind: "WARNING",
+        title: `Invoice ${data.invoiceNo} — variance review`,
+        body: `Vendor billed ${inr(invoiceAmount)}, expected ${inr(expectedAmount)} · variance +${inr(variance)}`,
+        link: `/inventory/invoices/${invoice.id}`,
+      },
+    });
+  }
+
   await logActivity({
     action: "CREATE",
     entity: "RawMaterial",
     entityId: invoice.id,
-    summary: `Stock purchase ${data.invoiceNo} recorded for ${inr(grandTotal)} (${
-      lines.length
-    } line${lines.length === 1 ? "" : "s"})`,
+    summary:
+      reviewStatus === "MATCHED"
+        ? `Invoice ${data.invoiceNo} matched expected ${inr(expectedAmount)} — awaiting verification`
+        : `Invoice ${data.invoiceNo} disputed — vendor billed ${inr(invoiceAmount)} vs expected ${inr(expectedAmount)} (variance +${inr(variance)})`,
     outletId: outlet.id,
   });
 
   revalidatePath("/inventory/invoices");
   revalidatePath("/inventory/grn");
   redirect(`/inventory/invoices/${invoice.id}`);
+}
+
+/** Accountant action: MATCHED → CLEARED. Used on the detail page when
+ *  the vendor's invoice amount matches the expected amount. */
+export async function verifyVendorInvoice(invoiceId: string) {
+  const user = await requireUser();
+  const outlet = await getActiveOutlet();
+  const inv = await db.vendorInvoice.findFirst({
+    where: { id: invoiceId, outletId: outlet.id },
+  });
+  if (!inv) throw new Error("Invoice not found");
+  if (inv.reviewStatus !== "MATCHED") {
+    throw new Error(`Can only verify MATCHED invoices (this one is ${inv.reviewStatus})`);
+  }
+  await db.vendorInvoice.update({
+    where: { id: inv.id },
+    data: {
+      reviewStatus: "CLEARED",
+      verifiedById: user.id,
+      verifiedAt: new Date(),
+    },
+  });
+  await logActivity({
+    action: "UPDATE",
+    entity: "RawMaterial",
+    entityId: inv.id,
+    summary: `Invoice ${inv.invoiceNo} verified · cleared for payment (${inr(inv.invoiceAmount)})`,
+    outletId: outlet.id,
+  });
+  revalidatePath("/inventory/invoices");
+  revalidatePath(`/inventory/invoices/${inv.id}`);
+}
+
+/** Cost Controller action: DISPUTED → CLEARED or REJECTED per the
+ *  variance reason path. Spec section 5 — Variance Review by CC. */
+const VarianceReviewInput = z.object({
+  invoiceId: z.string(),
+  reason: z.enum(["VENDOR_MISTAKE", "PRICE_INCREASE_VALID"]),
+  notes: z.string().optional(),
+});
+export async function reviewVendorInvoiceVariance(input: z.infer<typeof VarianceReviewInput>) {
+  const user = await requireUser();
+  const data = VarianceReviewInput.parse(input);
+  const outlet = await getActiveOutlet();
+  const inv = await db.vendorInvoice.findFirst({
+    where: { id: data.invoiceId, outletId: outlet.id },
+  });
+  if (!inv) throw new Error("Invoice not found");
+  if (inv.reviewStatus !== "DISPUTED") {
+    throw new Error(`Can only review DISPUTED invoices (this one is ${inv.reviewStatus})`);
+  }
+  const nextStatus = data.reason === "PRICE_INCREASE_VALID" ? "CLEARED" : "REJECTED";
+  await db.vendorInvoice.update({
+    where: { id: inv.id },
+    data: {
+      reviewStatus: nextStatus,
+      varianceReason: data.reason,
+      varianceNotes: data.notes,
+      ccReviewedById: user.id,
+      ccReviewedAt: new Date(),
+    },
+  });
+  await logActivity({
+    action: "UPDATE",
+    entity: "RawMaterial",
+    entityId: inv.id,
+    summary:
+      data.reason === "PRICE_INCREASE_VALID"
+        ? `CC approved invoice ${inv.invoiceNo} variance (+${inr(inv.variance)}) — cleared for payment. ${data.notes ?? ""}`
+        : `CC rejected invoice ${inv.invoiceNo} — vendor mistake. ${data.notes ?? ""}`,
+    outletId: outlet.id,
+  });
+  // Tell whoever created the invoice the verdict came back.
+  await db.notification.create({
+    data: {
+      outletId: outlet.id,
+      kind: nextStatus === "CLEARED" ? "INFO" : "WARNING",
+      title:
+        nextStatus === "CLEARED"
+          ? `Invoice ${inv.invoiceNo} variance approved`
+          : `Invoice ${inv.invoiceNo} rejected — vendor must re-invoice`,
+      body: data.notes ?? "",
+      link: `/inventory/invoices/${inv.id}`,
+    },
+  });
+  revalidatePath("/inventory/invoices");
+  revalidatePath(`/inventory/invoices/${inv.id}`);
 }
 
 function round2(n: number): number {

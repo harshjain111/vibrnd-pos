@@ -12,14 +12,28 @@ import { inr } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
+// Tabs grouped by what the user is looking for. Review-state tabs surface
+// the variance queue + verification queue separately from the payment
+// status tabs.
 const TABS = [
-  { key: "UNPAID", label: "Unpaid", filter: ["UNPAID"] },
-  { key: "PARTIAL", label: "Partial", filter: ["PARTIAL"] },
-  { key: "PAID", label: "Paid", filter: ["PAID"] },
-  { key: "ALL", label: "All", filter: null as null | string[] },
+  { key: "PENDING_REVIEW", label: "Pending review", reviewFilter: ["MATCHED", "DISPUTED"] as string[] | null, payFilter: null as string[] | null },
+  { key: "DISPUTED", label: "Disputed (CC)", reviewFilter: ["DISPUTED"], payFilter: null },
+  { key: "CLEARED", label: "Cleared", reviewFilter: ["CLEARED"], payFilter: null },
+  { key: "UNPAID", label: "Unpaid", reviewFilter: null, payFilter: ["UNPAID"] },
+  { key: "PARTIAL", label: "Partial", reviewFilter: null, payFilter: ["PARTIAL"] },
+  { key: "PAID", label: "Paid", reviewFilter: null, payFilter: ["PAID"] },
+  { key: "REJECTED", label: "Rejected", reviewFilter: ["REJECTED"], payFilter: null },
+  { key: "ALL", label: "All", reviewFilter: null, payFilter: null },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
+
+function whereForTab(outletId: string, t: (typeof TABS)[number]) {
+  const where: any = { outletId };
+  if (t.reviewFilter) where.reviewStatus = { in: t.reviewFilter };
+  if (t.payFilter) where.status = { in: t.payFilter };
+  return where;
+}
 
 export default async function VendorInvoicesPage({
   searchParams,
@@ -27,14 +41,11 @@ export default async function VendorInvoicesPage({
   searchParams: Promise<{ tab?: TabKey }>;
 }) {
   const sp = await searchParams;
-  const tab = (sp.tab ?? "UNPAID") as TabKey;
+  const tab = (sp.tab ?? "PENDING_REVIEW") as TabKey;
   const activeTab = TABS.find((t) => t.key === tab) ?? TABS[0];
   const outlet = await getActiveOutlet();
 
-  const where = {
-    outletId: outlet.id,
-    ...(activeTab.filter ? { status: { in: activeTab.filter as unknown as string[] } } : {}),
-  };
+  const where = whereForTab(outlet.id, activeTab);
   const [invoices, counts] = await Promise.all([
     db.vendorInvoice.findMany({
       where,
@@ -45,12 +56,7 @@ export default async function VendorInvoicesPage({
     Promise.all(
       TABS.map(async (t) => ({
         key: t.key,
-        n: await db.vendorInvoice.count({
-          where: {
-            outletId: outlet.id,
-            ...(t.filter ? { status: { in: t.filter as unknown as string[] } } : {}),
-          },
-        }),
+        n: await db.vendorInvoice.count({ where: whereForTab(outlet.id, t) }),
       }))
     ),
   ]);
@@ -72,13 +78,13 @@ export default async function VendorInvoicesPage({
   return (
     <div>
       <PageHeader
-        title="Stock Purchase"
-        description="Accounts payable — supplier bills (stock purchases) against GRNs received"
+        title="Invoicing"
+        description="Vendor invoices: match against GRNs, route variances to CC, then pay."
         actions={
           <Button asChild size="sm">
             <Link href="/inventory/invoices/new">
               <Plus className="h-4 w-4" />
-              New stock purchase
+              New invoice
             </Link>
           </Button>
         }

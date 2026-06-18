@@ -1957,9 +1957,36 @@ model VendorInvoice {
   subTotal    Float                  @default(0)
   taxTotal    Float                  @default(0)
   grandTotal  Float                  @default(0)
-  /// UNPAID | PARTIAL | PAID
+  /// UNPAID | PARTIAL | PAID — payment status, only meaningful once
+  /// reviewStatus = CLEARED.
   status      String                 @default("UNPAID")
   amountPaid  Float                  @default(0)
+  /// Vendor's billed amount (≈ grandTotal once lines are entered). Stored
+  /// separately so disputed invoices can show "vendor billed ₹X, we
+  /// expected ₹Y, variance ₹Z" without back-deriving from the lines.
+  invoiceAmount   Float              @default(0)
+  /// Sum of landedTotal across the GRNs this invoice references — the
+  /// amount we'd expect the vendor to bill us based on what we received.
+  expectedAmount  Float              @default(0)
+  /// invoiceAmount − expectedAmount. Positive = vendor billed more,
+  /// triggers the variance-review queue for the CC.
+  variance        Float              @default(0)
+  /// Variance-review state machine (spec section 5):
+  /// PENDING  (just created, waiting to be matched + verified)
+  /// MATCHED  (amount equals expected — accountant verifies, then CLEARED)
+  /// DISPUTED (amount > expected — CC must approve or reject)
+  /// CLEARED  (verified by accountant OR variance approved by CC, ready for payment)
+  /// REJECTED (CC rejected with VENDOR_MISTAKE — vendor must re-invoice)
+  reviewStatus    String             @default("PENDING")
+  /// CC action audit columns, set when the CC reviews a DISPUTED invoice.
+  /// varianceReason: VENDOR_MISTAKE | PRICE_INCREASE_VALID
+  varianceReason  String?
+  varianceNotes   String?
+  ccReviewedById  String?
+  ccReviewedAt    DateTime?
+  /// Accountant action audit columns, set when MATCHED → CLEARED.
+  verifiedById    String?
+  verifiedAt      DateTime?
   /// Supabase Storage path to the uploaded invoice PDF / image. Optional.
   fileUrl     String?
   notes       String?
@@ -1972,6 +1999,7 @@ model VendorInvoice {
 
   @@unique([supplierId, invoiceNo])
   @@index([outletId, status, invoiceDate])
+  @@index([outletId, reviewStatus])
 }
 
 /// Per-item lines a vendor's invoice carries. Captured manually so the

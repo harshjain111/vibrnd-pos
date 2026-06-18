@@ -54,6 +54,7 @@ export function NewStockPurchaseForm({
   const [pending, startTransition] = React.useTransition();
   const [invoiceNo, setInvoiceNo] = React.useState("");
   const [invoiceDate, setInvoiceDate] = React.useState(new Date().toISOString().slice(0, 10));
+  const [invoiceAmount, setInvoiceAmount] = React.useState("");
   const [fileUrl, setFileUrl] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [lines, setLines] = React.useState<LineRow[]>(() =>
@@ -109,6 +110,7 @@ export function NewStockPurchaseForm({
           poId,
           invoiceNo: invoiceNo.trim(),
           invoiceDate,
+          invoiceAmount: invoiceAmount ? Number(invoiceAmount) : undefined,
           fileUrl: fileUrl || undefined,
           notes: notes || undefined,
           lines: chosen.map((l) => ({
@@ -147,6 +149,21 @@ export function NewStockPurchaseForm({
         <div>
           <Label>Invoice date</Label>
           <Input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
+        </div>
+        <div>
+          <Label>Invoice amount (vendor's stated total)</Label>
+          <Input
+            type="number"
+            step="0.01"
+            min="0"
+            value={invoiceAmount}
+            onChange={(e) => setInvoiceAmount(e.target.value)}
+            placeholder="From the vendor's bill — defaults to line total when blank"
+          />
+          <p className="text-[11px] text-muted-foreground mt-1">
+            Compared against the GRN-derived expected amount. Mismatches route to the Cost
+            Controller's variance queue automatically.
+          </p>
         </div>
       </div>
 
