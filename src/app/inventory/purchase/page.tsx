@@ -49,7 +49,7 @@ type TabKey = (typeof TABS)[number]["key"];
 export default async function POListPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; tab?: TabKey }>;
+  searchParams: Promise<{ status?: string; tab?: TabKey; batch?: string }>;
 }) {
   const sp = await searchParams;
   // Backwards-compat: ?status=pending-cc lands on the CC queue (used by the
@@ -58,6 +58,16 @@ export default async function POListPage({
     sp.status === "pending-cc" ? "PENDING_CC" : ((sp.tab as TabKey) ?? "ALL");
   const activeTab = TABS.find((t) => t.key === tab) ?? TABS[0];
   const outlet = await getActiveOutlet();
+  // If the SM just landed here from the auto-PO picker, fetch the
+  // freshly-created drafts grouped under this batchKey so the banner
+  // tells them what to review next.
+  const batchPos = sp.batch
+    ? await db.purchaseOrder.findMany({
+        where: { outletId: outlet.id, batchKey: sp.batch },
+        include: { supplier: { select: { name: true } } },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
   const where = {
     outletId: outlet.id,
     ...(activeTab.filter ? { status: { in: activeTab.filter as unknown as string[] } } : {}),
@@ -101,6 +111,12 @@ export default async function POListPage({
                 Inventory
               </Link>
             </Button>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/inventory/purchase/auto-new">
+                <Plus className="h-4 w-4" />
+                Auto-create (multi-supplier)
+              </Link>
+            </Button>
             <Button size="sm" asChild>
               <Link href="/inventory/purchase/new">
                 <Plus className="h-4 w-4" />
@@ -110,6 +126,35 @@ export default async function POListPage({
           </>
         }
       />
+
+      {/* Auto-PO batch banner — shown when the SM just landed from
+          /inventory/purchase/auto-new with a batchKey in the URL. Lists
+          the freshly-created drafts so they can review + submit each. */}
+      {batchPos.length > 0 && (
+        <div className="rounded-md border border-primary/40 bg-primary/5 p-3 mb-3">
+          <div className="text-sm font-semibold text-primary mb-1.5">
+            {batchPos.length} draft PO{batchPos.length === 1 ? "" : "s"} created — review each before sending for approval
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            {batchPos.map((p) => (
+              <Link
+                key={p.id}
+                href={`/inventory/purchase/${p.id}`}
+                className="rounded-md border bg-card hover:bg-accent/40 p-2 text-sm flex items-center justify-between"
+              >
+                <div>
+                  <div className="font-mono text-xs">{p.poNo}</div>
+                  <div className="text-[11px] text-muted-foreground">{p.supplier?.name}</div>
+                </div>
+                <div className="text-right">
+                  <div className="font-semibold">{inr(p.grandTotal)}</div>
+                  <div className="text-[10px] text-muted-foreground">DRAFT →</div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Status tabs */}
       <div className="flex flex-wrap gap-1.5 mb-3">

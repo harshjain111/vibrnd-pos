@@ -53,6 +53,24 @@ const POInput = z.object({
   submitForApproval: z.boolean().default(false),
 });
 
+// Multi-supplier auto-PO input — spec section 2. The SM picks N items
+// from the catalog, each with its preferred supplier + qty + rate. The
+// server groups by supplierId and creates one DRAFT PO per supplier,
+// tagged with the same batchKey so the list view can show "3 draft POs
+// from this auto-PO". Each row is positional, like the cart in /billing.
+const AutoLineInput = z.object({
+  rawMaterialId: z.string(),
+  supplierId: z.string(),
+  qty: z.coerce.number().positive(),
+  unit: z.string().min(1),
+  unitPrice: z.coerce.number().nonnegative(),
+  offCard: z.boolean().default(false),
+});
+const AutoPOInput = z.object({
+  lines: z.array(AutoLineInput).min(1, "Pick at least one item"),
+  notes: z.string().optional(),
+});
+
 async function nextPoNo(outletId: string, outletCode: string) {
   const count = await db.purchaseOrder.count({ where: { outletId } });
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -534,4 +552,98 @@ export async function receivePO(fd: FormData) {
   await requireUser();
   const id = String(fd.get("id"));
   redirect(`/inventory/grn/new?po=${encodeURIComponent(id)}`);
+}
+
+/**
+ * Multi-supplier auto-PO — spec section 2.
+ *
+ * One submit can carry items from multiple suppliers. The server groups
+ * the lines by supplierId, then creates one DRAFT PO per supplier. Every
+ * PO in the batch shares the same `batchKey` so the list view can show
+ * "3 drafts from this auto-PO" and the SM can review each before sending
+ * for CC approval.
+ *
+ * Returns the list of created POs so the client can route to the list
+ * page with a banner.
+ */
+export async function createAutoPosByGrouping(
+  input: z.infer<typeof AutoPOInput>
+): Promise<{ batchKey: string; pos: { id: string; poNo: string; supplierName: string; lines: number; total: number }[] }> {
+  const user = await requireUser();
+  const data = AutoPOInput.parse(input);
+  const outlet = await getActiveOutlet();
+  const store = await getStoreDept(outlet.id);
+
+  // Group lines by supplier.
+  const bySupplier = new Map<string, typeof data.lines>();
+  for (const l of data.lines) {
+    const arr = bySupplier.get(l.supplierId) ?? [];
+    arr.push(l);
+    bySupplier.set(l.supplierId, arr);
+  }
+
+  // Deterministic batchKey — readable in the audit log + URL params.
+  const batchKey = `BATCH-${outlet.code}-${Date.now().toString(36).toUpperCase()}`;
+
+  const created: { id: string; poNo: string; supplierName: string; lines: number; total: number }[] = [];
+
+  for (const [supplierId, lines] of bySupplier) {
+    const supplier = await db.supplier.findUnique({
+      where: { id: supplierId },
+      select: { name: true },
+    });
+    if (!supplier) throw new Error(`Supplier not found: ${supplierId}`);
+
+    const sub = lines.reduce((s, l) => s + l.qty * l.unitPrice, 0);
+    const grand = Math.round(sub);
+    const poNo = await nextPoNo(outlet.id, outlet.code);
+
+    const po = await db.purchaseOrder.create({
+      data: {
+        poNo,
+        supplierId,
+        outletId: outlet.id,
+        departmentId: store.id,
+        status: "DRAFT",
+        subTotal: sub,
+        taxTotal: 0,
+        grandTotal: grand,
+        notes: data.notes,
+        batchKey,
+        lines: {
+          create: lines.map((l) => ({
+            rawMaterialId: l.rawMaterialId,
+            qty: l.qty,
+            unit: l.unit,
+            unitPrice: l.unitPrice,
+            lineTotal: l.qty * l.unitPrice,
+            offCard: l.offCard,
+          })),
+        },
+      },
+    });
+
+    created.push({
+      id: po.id,
+      poNo,
+      supplierName: supplier.name,
+      lines: lines.length,
+      total: grand,
+    });
+  }
+
+  await logActivity({
+    action: "CREATE",
+    entity: "RawMaterial",
+    entityId: batchKey,
+    summary: `Auto-PO ${batchKey} — ${created.length} draft PO${
+      created.length === 1 ? "" : "s"
+    } across ${created.length} supplier${created.length === 1 ? "" : "s"} · total ${inr(
+      created.reduce((s, p) => s + p.total, 0)
+    )}`,
+    outletId: outlet.id,
+  });
+
+  revalidatePath("/inventory/purchase");
+  return { batchKey, pos: created };
 }
