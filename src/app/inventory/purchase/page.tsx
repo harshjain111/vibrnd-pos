@@ -122,12 +122,13 @@ export default async function POListPage({
       />
 
       {/* Auto-PO batch banner — shown when the SM just landed from
-          /inventory/purchase/auto-new with a batchKey in the URL. Lists
-          the freshly-created drafts so they can review + submit each. */}
+          /inventory/purchase/new with a batchKey in the URL. Lists the
+          freshly-created POs (now submitted straight to CC, not drafts)
+          so the SM can confirm what went where. */}
       {batchPos.length > 0 && (
         <div className="rounded-md border border-primary/40 bg-primary/5 p-3 mb-3">
           <div className="text-sm font-semibold text-primary mb-1.5">
-            {batchPos.length} draft PO{batchPos.length === 1 ? "" : "s"} created — review each before sending for approval
+            {batchPos.length} PO{batchPos.length === 1 ? "" : "s"} submitted — Cost Controller will review {batchPos.length === 1 ? "it" : "them"} next
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
             {batchPos.map((p) => (
@@ -142,7 +143,7 @@ export default async function POListPage({
                 </div>
                 <div className="text-right">
                   <div className="font-semibold">{inr(p.grandTotal)}</div>
-                  <div className="text-[10px] text-muted-foreground">DRAFT →</div>
+                  <div className="text-[10px] text-muted-foreground">{STATUS_LABEL[p.status] ?? p.status} →</div>
                 </div>
               </Link>
             ))}

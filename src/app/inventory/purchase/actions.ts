@@ -558,17 +558,23 @@ export async function receivePO(fd: FormData) {
  * Multi-supplier auto-PO — spec section 2.
  *
  * One submit can carry items from multiple suppliers. The server groups
- * the lines by supplierId, then creates one DRAFT PO per supplier. Every
- * PO in the batch shares the same `batchKey` so the list view can show
- * "3 drafts from this auto-PO" and the SM can review each before sending
- * for CC approval.
+ * the lines by supplierId, then creates one PO per supplier and submits
+ * it **straight to the Cost Controller** for approval — no DRAFT
+ * intermediate state, no separate "submit" step the SM has to do later.
+ * If the outlet has the CC gate turned off, the PO auto-promotes to
+ * APPROVED on creation (same semantics as createPO's submitForApproval
+ * shortcut).
  *
- * Returns the list of created POs so the client can route to the list
- * page with a banner.
+ * Every PO in the batch shares the same `batchKey` so the list view can
+ * banner them together.
  */
 export async function createAutoPosByGrouping(
   input: z.infer<typeof AutoPOInput>
-): Promise<{ batchKey: string; pos: { id: string; poNo: string; supplierName: string; lines: number; total: number }[] }> {
+): Promise<{
+  batchKey: string;
+  status: "PENDING_CC_APPROVAL" | "APPROVED";
+  pos: { id: string; poNo: string; supplierName: string; lines: number; total: number }[];
+}> {
   const user = await requireUser();
   const data = AutoPOInput.parse(input);
   const outlet = await getActiveOutlet();
@@ -584,6 +590,10 @@ export async function createAutoPosByGrouping(
 
   // Deterministic batchKey — readable in the audit log + URL params.
   const batchKey = `BATCH-${outlet.code}-${Date.now().toString(36).toUpperCase()}`;
+  // Outlet-level CC gate. When false, the PO auto-promotes to APPROVED
+  // and the SM can send it to the vendor immediately.
+  const requiresCC = (outlet as any).requireCostControlApproval ?? true;
+  const finalStatus = requiresCC ? "PENDING_CC_APPROVAL" : "APPROVED";
 
   const created: { id: string; poNo: string; supplierName: string; lines: number; total: number }[] = [];
 
@@ -604,7 +614,11 @@ export async function createAutoPosByGrouping(
         supplierId,
         outletId: outlet.id,
         departmentId: store.id,
-        status: "DRAFT",
+        status: finalStatus,
+        // When CC gate is off, audit the auto-approval to whoever
+        // raised the PO so the trail isn't blank.
+        ccApprovedById: requiresCC ? null : user.id,
+        ccApprovedAt: requiresCC ? null : new Date(),
         subTotal: sub,
         taxTotal: 0,
         grandTotal: grand,
@@ -623,6 +637,20 @@ export async function createAutoPosByGrouping(
       },
     });
 
+    // Ping the CC when the gate is on so the new PO doesn't sit in
+    // their queue unannounced.
+    if (requiresCC) {
+      await db.notification.create({
+        data: {
+          outletId: outlet.id,
+          kind: "INFO",
+          title: `PO ${poNo} awaiting CC approval`,
+          body: `${inr(grand)} from ${supplier.name} — open to review.`,
+          link: `/inventory/purchase/${po.id}`,
+        },
+      });
+    }
+
     created.push({
       id: po.id,
       poNo,
@@ -632,18 +660,17 @@ export async function createAutoPosByGrouping(
     });
   }
 
+  const statusLabel = requiresCC ? "submitted for CC approval" : "auto-approved (CC gate off)";
   await logActivity({
     action: "CREATE",
     entity: "RawMaterial",
     entityId: batchKey,
-    summary: `Auto-PO ${batchKey} — ${created.length} draft PO${
-      created.length === 1 ? "" : "s"
-    } across ${created.length} supplier${created.length === 1 ? "" : "s"} · total ${inr(
+    summary: `Auto-PO ${batchKey} — ${created.length} PO${created.length === 1 ? "" : "s"} ${statusLabel} across ${created.length} supplier${created.length === 1 ? "" : "s"} · total ${inr(
       created.reduce((s, p) => s + p.total, 0)
     )}`,
     outletId: outlet.id,
   });
 
   revalidatePath("/inventory/purchase");
-  return { batchKey, pos: created };
+  return { batchKey, status: finalStatus, pos: created };
 }

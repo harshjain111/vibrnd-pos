@@ -13,7 +13,8 @@
  *   real time ("4 items will create 2 POs") so the SM knows what the
  *   server will produce before submitting.
  *
- * Submit → createAutoPosByGrouping → N DRAFT POs sharing a batchKey.
+ * Submit → createAutoPosByGrouping → N POs straight to CC for approval,
+ * sharing a batchKey.
  */
 import * as React from "react";
 import { useRouter } from "next/navigation";
@@ -191,7 +192,10 @@ export function NewPoClient({
           .join("\n");
         toast({
           variant: "success",
-          title: `${res.pos.length} draft PO${res.pos.length === 1 ? "" : "s"} created`,
+          title:
+            res.status === "PENDING_CC_APPROVAL"
+              ? `${res.pos.length} PO${res.pos.length === 1 ? "" : "s"} submitted to CC for approval`
+              : `${res.pos.length} PO${res.pos.length === 1 ? "" : "s"} created · approved`,
           description: summary,
         });
         router.push(`/inventory/purchase?batch=${encodeURIComponent(res.batchKey)}`);
@@ -323,7 +327,7 @@ export function NewPoClient({
           <CardContent className="p-3">
             <div className="text-sm font-semibold text-primary mb-2 inline-flex items-center gap-1.5">
               {grouping.size > 0
-                ? `Will create ${grouping.size} draft PO${grouping.size === 1 ? "" : "s"}`
+                ? `Will create ${grouping.size} PO${grouping.size === 1 ? "" : "s"} and send for CC approval`
                 : "Pick a supplier for every line to preview the grouping"}
             </div>
             {grouping.size > 0 && (
@@ -339,7 +343,7 @@ export function NewPoClient({
                     <div className="text-right">
                       <div className="font-semibold">{inr(Math.round(s.total))}</div>
                       <div className="text-[10px] text-muted-foreground inline-flex items-center gap-0.5">
-                        DRAFT <ChevronRight className="h-3 w-3" />
+                        TO CC <ChevronRight className="h-3 w-3" />
                       </div>
                     </div>
                   </div>
@@ -362,7 +366,9 @@ export function NewPoClient({
             />
           </div>
           <Button onClick={submit} disabled={pending || grouping.size === 0} size="lg">
-            {pending ? "Creating drafts…" : `Create ${grouping.size || 0} draft PO${grouping.size === 1 ? "" : "s"}`}
+            {pending
+              ? "Submitting…"
+              : `Submit ${grouping.size || 0} PO${grouping.size === 1 ? "" : "s"} for CC approval`}
           </Button>
         </div>
       )}
