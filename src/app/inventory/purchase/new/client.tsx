@@ -29,7 +29,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
-import { Plus, Search, Trash2, ShoppingBag, ChevronRight, AlertTriangle } from "lucide-react";
+import Link from "next/link";
+import { Plus, Search, Trash2, ShoppingBag, ChevronRight, AlertTriangle, Check } from "lucide-react";
 import { createAutoPosByGrouping } from "../actions";
 import { inr } from "@/lib/utils";
 
@@ -234,7 +235,6 @@ export function NewPoClient({
                 <TableBody>
                   {lines.map((l) => {
                     const lineTotal = l.qty * l.unitPrice;
-                    const ratedIds = new Set(l.item.ratedSuppliers.map((s) => s.supplierId));
                     const belowMin = l.item.currentQty < l.item.minLevel;
                     return (
                       <TableRow key={l.key}>
@@ -260,31 +260,21 @@ export function NewPoClient({
                           />
                         </TableCell>
                         <TableCell>
-                          <select
-                            value={l.supplierId}
-                            onChange={(e) => updateLine(l.key, { supplierId: e.target.value })}
-                            className="h-8 w-full rounded-md border bg-background px-2 text-xs"
-                          >
-                            <option value="">Pick supplier…</option>
-                            {l.item.ratedSuppliers.length > 0 && (
-                              <optgroup label="Rate card">
-                                {l.item.ratedSuppliers.map((s) => (
-                                  <option key={s.supplierId} value={s.supplierId}>
-                                    {s.supplierName} · ₹{s.ratePerUnit}
-                                  </option>
-                                ))}
-                              </optgroup>
-                            )}
-                            <optgroup label="Off card">
-                              {suppliers
-                                .filter((s) => !ratedIds.has(s.id))
-                                .map((s) => (
-                                  <option key={s.id} value={s.id}>
-                                    {s.name}
-                                  </option>
-                                ))}
-                            </optgroup>
-                          </select>
+                          {l.item.ratedSuppliers.length > 0 ? (
+                            <select
+                              value={l.supplierId}
+                              onChange={(e) => updateLine(l.key, { supplierId: e.target.value })}
+                              className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+                            >
+                              {l.item.ratedSuppliers.map((s) => (
+                                <option key={s.supplierId} value={s.supplierId}>
+                                  {s.supplierName} · ₹{s.ratePerUnit}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="text-[11px] text-amber-700">No rate card</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Input
@@ -393,28 +383,39 @@ function ItemPicker({
   open,
   onClose,
   items,
-  suppliers,
   onAdd,
 }: {
   open: boolean;
   onClose: () => void;
   items: Item[];
+  // suppliers list intentionally dropped — picker only surfaces
+  // rate-card vendors per item.
   suppliers: Supplier[];
   onAdd: (item: Item, supplierId: string, qty: number) => void;
 }) {
   const [search, setSearch] = React.useState("");
   const [onlyBelowMin, setOnlyBelowMin] = React.useState(false);
   const [pickedId, setPickedId] = React.useState<string | null>(null);
-  const [qty, setQty] = React.useState("");
-  const [supplierId, setSupplierId] = React.useState("");
+  /** Per-supplier qty state for the picked item — keyed by supplierId so
+   *  the user can edit different qtys side-by-side and click Add on the
+   *  cheapest one without resetting their typing. */
+  const [supplierQty, setSupplierQty] = React.useState<Record<string, string>>({});
+  /** Recently-added chips at the top of the dialog so the SM can see
+   *  what they've put into the cart on this burst. Resets each time the
+   *  dialog reopens. */
+  const [recent, setRecent] = React.useState<{ name: string; qty: number; unit: string; supplierName: string }[]>([]);
 
-  // Reset on each open so picking another item starts clean.
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Reset on each open so a fresh entry session starts clean.
   React.useEffect(() => {
     if (open) {
       setSearch("");
       setPickedId(null);
-      setQty("");
-      setSupplierId("");
+      setSupplierQty({});
+      setRecent([]);
+      // Defer focus so the Radix Dialog has mounted before we grab it.
+      setTimeout(() => searchInputRef.current?.focus(), 50);
     }
   }, [open]);
 
@@ -431,37 +432,70 @@ function ItemPicker({
 
   const pick = (it: Item) => {
     setPickedId(it.id);
-    const supplier = defaultSupplierFor(it);
-    setSupplierId(supplier);
+    // Pre-fill every rate-card supplier's qty with the suggested
+    // (par − stock) so the SM just clicks "Add" on the cheapest one
+    // without having to type anything for the common path.
     const suggested = Math.max(0, it.parLevel - it.currentQty);
-    setQty(suggested > 0 ? String(suggested) : "");
+    const initial: Record<string, string> = {};
+    for (const s of it.ratedSuppliers) {
+      initial[s.supplierId] = suggested > 0 ? String(suggested) : "1";
+    }
+    setSupplierQty(initial);
   };
 
-  const confirm = () => {
+  const addWith = (supplierId: string, supplierName: string, rate: number) => {
     if (!picked) return;
-    const q = Number(qty);
+    const q = Number(supplierQty[supplierId]);
     if (!Number.isFinite(q) || q <= 0) return;
-    if (!supplierId) return;
     onAdd(picked, supplierId, q);
+    setRecent((prev) => [
+      { name: picked.name, qty: q, unit: picked.unit, supplierName },
+      ...prev,
+    ].slice(0, 6));
+    // Reset picked state + qtys + search so the SM is one keystroke
+    // away from the next item. Search input stays focused so they
+    // can type immediately.
+    setPickedId(null);
+    setSupplierQty({});
+    setSearch("");
+    searchInputRef.current?.focus();
   };
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col">
+      <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle>Add line item</DialogTitle>
+          <DialogTitle>Add line items</DialogTitle>
         </DialogHeader>
+
+        {/* Recently-added chips — gives the SM a quick "yep that went
+            in" signal so they don't get lost during a 50-item burst. */}
+        {recent.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 text-[11px]">
+            <span className="text-muted-foreground inline-flex items-center gap-0.5 px-1">
+              <Check className="h-3 w-3 text-emerald-600" /> Added:
+            </span>
+            {recent.map((r, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-900 px-2 py-0.5"
+              >
+                {r.name} · {r.qty} {r.unit} · {r.supplierName}
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Search bar */}
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex-1 min-w-[200px] relative">
             <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
+              ref={searchInputRef}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search item or category…"
+              placeholder="Type to filter the catalog…"
               className="pl-7"
-              autoFocus
             />
           </div>
           <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer text-muted-foreground">
@@ -476,10 +510,9 @@ function ItemPicker({
           </label>
         </div>
 
-        {/* Item list — clickable rows. The picked row expands to show
-            the supplier list with rate-card prices so the SM can pick
-            their preferred supplier. */}
-        <div className="border rounded-md overflow-y-auto" style={{ maxHeight: "40vh" }}>
+        {/* Item list. Clicking a row expands it inline to reveal the
+            rate-card suppliers + per-supplier qty + Add button. */}
+        <div className="border rounded-md overflow-y-auto flex-1" style={{ maxHeight: "55vh" }}>
           {filtered.length === 0 ? (
             <div className="p-6 text-center text-sm text-muted-foreground">No matches.</div>
           ) : (
@@ -488,32 +521,121 @@ function ItemPicker({
                 const isPicked = it.id === pickedId;
                 const belowMin = it.currentQty < it.minLevel;
                 const suggested = Math.max(0, it.parLevel - it.currentQty);
+                const hasRateCard = it.ratedSuppliers.length > 0;
                 return (
-                  <li
-                    key={it.id}
-                    className={"px-3 py-2 cursor-pointer hover:bg-accent/40 " + (isPicked ? "bg-primary/5" : "")}
-                    onClick={() => pick(it)}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium truncate">{it.name}</div>
-                        <div className="text-[11px] text-muted-foreground">
-                          {it.categoryName ? `${it.categoryName} · ` : ""}
-                          min {it.minLevel} / par {it.parLevel} {it.unit}
-                          {it.ratedSuppliers.length > 0 && ` · ${it.ratedSuppliers.length} supplier${it.ratedSuppliers.length === 1 ? "" : "s"}`}
+                  <li key={it.id} className={isPicked ? "bg-primary/5" : ""}>
+                    {/* Header row — click to expand / collapse */}
+                    <button
+                      type="button"
+                      onClick={() => pick(it)}
+                      className="w-full text-left px-3 py-2 hover:bg-accent/40 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium truncate">{it.name}</div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {it.categoryName ? `${it.categoryName} · ` : ""}
+                            min {it.minLevel} / par {it.parLevel} {it.unit}
+                            {hasRateCard
+                              ? ` · ${it.ratedSuppliers.length} rate-card supplier${it.ratedSuppliers.length === 1 ? "" : "s"}`
+                              : " · no rate card"}
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className={"text-sm font-semibold tabular-nums " + (belowMin ? "text-rose-700" : "")}>
+                            {it.currentQty} {it.unit}
+                          </div>
+                          {suggested > 0 && (
+                            <div className="text-[10px] text-amber-700">
+                              order {suggested.toFixed(2)} {it.unit}
+                            </div>
+                          )}
                         </div>
                       </div>
-                      <div className="text-right shrink-0">
-                        <div className={"text-sm font-semibold tabular-nums " + (belowMin ? "text-rose-700" : "")}>
-                          {it.currentQty} {it.unit}
-                        </div>
-                        {suggested > 0 && (
-                          <div className="text-[10px] text-amber-700">
-                            order {suggested.toFixed(2)} {it.unit}
+                    </button>
+
+                    {/* Expanded supplier rows — only shown for the picked
+                        item. Cheapest first (already sorted server-side).
+                        Each row is a tiny form: qty input + Add button.
+                        Hitting Enter on the qty input submits that row. */}
+                    {isPicked && (
+                      <div className="px-3 pb-3 space-y-1.5">
+                        {!hasRateCard ? (
+                          <div className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded p-2 flex items-start gap-2">
+                            <AlertTriangle className="h-3.5 w-3.5 text-amber-700 mt-0.5 shrink-0" />
+                            <div className="flex-1">
+                              <div className="font-medium">No suppliers on the rate card for this item.</div>
+                              <div className="mt-0.5">
+                                Add this item to a supplier&apos;s rate card before raising a PO.{" "}
+                                <Link
+                                  href="/inventory/suppliers"
+                                  className="underline underline-offset-2 font-medium"
+                                >
+                                  Open Suppliers →
+                                </Link>
+                              </div>
+                            </div>
                           </div>
+                        ) : (
+                          it.ratedSuppliers.map((s, idx) => {
+                            const isCheapest = idx === 0; // server orders by negotiatedRate asc
+                            const q = supplierQty[s.supplierId] ?? "";
+                            const qNum = Number(q);
+                            const lineTotal = Number.isFinite(qNum) && qNum > 0 ? qNum * s.ratePerUnit : 0;
+                            return (
+                              <div
+                                key={s.supplierId}
+                                className={
+                                  "flex items-center gap-2 rounded-md border bg-card p-2 " +
+                                  (isCheapest ? "border-emerald-300 bg-emerald-50/40" : "")
+                                }
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-sm font-medium flex items-center gap-1.5">
+                                    {s.supplierName}
+                                    {isCheapest && (
+                                      <span className="text-[9px] uppercase tracking-wider font-semibold text-emerald-700 bg-emerald-100 rounded px-1 py-0.5">
+                                        Cheapest
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-muted-foreground tabular-nums">
+                                    ₹{s.ratePerUnit} / {it.unit}
+                                    {lineTotal > 0 && ` · line ₹${Math.round(lineTotal)}`}
+                                  </div>
+                                </div>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={q}
+                                  onChange={(e) =>
+                                    setSupplierQty((prev) => ({ ...prev, [s.supplierId]: e.target.value }))
+                                  }
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      addWith(s.supplierId, s.supplierName, s.ratePerUnit);
+                                    }
+                                  }}
+                                  placeholder="qty"
+                                  className="h-8 w-20 text-sm text-right tabular-nums"
+                                  autoFocus={isCheapest}
+                                />
+                                <Button
+                                  size="sm"
+                                  onClick={() => addWith(s.supplierId, s.supplierName, s.ratePerUnit)}
+                                  disabled={!qNum || qNum <= 0}
+                                  className="h-8"
+                                >
+                                  <Plus className="h-3.5 w-3.5" /> Add
+                                </Button>
+                              </div>
+                            );
+                          })
                         )}
                       </div>
-                    </div>
+                    )}
                   </li>
                 );
               })}
@@ -521,71 +643,12 @@ function ItemPicker({
           )}
         </div>
 
-        {/* Picked item — supplier choice + qty */}
-        {picked && (
-          <div className="border rounded-md p-3 bg-muted/20 space-y-2">
-            <div className="text-sm font-semibold">{picked.name}</div>
-            <div className="text-xs text-muted-foreground">
-              On hand {picked.currentQty} {picked.unit} · min {picked.minLevel} · par {picked.parLevel}
-            </div>
-            {picked.ratedSuppliers.length === 0 && (
-              <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
-                No rate card for this item — pick any active supplier; the line is flagged off-card.
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">Supplier</Label>
-                <select
-                  value={supplierId}
-                  onChange={(e) => setSupplierId(e.target.value)}
-                  className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-                >
-                  <option value="">Pick supplier…</option>
-                  {picked.ratedSuppliers.length > 0 && (
-                    <optgroup label="Rate card">
-                      {picked.ratedSuppliers.map((s) => (
-                        <option key={s.supplierId} value={s.supplierId}>
-                          {s.supplierName} · ₹{s.ratePerUnit}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  <optgroup label="Off card">
-                    {suppliers
-                      .filter((s) => !picked.ratedSuppliers.some((rs) => rs.supplierId === s.id))
-                      .map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                  </optgroup>
-                </select>
-              </div>
-              <div>
-                <Label className="text-xs">Qty ({picked.unit})</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={qty}
-                  onChange={(e) => setQty(e.target.value)}
-                  className="h-9"
-                />
-              </div>
-            </div>
+        <div className="flex items-center justify-between pt-2 border-t">
+          <div className="text-[11px] text-muted-foreground">
+            Tip: type to filter · click an item · press <kbd className="px-1 py-0.5 border rounded text-[10px]">Enter</kbd> on a qty to add quickly
           </div>
-        )}
-
-        <div className="flex items-center justify-end gap-2 pt-2 border-t">
           <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            onClick={confirm}
-            disabled={!picked || !supplierId || !Number(qty) || Number(qty) <= 0}
-          >
-            <Plus className="h-4 w-4" /> Add to PO
+            Done
           </Button>
         </div>
       </DialogContent>
