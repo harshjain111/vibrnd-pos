@@ -429,6 +429,35 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
                 <span>Grand total</span>
                 <span>{inr(order.grandTotal)}</span>
               </div>
+              {/* COGS + gross margin — derived from per-line cogs
+                  snapshotted at place-order. Suppressed when COGS=0
+                  (no recipes attached, drinks-only bill, etc.) so the
+                  Summary card doesn't get noisy. */}
+              {(() => {
+                const cogs = order.items
+                  .filter((li) => !li.voidedAt && !li.complimentary)
+                  .reduce((s, li) => s + (li.cogs ?? 0), 0);
+                if (cogs <= 0) return null;
+                // Margin = revenue (sub-total + tip, ex-tax, ex-discount-recovered) − cogs.
+                // We use subTotal as the revenue baseline because GST is a pass-through
+                // and tip/service charge aren't usually marginable.
+                const revenue = order.subTotal - order.discount;
+                const margin = revenue - cogs;
+                const marginPct = revenue > 0 ? (margin / revenue) * 100 : 0;
+                return (
+                  <div className="pt-2 mt-2 border-t space-y-1">
+                    <Row label="COGS (FIFO)" value={<span className="text-rose-700">−{inr2(cogs)}</span>} />
+                    <Row
+                      label="Gross margin"
+                      value={
+                        <span className={margin >= 0 ? "text-emerald-700 font-medium" : "text-rose-700 font-medium"}>
+                          {inr2(margin)} ({marginPct.toFixed(1)}%)
+                        </span>
+                      }
+                    />
+                  </div>
+                );
+              })()}
               {(order.loyaltyEarned > 0 || order.loyaltyRedeemed > 0) && (
                 <div className="pt-2 mt-2 border-t space-y-1">
                   {order.loyaltyRedeemed > 0 && (

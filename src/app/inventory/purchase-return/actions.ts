@@ -21,7 +21,7 @@ import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
 import { logActivity } from "@/lib/audit";
-import { moveStock } from "@/lib/stock";
+import { moveStock, consumeFifoBatches } from "@/lib/stock";
 import { inr } from "@/lib/utils";
 
 const LineInput = z.object({
@@ -114,6 +114,20 @@ export async function createPurchaseReturn(input: z.infer<typeof CreateInput>): 
     select: { id: true },
   });
   for (const l of lines) {
+    // Batch-aware: draw down the FIFO ledger so the qty leaves a real
+    // batch (the oldest batch with stock remaining). The financial
+    // basis is already locked in the linesJson at the negotiated
+    // return rate, so the batch we draw from only affects the
+    // distribution of qtyRemaining — not the debit note's value.
+    // Graceful: if no batches exist (legacy data), moveStock still
+    // decrements currentQty and we just don't reduce the FIFO ledger.
+    if (storeDept) {
+      await consumeFifoBatches({
+        rawMaterialId: l.rawMaterialId,
+        qtyNeeded: l.qty,
+        preferredDeptId: storeDept.id,
+      });
+    }
     await moveStock({
       rawMaterialId: l.rawMaterialId,
       delta: -l.qty,

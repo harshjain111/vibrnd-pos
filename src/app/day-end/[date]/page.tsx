@@ -58,6 +58,23 @@ export default async function DayEndDetailPage({ params }: { params: Promise<{ d
 
   const cashSales = sumByPM("CASH");
   const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
+
+  // COGS + gross margin — derived from per-line cogs snapshotted at
+  // place-order via the FIFO engine. Skip voided + complimentary lines
+  // since they didn't generate revenue. Falls back to 0 when no recipes
+  // were tagged (drinks-only outlet, legacy data) so the tile still
+  // renders without lying.
+  const cogs = paid.reduce(
+    (s, o) =>
+      s +
+      o.items
+        .filter((li) => !li.voidedAt && !li.complimentary)
+        .reduce((ls, li) => ls + (li.cogs ?? 0), 0),
+    0
+  );
+  const revenue = paid.reduce((s, o) => s + (o.subTotal - o.discount), 0);
+  const grossMargin = revenue - cogs;
+  const grossMarginPct = revenue > 0 ? (grossMargin / revenue) * 100 : 0;
   // Expected drawer = opening + top-ups - withdrawals + cash sales - expenses-paid-in-cash
   const cashExpenses = expenses.filter((e) => e.paymentMode === "CASH").reduce((s, e) => s + e.amount, 0);
   const closingCash = opening + topUps - withdrawals + cashSales - cashExpenses;
@@ -101,6 +118,25 @@ export default async function DayEndDetailPage({ params }: { params: Promise<{ d
         <Kpi label="Cash sales" value={inr(cashSales)} tone="good" />
         <Kpi label="Closing cash" value={inr(closingCash)} tone={closingCash >= 0 ? "good" : "bad"} />
       </div>
+
+      {/* COGS row — only when at least one recipe-attached item sold.
+          Cleaner than rendering "₹0 — 0.0%" tiles when an outlet has
+          no recipes wired yet. */}
+      {cogs > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+          <Kpi label="COGS (FIFO)" value={inr(cogs)} tone="bad" />
+          <Kpi
+            label="Gross margin"
+            value={inr(grossMargin)}
+            tone={grossMargin >= 0 ? "good" : "bad"}
+          />
+          <Kpi
+            label="Margin %"
+            value={`${grossMarginPct.toFixed(1)}%`}
+            tone={grossMarginPct >= 0 ? "good" : "bad"}
+          />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <Card>

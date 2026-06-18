@@ -60,6 +60,7 @@ export const REPORTS: ReportDef[] = [
 
   // ─── Item tab ───
   { slug: "item-wise",          name: "Item-Wise Sales",               desc: "Top-selling items by qty and revenue.", tab: "item", implemented: true, topTwelve: true },
+  { slug: "cogs-by-item",       name: "COGS + Gross Margin (Item-Wise)", desc: "FIFO cost of goods sold per item with margin %.", tab: "item", implemented: true, topTwelve: true },
   { slug: "hourly-items",       name: "Item Sale Report: Hourly Wise", desc: "Heatmap of items × hour.", tab: "item", implemented: true },
   { slug: "highest-selling",    name: "Highest Selling Items Report",  desc: "Top sellers summary.", tab: "item", implemented: false },
   { slug: "addon-item-wise",    name: "Addon: Item Wise Report",       desc: "Addons sold per parent item.", tab: "item", implemented: false },

@@ -151,6 +151,94 @@ export default async function ReportPage({
         );
       },
     },
+    "cogs-by-item": {
+      title: "COGS + Gross Margin (Item-Wise)",
+      desc: "FIFO cost of goods sold per item with margin %",
+      render: () => {
+        const map = new Map<string, { name: string; qty: number; revenue: number; cogs: number }>();
+        for (const o of orders) {
+          for (const li of o.items) {
+            if (li.voidedAt || li.complimentary) continue;
+            const key = li.itemId;
+            const cur = map.get(key) ?? { name: li.name, qty: 0, revenue: 0, cogs: 0 };
+            cur.qty += li.qty;
+            cur.revenue += li.qty * li.price;
+            cur.cogs += li.cogs ?? 0;
+            map.set(key, cur);
+          }
+        }
+        const rows = [...map.values()]
+          .map((r) => ({
+            ...r,
+            margin: r.revenue - r.cogs,
+            marginPct: r.revenue > 0 ? ((r.revenue - r.cogs) / r.revenue) * 100 : 0,
+          }))
+          .filter((r) => r.cogs > 0)
+          .sort((a, b) => b.margin - a.margin);
+        const totals = rows.reduce(
+          (s, r) => ({
+            qty: s.qty + r.qty,
+            revenue: s.revenue + r.revenue,
+            cogs: s.cogs + r.cogs,
+            margin: s.margin + r.margin,
+          }),
+          { qty: 0, revenue: 0, cogs: 0, margin: 0 }
+        );
+        const totalsPct = totals.revenue > 0 ? (totals.margin / totals.revenue) * 100 : 0;
+
+        if (rows.length === 0) {
+          return (
+            <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
+              No FIFO-costed sales in this range yet. COGS appears once recipes are
+              tagged on menu items and stock has been received via GRN — every bill
+              from then on snapshots its true landed cost.
+            </div>
+          );
+        }
+        return (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Item</TableHead>
+                <TableHead className="text-right">Qty</TableHead>
+                <TableHead className="text-right">Revenue</TableHead>
+                <TableHead className="text-right">COGS</TableHead>
+                <TableHead className="text-right">Margin</TableHead>
+                <TableHead className="text-right">Margin %</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.name}>
+                  <TableCell className="font-medium">{r.name}</TableCell>
+                  <TableCell className="text-right">{r.qty}</TableCell>
+                  <TableCell className="text-right">{inr(r.revenue)}</TableCell>
+                  <TableCell className="text-right text-rose-700">{inr(r.cogs)}</TableCell>
+                  <TableCell className={"text-right font-medium " + (r.margin >= 0 ? "text-emerald-700" : "text-rose-700")}>
+                    {inr(r.margin)}
+                  </TableCell>
+                  <TableCell className={"text-right " + (r.marginPct >= 0 ? "text-emerald-700" : "text-rose-700")}>
+                    {r.marginPct.toFixed(1)}%
+                  </TableCell>
+                </TableRow>
+              ))}
+              <TableRow className="bg-muted/40 font-semibold">
+                <TableCell>Total</TableCell>
+                <TableCell className="text-right">{totals.qty}</TableCell>
+                <TableCell className="text-right">{inr(totals.revenue)}</TableCell>
+                <TableCell className="text-right text-rose-700">{inr(totals.cogs)}</TableCell>
+                <TableCell className={"text-right " + (totals.margin >= 0 ? "text-emerald-700" : "text-rose-700")}>
+                  {inr(totals.margin)}
+                </TableCell>
+                <TableCell className={"text-right " + (totalsPct >= 0 ? "text-emerald-700" : "text-rose-700")}>
+                  {totalsPct.toFixed(1)}%
+                </TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        );
+      },
+    },
     "category-wise": {
       title: "Category-wise sales",
       desc: "Sales rolled up by category",
