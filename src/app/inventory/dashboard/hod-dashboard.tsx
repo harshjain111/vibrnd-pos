@@ -136,8 +136,18 @@ export async function HodDashboard({
         description={`${outletName} · scoped to items your department can request`}
         actions={
           <>
-            {dept && readyToReceive.length > 0 && (
-              <RaiseGrnButton deptName={dept.name} transfers={grnTransfers} />
+            {/* Always render the Receive button — it's the HOD's primary
+                workflow once the store dispatches stock to them. The button
+                itself shows the pending count or a "0 ready" disabled state
+                so the user always knows where to receive stock when it
+                arrives, rather than the button vanishing from the UI when
+                there's nothing in flight (which was confusing). */}
+            {dept && (
+              <RaiseGrnButton
+                deptName={dept.name}
+                transfers={grnTransfers}
+                pendingCount={readyToReceive.length}
+              />
             )}
             <Button asChild size="sm">
               <Link href="/inventory/requisitions/new">
@@ -165,7 +175,7 @@ export async function HodDashboard({
                 it — that moves it from the store into your department's ledger.
               </div>
             </div>
-            <RaiseGrnButton deptName={dept.name} transfers={grnTransfers} />
+            <RaiseGrnButton deptName={dept.name} transfers={grnTransfers} pendingCount={readyToReceive.length} />
           </CardContent>
         </Card>
       )}

@@ -32,9 +32,14 @@ export type PendingTransfer = {
 export function RaiseGrnButton({
   deptName,
   transfers,
+  pendingCount,
 }: {
   deptName: string;
   transfers: PendingTransfer[];
+  /** Number of SENT transfers waiting for this dept. The button stays
+   *  visible at 0 (so the HOD always knows where to receive stock) but
+   *  changes label + tone to make the empty case obvious. */
+  pendingCount?: number;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -75,9 +80,32 @@ export function RaiseGrnButton({
       }}
     >
       <DialogTrigger asChild>
-        <Button size="sm" variant="outline">
+        {/* Active when there's something to receive; visible-but-styled-down
+            when nothing is pending so the HOD always knows the button is
+            there for the receive flow. */}
+        <Button
+          size="sm"
+          variant={pendingCount && pendingCount > 0 ? "default" : "outline"}
+          title={
+            pendingCount && pendingCount > 0
+              ? `${pendingCount} transfer${pendingCount === 1 ? "" : "s"} waiting to receive`
+              : "No transfers waiting — the button opens once the store dispatches stock to you"
+          }
+        >
           <ClipboardCheck className="h-4 w-4" />
-          Raise GRN
+          Receive stock
+          {pendingCount !== undefined && (
+            <span
+              className={
+                "ml-1 inline-flex items-center justify-center rounded-full text-[10px] font-semibold px-1.5 h-4 min-w-[16px] " +
+                (pendingCount > 0
+                  ? "bg-white/20 text-current"
+                  : "bg-muted text-muted-foreground")
+              }
+            >
+              {pendingCount}
+            </span>
+          )}
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-xl">

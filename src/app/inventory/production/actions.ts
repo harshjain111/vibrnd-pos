@@ -89,7 +89,7 @@ const Run = z.object({
  *    a chain commissary.
  */
 export async function executeProductionRun(input: z.infer<typeof Run>) {
-  await requireUser("BILLER");
+  await requireInventoryOps(["PRODUCTION_MANAGER"]);
   const data = Run.parse(input);
   const outlet = await getActiveOutlet();
   const user = await getSessionUser();

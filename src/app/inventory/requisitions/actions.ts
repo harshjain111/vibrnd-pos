@@ -21,7 +21,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { requireUser } from "@/lib/rbac";
+import { requireUser, requireInventoryOps } from "@/lib/rbac";
 import { getSessionUser } from "@/lib/session";
 import { logActivity } from "@/lib/audit";
 import { postInternalTransferSend, postInternalTransferReceive, stockAtDepartment, moveStock } from "@/lib/stock";
@@ -238,7 +238,9 @@ export async function reviewRequisition(input: z.infer<typeof ReviewInput>): Pro
 }
 
 async function reviewRequisitionInner(input: z.infer<typeof ReviewInput>): Promise<ActionResult> {
-  const user = await requireUser();
+  // Approving a requisition is the Store Manager's job — also accept
+  // MANAGER + OWNER so a manager can override during a pinch.
+  const user = await requireInventoryOps();
   const data = ReviewInput.parse(input);
   const outlet = await getActiveOutlet();
 
@@ -364,7 +366,8 @@ export async function fulfilRequisition(fd: FormData): Promise<ActionResult> {
 }
 
 async function fulfilRequisitionInner(fd: FormData): Promise<ActionResult> {
-  const user = await requireUser();
+  // Dispatch is the Store Manager's job — same gate as approve.
+  const user = await requireInventoryOps();
   const id = String(fd.get("id") ?? "");
   if (!id) throw new Error("Requisition id is required");
   const outlet = await getActiveOutlet();

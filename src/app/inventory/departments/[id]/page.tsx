@@ -141,6 +141,7 @@ export default async function DepartmentStockPage({
               <>
                 <RaiseGrnButton
                   deptName={dept.name}
+                  pendingCount={pendingTransfers.length}
                   transfers={pendingTransfers.map((t) => ({
                     id: t.id,
                     label: t.challanNo ?? t.id.slice(0, 8),
