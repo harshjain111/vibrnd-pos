@@ -2,13 +2,13 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { requireUser } from "@/lib/rbac";
+import { requireInventoryOps } from "@/lib/rbac";
 import { getSessionUser } from "@/lib/session";
 import { logActivity } from "@/lib/audit";
 
 /** Save a batch of toggles for one tab. Values come in as form fields. */
 export async function saveInventorySettings(tab: string, fd: FormData) {
-  await requireUser("MANAGER");
+  await requireInventoryOps();
   const outlet = await getActiveOutlet();
   const user = await getSessionUser();
   const entries: { key: string; value: string }[] = [];

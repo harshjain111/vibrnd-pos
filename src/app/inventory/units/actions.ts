@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { requireUser } from "@/lib/rbac";
+import { requireInventoryOps } from "@/lib/rbac";
 
 const U = z.object({
   id: z.string().optional(),
@@ -13,7 +13,7 @@ const U = z.object({
 });
 
 export async function saveUnit(fd: FormData) {
-  await requireUser("MANAGER");
+  await requireInventoryOps();
   const outlet = await getActiveOutlet();
   const p = U.parse({
     id: fd.get("id") || undefined,
@@ -35,7 +35,7 @@ export async function saveUnit(fd: FormData) {
 }
 
 export async function deleteUnit(fd: FormData) {
-  await requireUser("MANAGER");
+  await requireInventoryOps();
   const id = String(fd.get("id") || "");
   if (!id) return;
   await db.unit.delete({ where: { id } });
@@ -44,7 +44,7 @@ export async function deleteUnit(fd: FormData) {
 
 /** Seed the 21 default units the spec calls for (idempotent — skips existing names). */
 export async function seedDefaultUnits() {
-  await requireUser("MANAGER");
+  await requireInventoryOps();
   const outlet = await getActiveOutlet();
   const defaults = [
     "kg", "g", "ltr", "ml", "pcs", "dozen",

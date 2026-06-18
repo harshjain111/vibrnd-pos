@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { requireUser } from "@/lib/rbac";
+import { requireUser, requireInventoryOps } from "@/lib/rbac";
 import { getSessionUser } from "@/lib/session";
 import { moveStock } from "@/lib/stock";
 import { logActivity } from "@/lib/audit";
@@ -26,7 +26,7 @@ const SaveMaster = z.object({
 });
 
 export async function saveProductionMaster(input: z.infer<typeof SaveMaster>) {
-  await requireUser("MANAGER");
+  await requireInventoryOps(["PRODUCTION_MANAGER"]);
   const data = SaveMaster.parse(input);
   const outlet = await getActiveOutlet();
   if (data.id) {
@@ -61,7 +61,7 @@ export async function saveProductionMaster(input: z.infer<typeof SaveMaster>) {
 }
 
 export async function deleteProductionMaster(fd: FormData) {
-  await requireUser("MANAGER");
+  await requireInventoryOps(["PRODUCTION_MANAGER"]);
   const id = String(fd.get("id") || "");
   if (!id) return;
   await db.productionMaster.delete({ where: { id } });

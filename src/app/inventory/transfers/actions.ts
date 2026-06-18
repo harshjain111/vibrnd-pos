@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { requireUser } from "@/lib/rbac";
+import { requireInventoryOps } from "@/lib/rbac";
 import { getSessionUser } from "@/lib/session";
 import { moveStock } from "@/lib/stock";
 import { logActivity } from "@/lib/audit";
@@ -24,7 +24,7 @@ const Create = z.object({
 });
 
 export async function createTransfer(input: z.infer<typeof Create>) {
-  await requireUser("MANAGER");
+  await requireInventoryOps();
   const data = Create.parse(input);
   const outlet = await getActiveOutlet();
   const user = await getSessionUser();
@@ -90,7 +90,7 @@ const Receive = z.object({
 });
 
 export async function receiveTransfer(input: z.infer<typeof Receive>) {
-  await requireUser("MANAGER");
+  await requireInventoryOps();
   const data = Receive.parse(input);
   const outlet = await getActiveOutlet();
   const user = await getSessionUser();

@@ -97,3 +97,30 @@ export async function getAuthorizedUser(minRole?: Role): Promise<SessionUser | n
   if (minRole && !hasAtLeast(user.role, minRole)) return null;
   return user;
 }
+
+/**
+ * Inventory operations gate — closing stock, transfers, units, raw-material
+ * masters, recipes, suppliers etc. STORE_MANAGER doesn't outrank MANAGER on
+ * the seniority scale (they're both rank 2 vs 3), so `requireUser("MANAGER")`
+ * locks STORE_MANAGER out of the very pages designed for them. This helper
+ * is the right gate for those routes: STORE_MANAGER and above.
+ *
+ * Pass `extraRoles` to allow specific inventory roles in too — e.g. include
+ * "PRODUCTION_MANAGER" for the production module, "ACCOUNTANT" for vendor
+ * invoices, "COST_CONTROLLER" for PO approval.
+ */
+const INVENTORY_OPS_BASE = new Set<string>(["STORE_MANAGER", "MANAGER", "OWNER"]);
+export async function requireInventoryOps(extraRoles: readonly string[] = []): Promise<SessionUser> {
+  const user = await getSessionUser();
+  if (!user) redirect("/login");
+  const allowed = new Set<string>([...INVENTORY_OPS_BASE, ...extraRoles]);
+  if (!allowed.has(user.role)) {
+    // Logging the rejection so a future "buttons aren't responding" report
+    // surfaces in the server logs instead of silently bouncing to landing.
+    console.warn(
+      `[rbac] requireInventoryOps denied: role=${user.role} extraRoles=${JSON.stringify(extraRoles)}`
+    );
+    redirect("/");
+  }
+  return user;
+}

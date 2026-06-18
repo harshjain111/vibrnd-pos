@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { requireUser } from "@/lib/rbac";
+import { requireUser, requireInventoryOps } from "@/lib/rbac";
 import { getSessionUser } from "@/lib/session";
 import { logActivity } from "@/lib/audit";
 
@@ -25,7 +25,7 @@ function midnight(d: Date) {
 }
 
 export async function saveClosing(input: z.infer<typeof Save>) {
-  await requireUser("MANAGER");
+  await requireInventoryOps();
   const data = Save.parse(input);
   const outlet = await getActiveOutlet();
   const user = await getSessionUser();
@@ -76,7 +76,7 @@ export async function saveClosing(input: z.infer<typeof Save>) {
 }
 
 export async function freezeClosing(fd: FormData) {
-  await requireUser("MANAGER");
+  await requireInventoryOps();
   const outlet = await getActiveOutlet();
   const user = await getSessionUser();
   const day = midnight(new Date(String(fd.get("businessDay"))));
