@@ -48,6 +48,15 @@ export function NewGrnForm({
   const [pending, startTransition] = React.useTransition();
   const [notes, setNotes] = React.useState("");
   const [keepOpen, setKeepOpen] = React.useState(false);
+  // Challan / Invoice header — spec section 3. These feed apportioned
+  // landed-cost on the FIFO batches the server creates per line.
+  const [vendorInvoiceNo, setVendorInvoiceNo] = React.useState("");
+  const [vendorInvoiceDate, setVendorInvoiceDate] = React.useState("");
+  const [freightCharges, setFreightCharges] = React.useState("");
+  const [deliveryCharges, setDeliveryCharges] = React.useState("");
+  const [discountAmount, setDiscountAmount] = React.useState("");
+  const [otherCharges, setOtherCharges] = React.useState("");
+  const [taxAmount, setTaxAmount] = React.useState("");
 
   /* ── PO mode ─────────────────────────────────────────────── */
   const [poReceive, setPoReceive] = React.useState<
@@ -125,6 +134,13 @@ export function NewGrnForm({
         poId: poId ?? undefined,
         notes: notes || undefined,
         keepOpen,
+        vendorInvoiceNo: vendorInvoiceNo || undefined,
+        vendorInvoiceDate: vendorInvoiceDate || undefined,
+        freightCharges: Number(freightCharges) || 0,
+        deliveryCharges: Number(deliveryCharges) || 0,
+        discountAmount: Number(discountAmount) || 0,
+        otherCharges: Number(otherCharges) || 0,
+        taxAmount: Number(taxAmount) || 0,
         lines,
       });
       if (!res.ok) {
@@ -155,6 +171,92 @@ export function NewGrnForm({
           update={updAdHoc}
         />
       )}
+
+      {/* Challan / Invoice details — captured per spec section 3.
+          The freight/delivery/discount/other figures apportion across
+          the line items so each stock batch carries its true landed
+          cost (not just the bare invoice rate). */}
+      <div className="rounded-md border bg-card p-3 space-y-3">
+        <div className="text-sm font-semibold">Challan / Invoice details</div>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div>
+            <Label>Vendor invoice no</Label>
+            <Input
+              value={vendorInvoiceNo}
+              onChange={(e) => setVendorInvoiceNo(e.target.value)}
+              placeholder="e.g. INV-2026/0042"
+            />
+          </div>
+          <div>
+            <Label>Invoice date</Label>
+            <Input
+              type="date"
+              value={vendorInvoiceDate}
+              onChange={(e) => setVendorInvoiceDate(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label>Tax amount (₹)</Label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              value={taxAmount}
+              onChange={(e) => setTaxAmount(e.target.value)}
+              placeholder="0"
+            />
+          </div>
+          <div>
+            <Label>Freight charges (₹)</Label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              value={freightCharges}
+              onChange={(e) => setFreightCharges(e.target.value)}
+              placeholder="0"
+            />
+          </div>
+          <div>
+            <Label>Delivery charges (₹)</Label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              value={deliveryCharges}
+              onChange={(e) => setDeliveryCharges(e.target.value)}
+              placeholder="0"
+            />
+          </div>
+          <div>
+            <Label>Other charges (₹)</Label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              value={otherCharges}
+              onChange={(e) => setOtherCharges(e.target.value)}
+              placeholder="0"
+            />
+          </div>
+          <div className="col-span-2 md:col-span-3">
+            <Label>Discount (₹)</Label>
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              value={discountAmount}
+              onChange={(e) => setDiscountAmount(e.target.value)}
+              placeholder="0 — vendor's invoice discount, applied before landed cost"
+            />
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Freight, delivery, tax + other charges apportion across the line
+          items by ₹-weight, so each batch's landed rate reflects its
+          true cost. Discount reduces the landed rate proportionally.
+        </p>
+      </div>
 
       {/* Notes + keep-open + submit */}
       <div className="grid md:grid-cols-2 gap-3">

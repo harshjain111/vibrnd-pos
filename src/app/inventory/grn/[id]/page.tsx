@@ -144,9 +144,37 @@ export default async function GrnDetailPage({ params }: { params: Promise<{ id: 
             {grn.po?.supplier && <Row label="Supplier" value={grn.po.supplier.name} />}
             <Row label="Department" value={grn.department.name} />
             <Row label="Lines" value={String(grn.lines.length)} />
+            {grn.vendorInvoiceNo && (
+              <Row label="Vendor invoice" value={grn.vendorInvoiceNo} />
+            )}
+            {grn.vendorInvoiceDate && (
+              <Row
+                label="Invoice date"
+                value={new Date(grn.vendorInvoiceDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+              />
+            )}
             <div className="flex items-center justify-between text-base font-semibold pt-2 border-t">
-              <span>Received value</span>
-              <span>{inr(Math.round(value))}</span>
+              <span>Sub-total</span>
+              <span>{inr(Math.round(grn.landedSubTotal || value))}</span>
+            </div>
+            {grn.freightCharges > 0 && (
+              <Row label="Freight" value={inr(Math.round(grn.freightCharges))} />
+            )}
+            {grn.deliveryCharges > 0 && (
+              <Row label="Delivery" value={inr(Math.round(grn.deliveryCharges))} />
+            )}
+            {grn.otherCharges > 0 && (
+              <Row label="Other charges" value={inr(Math.round(grn.otherCharges))} />
+            )}
+            {grn.taxAmount > 0 && (
+              <Row label="Tax" value={inr(Math.round(grn.taxAmount))} />
+            )}
+            {grn.discountAmount > 0 && (
+              <Row label="Discount" value={<span className="text-emerald-700">−{inr(Math.round(grn.discountAmount))}</span>} />
+            )}
+            <div className="flex items-center justify-between text-base font-semibold pt-2 border-t">
+              <span>Landed total</span>
+              <span>{inr(Math.round(grn.landedTotal || value))}</span>
             </div>
             {damaged > 0 && (
               <div className="flex items-center justify-between text-sm text-rose-700">

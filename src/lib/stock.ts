@@ -1,4 +1,5 @@
 import { db } from "./db";
+import type { Prisma } from "@prisma/client";
 
 export type StockReason =
   | "SALE"
@@ -227,6 +228,14 @@ export async function postInternalTransferMovement(input: {
  * "addons" is the JSON-snapshotted list of selected addons on the order
  * line — same shape as OrderItem.addonsJson: [{name, priceDelta}].
  *
+ * FIFO: consumption draws from the oldest open StockBatch first and
+ * accumulates COGS = sum(qtyTaken × batchRate). The returned `cogs` is
+ * snapshotted onto OrderItem.cogs by the caller for COGS reporting +
+ * gross-margin tracking. When a recipe ingredient has zero open batches
+ * (legacy data without an OPENING backfill), we still write the
+ * StockMovement so currentQty decrements correctly — that line just
+ * contributes 0 to COGS instead of crashing the bill.
+ *
  * Best-effort — failures are logged but don't roll back the caller.
  */
 export async function applyRecipeStock(input: {
@@ -239,19 +248,19 @@ export async function applyRecipeStock(input: {
   note?: string;
   /** When true, the delta sign is flipped (refund / sales-return / cancel). */
   reverse?: boolean;
-}): Promise<void> {
-  if (!input.variantName) return;
+}): Promise<{ cogs: number }> {
+  if (!input.variantName) return { cogs: 0 };
 
   const variant = await db.itemVariant.findFirst({
     where: { itemId: input.itemId, name: input.variantName },
   });
-  if (!variant) return;
+  if (!variant) return { cogs: 0 };
 
   const recipe = await db.recipe.findFirst({
     where: { itemId: input.itemId, itemVariantId: variant.id },
     include: { ingredients: true },
   });
-  if (!recipe) return;
+  if (!recipe) return { cogs: 0 };
 
   const selectedAddonIds = new Set<string>();
   if (input.addons && input.addons.length > 0) {
@@ -266,19 +275,223 @@ export async function applyRecipeStock(input: {
   const sign = input.reverse ? 1 : -1;
   const reason: StockReason = input.reverse ? "CANCEL_REVERSE" : "SALE";
 
+  let totalCogs = 0;
   for (const ing of recipe.ingredients) {
     const include = ing.addonId === null || selectedAddonIds.has(ing.addonId);
     if (!include) continue;
+
+    const signedQty = sign * ing.qty * input.qty;
+
+    if (signedQty < 0) {
+      // Forward consumption — pull from FIFO batches at this rm's home
+      // dept (STORE). COGS comes back as sum(qtyTaken × batchRate).
+      const consumption = await consumeFifoBatches({
+        rawMaterialId: ing.rawMaterialId,
+        qtyNeeded: Math.abs(signedQty),
+      });
+      totalCogs += consumption.cogs;
+    } else {
+      // Reverse — write back to the most-recently consumed batch (best-
+      // effort) so a cancel/return restores the lot it came out of.
+      await reverseFifoBatches({
+        rawMaterialId: ing.rawMaterialId,
+        qtyToRestore: signedQty,
+      });
+    }
+
+    // Always write the StockMovement + currentQty change so all the
+    // existing per-dept derivations + low-stock notifications keep
+    // working unchanged.
     await moveStock({
       rawMaterialId: ing.rawMaterialId,
-      delta: sign * ing.qty * input.qty,
+      delta: signedQty,
       reason,
       refType: input.refType,
       refId: input.refId,
       note: input.note,
     });
   }
+  return { cogs: Math.round(totalCogs * 100) / 100 };
 }
+
+/**
+ * FIFO consumption helper — picks the oldest open StockBatch rows for a
+ * raw material (at its home dept, typically STORE) and decrements
+ * qtyRemaining until either the requested qty is satisfied or all open
+ * batches are drained. Returns the per-batch breakdown plus the total
+ * COGS (qty × rate, summed) so callers can snapshot it.
+ *
+ * Graceful degradation: if no open batches exist (legacy data with
+ * currentQty>0 but no OPENING backfill, or this RM has never been
+ * received), the function returns {cogs:0, lines:[]} and the caller's
+ * subsequent moveStock() call still decrements currentQty so the qty
+ * count stays correct — only COGS is lost for that consumption event.
+ */
+export async function consumeFifoBatches(input: {
+  rawMaterialId: string;
+  qtyNeeded: number;
+  /** When set, only batches at this dept are eligible. Defaults to STORE
+   *  for the outlet that owns the RM — recipes consume against STORE
+   *  today; per-dept consumption is wired into a future phase. */
+  preferredDeptId?: string;
+}): Promise<{ cogs: number; lines: { batchId: string; qtyTaken: number; rate: number }[] }> {
+  if (input.qtyNeeded <= 0) return { cogs: 0, lines: [] };
+
+  // Resolve the dept to consume from. If none provided, pick the STORE
+  // dept at the RM's outlet.
+  let deptId = input.preferredDeptId;
+  if (!deptId) {
+    const rm = await db.rawMaterial.findUnique({
+      where: { id: input.rawMaterialId },
+      select: { outletId: true },
+    });
+    if (!rm) return { cogs: 0, lines: [] };
+    const store = await db.department.findFirst({
+      where: { outletId: rm.outletId, kind: "STORE", active: true },
+      select: { id: true },
+    });
+    if (!store) return { cogs: 0, lines: [] };
+    deptId = store.id;
+  }
+
+  const open = await db.stockBatch.findMany({
+    where: { rawMaterialId: input.rawMaterialId, departmentId: deptId, qtyRemaining: { gt: 0 } },
+    orderBy: { receivedAt: "asc" },
+  });
+
+  let remaining = input.qtyNeeded;
+  let cogs = 0;
+  const lines: { batchId: string; qtyTaken: number; rate: number }[] = [];
+  for (const b of open) {
+    if (remaining <= 0) break;
+    const take = Math.min(b.qtyRemaining, remaining);
+    remaining -= take;
+    cogs += take * b.ratePerUnit;
+    lines.push({ batchId: b.id, qtyTaken: take, rate: b.ratePerUnit });
+    const newRemaining = Math.max(0, b.qtyRemaining - take);
+    await db.stockBatch.update({
+      where: { id: b.id },
+      data: {
+        qtyRemaining: newRemaining,
+        closedAt: newRemaining === 0 ? new Date() : b.closedAt,
+      },
+    });
+  }
+  return { cogs, lines };
+}
+
+/**
+ * Restore qty back to FIFO batches — runs newest-first so a same-shift
+ * cancel/return tops back up the batch we just drained. If a batch was
+ * already fully closed and reopens, we clear closedAt.
+ */
+async function reverseFifoBatches(input: {
+  rawMaterialId: string;
+  qtyToRestore: number;
+  preferredDeptId?: string;
+}): Promise<void> {
+  if (input.qtyToRestore <= 0) return;
+
+  let deptId = input.preferredDeptId;
+  if (!deptId) {
+    const rm = await db.rawMaterial.findUnique({
+      where: { id: input.rawMaterialId },
+      select: { outletId: true },
+    });
+    if (!rm) return;
+    const store = await db.department.findFirst({
+      where: { outletId: rm.outletId, kind: "STORE", active: true },
+      select: { id: true },
+    });
+    if (!store) return;
+    deptId = store.id;
+  }
+
+  const batches = await db.stockBatch.findMany({
+    where: {
+      rawMaterialId: input.rawMaterialId,
+      departmentId: deptId,
+      // Re-open batches that still have headroom (qtyRemaining < qtyReceived).
+      // Mostly hits the most-recently consumed batch.
+    },
+    orderBy: { receivedAt: "desc" },
+  });
+
+  let remaining = input.qtyToRestore;
+  for (const b of batches) {
+    if (remaining <= 0) break;
+    const headroom = b.qtyReceived - b.qtyRemaining;
+    if (headroom <= 0) continue;
+    const give = Math.min(headroom, remaining);
+    remaining -= give;
+    await db.stockBatch.update({
+      where: { id: b.id },
+      data: {
+        qtyRemaining: b.qtyRemaining + give,
+        closedAt: b.closedAt && b.qtyRemaining + give > 0 ? null : b.closedAt,
+      },
+    });
+  }
+}
+
+/**
+ * Create a new StockBatch (and bump RawMaterial.currentQty as the
+ * denormalised cache). Used by GRN receipt, production output, internal
+ * transfer-in, and the OPENING backfill. Returns the new batch row so
+ * callers can wire it back to their parent entity (GrnLine.stockBatchId,
+ * etc.).
+ */
+export async function addStockBatch(input: {
+  rawMaterialId: string;
+  departmentId: string;
+  qty: number;
+  ratePerUnit: number;
+  source: "GRN_RECEIPT" | "OPENING" | "STOCK_COUNT" | "PRODUCTION_OUTPUT" | "TRANSFER_IN" | "ADJUSTMENT";
+  grnId?: string;
+  grnLineId?: string;
+  batchNo?: string;
+  expiryDate?: Date;
+  /** Optional caller-provided ID — useful for migrations that want
+   *  deterministic ids ("open-<rmId>"). */
+  forceId?: string;
+}) {
+  if (input.qty <= 0) return null;
+
+  const rm = await db.rawMaterial.findUnique({
+    where: { id: input.rawMaterialId },
+    select: { outletId: true },
+  });
+  if (!rm) throw new Error("Raw material not found");
+
+  const batch = await db.stockBatch.create({
+    data: {
+      ...(input.forceId ? { id: input.forceId } : {}),
+      rawMaterialId: input.rawMaterialId,
+      outletId: rm.outletId,
+      departmentId: input.departmentId,
+      qtyReceived: input.qty,
+      qtyRemaining: input.qty,
+      ratePerUnit: input.ratePerUnit,
+      source: input.source,
+      grnId: input.grnId,
+      grnLineId: input.grnLineId,
+      batchNo: input.batchNo,
+      expiryDate: input.expiryDate,
+    },
+  });
+
+  // NOTE: currentQty is managed by moveStock (which also writes the
+  // StockMovement audit row and fires low-stock notifications). Callers
+  // pair addStockBatch + moveStock(+qty) so the FIFO ledger and the
+  // denormalised cache stay in lockstep — see grn/actions.ts createGrn
+  // for the reference pattern.
+
+  return batch;
+}
+
+/** Type guard for batch source values — pin down what the action layer
+ *  passes in so we never drift the enum. */
+export type BatchSource = Prisma.StockBatchCreateInput["source"];
 
 /**
  * Compute how much of `rawMaterialId` currently sits at `departmentId`.

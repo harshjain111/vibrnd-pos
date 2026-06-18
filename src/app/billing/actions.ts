@@ -262,6 +262,9 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
           }),
         },
       },
+      // include items so the post-create recipe loop can fold each
+      // line's FIFO COGS back onto OrderItem.cogs by id.
+      include: { items: { orderBy: { createdAt: "asc" } } },
     });
   });
 
@@ -332,8 +335,14 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
   }
 
   // Stock auto-consumption — variant + addon aware via applyRecipeStock.
-  for (const l of data.lines) {
-    await applyRecipeStock({
+  // Stock auto-consumption — variant + addon aware. applyRecipeStock now
+  // returns the FIFO-derived COGS for the line; we fold it back onto the
+  // matching OrderItem.cogs so the bill carries its true cost basis.
+  // Matching is positional (cart line i ↔ order.items[i]) — placeOrder's
+  // create above preserves the order of data.lines exactly.
+  for (let i = 0; i < data.lines.length; i++) {
+    const l = data.lines[i];
+    const { cogs } = await applyRecipeStock({
       itemId: l.itemId,
       variantName: l.variantName ?? null,
       qty: l.qty,
@@ -342,6 +351,12 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
       refType: "Order",
       note: `${invoiceNo} · ${itemMap.get(l.itemId)?.name ?? "item"}${l.variantName ? ` (${l.variantName})` : ""} ×${l.qty}`,
     });
+    if (cogs > 0) {
+      const lineRow = order.items[i];
+      if (lineRow) {
+        await db.orderItem.update({ where: { id: lineRow.id }, data: { cogs } });
+      }
+    }
   }
 
   // Loyalty bookkeeping

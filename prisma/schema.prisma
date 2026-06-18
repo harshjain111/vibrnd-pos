@@ -17,29 +17,29 @@ datasource db {
 }
 
 model Outlet {
-  id              String   @id @default(cuid())
-  name            String
-  code            String   @unique
-  address         String?
-  phone           String?
-  email           String?
-  gstin           String?
-  fssai           String?
+  id                  String  @id @default(cuid())
+  name                String
+  code                String  @unique
+  address             String?
+  phone               String?
+  email               String?
+  gstin               String?
+  fssai               String?
   /// UPI VPA used to generate the dynamic QR at Settle (audit TASK 20).
-  upiVpa          String?
-  currency        String   @default("INR")
-  timezone        String   @default("Asia/Kolkata")
-  taxInclusive    Boolean  @default(false) // when true, item prices already include GST
-  loyaltyEarnPer  Float    @default(10)    // 1 point earned per ₹N spent
-  loyaltyRedeemRupees Float @default(1)    // 1 point = ₹N when redeemed
-  tierSilverAt    Int      @default(500)   // points threshold for Silver tier
-  tierGoldAt      Int      @default(2000)  // points threshold for Gold tier
-  tierSilverMult  Float    @default(1.5)   // earn multiplier at Silver
-  tierGoldMult    Float    @default(2.0)   // earn multiplier at Gold
-  storeOpen       Boolean  @default(true)  // master switch — closed gates online orders
-  kdsEnabled      Boolean  @default(true)  // when false the POS prints KOTs locally instead of pushing to /kds
-  serviceChargePct Float   @default(10)    // default service charge % at Settle; set 0 to disable by default
-  active          Boolean  @default(true)  // soft-delete
+  upiVpa              String?
+  currency            String  @default("INR")
+  timezone            String  @default("Asia/Kolkata")
+  taxInclusive        Boolean @default(false) // when true, item prices already include GST
+  loyaltyEarnPer      Float   @default(10) // 1 point earned per ₹N spent
+  loyaltyRedeemRupees Float   @default(1) // 1 point = ₹N when redeemed
+  tierSilverAt        Int     @default(500) // points threshold for Silver tier
+  tierGoldAt          Int     @default(2000) // points threshold for Gold tier
+  tierSilverMult      Float   @default(1.5) // earn multiplier at Silver
+  tierGoldMult        Float   @default(2.0) // earn multiplier at Gold
+  storeOpen           Boolean @default(true) // master switch — closed gates online orders
+  kdsEnabled          Boolean @default(true) // when false the POS prints KOTs locally instead of pushing to /kds
+  serviceChargePct    Float   @default(10) // default service charge % at Settle; set 0 to disable by default
+  active              Boolean @default(true) // soft-delete
 
   // ─── Chain-inventory foundation (Prompt 1) ─────────────────────────
   /// What this outlet IS in the chain topology. OUTLET = customer-facing
@@ -48,82 +48,83 @@ model Outlet {
   /// commissary that produces semi-finished goods (e.g. cooked dal) from
   /// raw materials. BS / BK get a slimmed-down inventory-only UI; POS,
   /// menu, billing are hidden.
-  kind            String   @default("OUTLET") // OUTLET | BASE_STORE | BASE_KITCHEN
+  kind                       String   @default("OUTLET") // OUTLET | BASE_STORE | BASE_KITCHEN
   /// 1-outlet → 1-BS mapping for v1. Null for non-OUTLET kinds.
-  baseStoreOutletId String?
-  baseStoreOutlet   Outlet? @relation("OutletBaseStore", fields: [baseStoreOutletId], references: [id])
-  outletsServedByBs Outlet[] @relation("OutletBaseStore")
+  baseStoreOutletId          String?
+  baseStoreOutlet            Outlet?  @relation("OutletBaseStore", fields: [baseStoreOutletId], references: [id])
+  outletsServedByBs          Outlet[] @relation("OutletBaseStore")
   /// 1-outlet → 1-BK mapping for v1. Null for non-OUTLET kinds.
-  baseKitchenOutletId String?
-  baseKitchenOutlet   Outlet? @relation("OutletBaseKitchen", fields: [baseKitchenOutletId], references: [id])
-  outletsServedByBk Outlet[] @relation("OutletBaseKitchen")
+  baseKitchenOutletId        String?
+  baseKitchenOutlet          Outlet?  @relation("OutletBaseKitchen", fields: [baseKitchenOutletId], references: [id])
+  outletsServedByBk          Outlet[] @relation("OutletBaseKitchen")
   /// When true, Store Manager POs must be approved by a Cost Controller
   /// before they can be sent to the vendor. Owner can flip this off per
   /// outlet from Settings → Inventory.
-  requireCostControlApproval Boolean @default(true)
+  requireCostControlApproval Boolean  @default(true)
   /// When true, BK → Outlet transfers carry forward a configurable labour /
   /// overhead markup on top of the input cost. Default off.
-  applyBKMarkupOnTransfer    Boolean @default(false)
-  bkMarkupPercent            Float   @default(0)
+  applyBKMarkupOnTransfer    Boolean  @default(false)
+  bkMarkupPercent            Float    @default(0)
   /// Master switch for the multi-department inventory model (Store → Kitchen
   /// / Bar / Housekeeping). Default ON for new outlets; legacy outlets are
   /// flipped on by the backfill script. Disabling reverts the UI to the
   /// old flat per-outlet stock view.
-  multiDeptInventoryEnabled  Boolean @default(true)
+  multiDeptInventoryEnabled  Boolean  @default(true)
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  items           Item[]
-  categories      Category[]
-  orders          Order[]
-  customers       Customer[]
-  rawMaterials    RawMaterial[]
-  expenses        Expense[]
-  users           User[]
-  tables          DiningTable[]
-  kots            KitchenTicket[]
-  discounts       Discount[]
-  taxSlabs        TaxSlab[]
-  activityLogs    ActivityLog[]
-  stockMovements  StockMovement[]
-  purchaseOrders  PurchaseOrder[]
-  cashEntries     CashEntry[]
-  notifications   Notification[]
-  subOrderTypes   SubOrderType[]
-  salesReturns    SalesReturn[]
-  feedback        Feedback[]
-  giftCards       GiftCard[]
-  payments        Payment[]
-  taskTemplates   TaskTemplate[]
-  tasks           Task[]
-  dayCloses       DayClose[]
-  overrides       OverrideRequest[]
-  membershipPlans MembershipPlan[]
+  items                 Item[]
+  categories            Category[]
+  orders                Order[]
+  customers             Customer[]
+  rawMaterials          RawMaterial[]
+  expenses              Expense[]
+  users                 User[]
+  tables                DiningTable[]
+  kots                  KitchenTicket[]
+  discounts             Discount[]
+  taxSlabs              TaxSlab[]
+  activityLogs          ActivityLog[]
+  stockMovements        StockMovement[]
+  purchaseOrders        PurchaseOrder[]
+  cashEntries           CashEntry[]
+  notifications         Notification[]
+  subOrderTypes         SubOrderType[]
+  salesReturns          SalesReturn[]
+  feedback              Feedback[]
+  giftCards             GiftCard[]
+  payments              Payment[]
+  taskTemplates         TaskTemplate[]
+  tasks                 Task[]
+  dayCloses             DayClose[]
+  overrides             OverrideRequest[]
+  membershipPlans       MembershipPlan[]
   membershipRedemptions MembershipRedemption[]
-  units             Unit[]
-  stockCounts       StockCount[]
-  purchases         Purchase[]
-  transfersSent     Transfer[] @relation("TransfersSent")
-  transfersReceived Transfer[] @relation("TransfersReceived")
-  productionMasters ProductionMaster[]
-  productionRuns    ProductionRun[]
-  vendorPayments    VendorPayment[]
-  invSettings       InventorySetting[]
-  reportNotifications ReportNotification[]
-  rolePermissions   RolePermission[]
-  fixedAssets       FixedAsset[]
-  assetAudits       AssetAudit[]
+  units                 Unit[]
+  stockCounts           StockCount[]
+  purchases             Purchase[]
+  transfersSent         Transfer[]             @relation("TransfersSent")
+  transfersReceived     Transfer[]             @relation("TransfersReceived")
+  productionMasters     ProductionMaster[]
+  productionRuns        ProductionRun[]
+  vendorPayments        VendorPayment[]
+  invSettings           InventorySetting[]
+  reportNotifications   ReportNotification[]
+  rolePermissions       RolePermission[]
+  fixedAssets           FixedAsset[]
+  assetAudits           AssetAudit[]
 
-  departments       Department[]
-  requisitions      Requisition[]
-  grns              Grn[]
-  vendorInvoices    VendorInvoice[]
-  coupons           Coupon[]
-  discountUsages    DiscountUsage[]
-  itemTags          ItemTag[]
-  tableGroups       TableGroup[]
-  reservations      Reservation[]
+  departments    Department[]
+  requisitions   Requisition[]
+  grns           Grn[]
+  vendorInvoices VendorInvoice[]
+  coupons        Coupon[]
+  discountUsages DiscountUsage[]
+  itemTags       ItemTag[]
+  tableGroups    TableGroup[]
+  reservations   Reservation[]
+  stockBatches   StockBatch[]
 }
 
 /// A stock-holding sub-unit within an outlet. Every outlet has at minimum a
@@ -131,25 +132,26 @@ model Outlet {
 /// HOUSEKEEPING. BASE_STORE / BASE_KITCHEN outlets have a single STORE dept
 /// that holds the chain-level stock.
 model Department {
-  id          String   @id @default(cuid())
-  outletId    String
-  outlet      Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  id        String   @id @default(cuid())
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
   /// STORE | KITCHEN | BAR | HOUSEKEEPING | OTHER. STORE is the only dept
   /// with an external inbound channel — everything else gets stock via
   /// internal requisition from STORE.
-  kind        String
-  name        String
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  kind      String
+  name      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  users               User[]
-  stockMovements      StockMovement[]
-  transfersOutbound   Transfer[] @relation("TransferFromDept")
-  transfersInbound    Transfer[] @relation("TransferToDept")
-  requisitionsRaised  Requisition[] @relation("RequisitionFromDept")
-  requisitionsReceived Requisition[] @relation("RequisitionToDept")
-  grns                Grn[]
+  users                User[]
+  stockMovements       StockMovement[]
+  transfersOutbound    Transfer[]      @relation("TransferFromDept")
+  transfersInbound     Transfer[]      @relation("TransferToDept")
+  requisitionsRaised   Requisition[]   @relation("RequisitionFromDept")
+  requisitionsReceived Requisition[]   @relation("RequisitionToDept")
+  grns                 Grn[]
+  stockBatches         StockBatch[]
 
   /// One STORE / KITCHEN / BAR / HOUSEKEEPING per outlet — extra OTHER
   /// instances allowed under unique names.
@@ -164,8 +166,8 @@ model Department {
 /// structured fields the audit report queries.
 model ActivityLog {
   id        String   @id @default(cuid())
-  action    String   // CREATE | UPDATE | DELETE | CANCEL | SETTLE | ACCEPT | REJECT
-  entity    String   // Order | Item | Discount | Customer | RawMaterial | KOT | Outlet | Expense
+  action    String // CREATE | UPDATE | DELETE | CANCEL | SETTLE | ACCEPT | REJECT
+  entity    String // Order | Item | Discount | Customer | RawMaterial | KOT | Outlet | Expense
   entityId  String?
   summary   String
   actor     String   @default("system") // user email; "system" for unauthenticated
@@ -190,34 +192,34 @@ model ActivityLog {
 }
 
 model User {
-  id             String   @id @default(cuid())
-  name           String
-  email          String   @unique
-  passwordHash   String?  // bcrypt-hashed; nullable for legacy seed
+  id                 String            @id @default(cuid())
+  name               String
+  email              String            @unique
+  passwordHash       String? // bcrypt-hashed; nullable for legacy seed
   /// Role registry now extends to inventory / procurement roles:
   /// OWNER | MANAGER | BILLER | CAPTAIN | STORE_MANAGER | COST_CONTROLLER
   /// | CHEF_HOD | BARTENDER_HOD | HOUSEKEEPING_HOD | ACCOUNTANT
   /// | PRODUCTION_MANAGER.
-  role           String   @default("BILLER")
-  active         Boolean  @default(true)
-  commissionRate Float    @default(0)        // % of order revenue earned as commission
-  outletId       String
-  outlet         Outlet   @relation(fields: [outletId], references: [id])
+  role               String            @default("BILLER")
+  active             Boolean           @default(true)
+  commissionRate     Float             @default(0) // % of order revenue earned as commission
+  outletId           String
+  outlet             Outlet            @relation(fields: [outletId], references: [id])
   /// Department this user is scoped to. Nullable for outlet-wide roles
   /// (OWNER, MANAGER, BILLER, CAPTAIN, STORE_MANAGER who owns STORE,
   /// COST_CONTROLLER, ACCOUNTANT). Set for HODs (CHEF_HOD → KITCHEN,
   /// BARTENDER_HOD → BAR, HOUSEKEEPING_HOD → HOUSEKEEPING) and for
   /// PRODUCTION_MANAGER (set to a BK outlet's STORE dept).
-  departmentId   String?
-  department     Department? @relation(fields: [departmentId], references: [id])
-  assignedTasks  Task[]   @relation("AssignedTasks")
-  createdTasks   Task[]   @relation("CreatedTasks")
-  dayCloses      DayClose[]
+  departmentId       String?
+  department         Department?       @relation(fields: [departmentId], references: [id])
+  assignedTasks      Task[]            @relation("AssignedTasks")
+  createdTasks       Task[]            @relation("CreatedTasks")
+  dayCloses          DayClose[]
   requestedOverrides OverrideRequest[] @relation("RequestedOverrides")
   approvedOverrides  OverrideRequest[] @relation("ApprovedOverrides")
-  tableGroups    TableGroup[] @relation("TableGroupCaptain")
-  attributedOrders Order[]    @relation("OrderCaptain")
-  createdAt      DateTime @default(now())
+  tableGroups        TableGroup[]      @relation("TableGroupCaptain")
+  attributedOrders   Order[]           @relation("OrderCaptain")
+  createdAt          DateTime          @default(now())
 }
 
 model Category {
@@ -243,34 +245,34 @@ model ItemChannelPrice {
 }
 
 model Item {
-  id            String   @id @default(cuid())
-  name          String
-  shortCode     String?
-  description   String?
-  price         Float
-  taxRate       Float    @default(5) // GST %
-  imageUrl      String?
-  active        Boolean  @default(true)
-  outOfStock    Boolean  @default(false)
-  isVeg         Boolean  @default(true)
+  id                 String              @id @default(cuid())
+  name               String
+  shortCode          String?
+  description        String?
+  price              Float
+  taxRate            Float               @default(5) // GST %
+  imageUrl           String?
+  active             Boolean             @default(true)
+  outOfStock         Boolean             @default(false)
+  isVeg              Boolean             @default(true)
   /// 4-way dietary marker per audit TASK 4 — overrides isVeg when set.
   /// VEG (green) | NON_VEG (red) | EGG (yellow) | JAIN (saffron)
-  dietary       String   @default("VEG")
-  station       String   @default("MAIN") // MAIN | TANDOOR | BAR | DESSERT
-  categoryId    String
-  category      Category @relation(fields: [categoryId], references: [id])
-  outletId      String
-  outlet        Outlet   @relation(fields: [outletId], references: [id])
-  recipes       Recipe[]
-  orderItems    OrderItem[]
-  kotLines      KitchenTicketLine[]
-  variants      ItemVariant[]
-  addons        Addon[]
+  dietary            String              @default("VEG")
+  station            String              @default("MAIN") // MAIN | TANDOOR | BAR | DESSERT
+  categoryId         String
+  category           Category            @relation(fields: [categoryId], references: [id])
+  outletId           String
+  outlet             Outlet              @relation(fields: [outletId], references: [id])
+  recipes            Recipe[]
+  orderItems         OrderItem[]
+  kotLines           KitchenTicketLine[]
+  variants           ItemVariant[]
+  addons             Addon[]
   membershipBenefits MembershipBenefit[]
-  channelPrices ItemChannelPrice[]
-  tagAssigns    ItemTagAssign[]
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  channelPrices      ItemChannelPrice[]
+  tagAssigns         ItemTagAssign[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
 }
 
 /// Menu-item tag (Spicy / Sweet / Chef Special / Contains Nuts / etc).
@@ -279,15 +281,15 @@ model Item {
 /// curated registry — no arbitrary HTML). Color is a tailwind hue token
 /// applied to the icon background on POS cards.
 model ItemTag {
-  id        String   @id @default(cuid())
+  id        String          @id @default(cuid())
   name      String
-  icon      String   @default("Tag") // Lucide icon name; resolved client-side
-  color     String   @default("slate") // tailwind hue: red | orange | amber | emerald | sky | violet | pink | slate
-  rank      Int      @default(0)
+  icon      String          @default("Tag") // Lucide icon name; resolved client-side
+  color     String          @default("slate") // tailwind hue: red | orange | amber | emerald | sky | violet | pink | slate
+  rank      Int             @default(0)
   outletId  String
-  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  outlet    Outlet          @relation(fields: [outletId], references: [id])
   assigns   ItemTagAssign[]
-  createdAt DateTime @default(now())
+  createdAt DateTime        @default(now())
 
   @@unique([outletId, name])
 }
@@ -305,91 +307,91 @@ model ItemTagAssign {
 }
 
 model ItemVariant {
-  id        String   @id @default(cuid())
-  itemId    String
-  item      Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  name      String   // "Half" / "Full" / "Small" / "Medium" / "Large"
-  price     Float    // absolute price for this variant
-  rank      Int      @default(0)
-  recipes   Recipe[]
+  id      String   @id @default(cuid())
+  itemId  String
+  item    Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  name    String // "Half" / "Full" / "Small" / "Medium" / "Large"
+  price   Float // absolute price for this variant
+  rank    Int      @default(0)
+  recipes Recipe[]
 }
 
 model Addon {
-  id                String   @id @default(cuid())
+  id                String             @id @default(cuid())
   itemId            String
-  item              Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  name              String   // "Extra cheese" / "Less spicy" / "No onion"
-  priceDelta        Float    @default(0)
-  rank              Int      @default(0)
+  item              Item               @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  name              String // "Extra cheese" / "Less spicy" / "No onion"
+  priceDelta        Float              @default(0)
+  rank              Int                @default(0)
   recipeIngredients RecipeIngredient[]
 }
 
 model Customer {
-  id             String   @id @default(cuid())
-  name           String
-  phone          String?
-  email          String?
-  address        String?
-  gstin          String?
-  tags           String?  // CSV of segment tags
-  allergies      String?  // CSV — surfaced to the captain on every visit
+  id            String               @id @default(cuid())
+  name          String
+  phone         String?
+  email         String?
+  address       String?
+  gstin         String?
+  tags          String? // CSV of segment tags
+  allergies     String? // CSV — surfaced to the captain on every visit
   /// Free-form special notes captured at receptionist intake (Box 1 of
   /// the POS spec — "Special Notes"). Examples: "Wheelchair seating",
   /// "VIP family · sons name Aarav", "Wants extra pickle". Surfaced on
   /// every future visit alongside allergies.
-  specialNotes   String?
-  birthday       DateTime?
-  anniversary    DateTime?
-  loyaltyPoints  Int      @default(0)
-  outletId       String
-  outlet         Outlet   @relation(fields: [outletId], references: [id])
-  orders         Order[]
-  loyaltyTxns    LoyaltyTransaction[]
-  feedback       Feedback[]
-  giftCards      GiftCard[]
-  memberships    Membership[]
-  reservations   Reservation[]
-  createdAt      DateTime @default(now())
+  specialNotes  String?
+  birthday      DateTime?
+  anniversary   DateTime?
+  loyaltyPoints Int                  @default(0)
+  outletId      String
+  outlet        Outlet               @relation(fields: [outletId], references: [id])
+  orders        Order[]
+  loyaltyTxns   LoyaltyTransaction[]
+  feedback      Feedback[]
+  giftCards     GiftCard[]
+  memberships   Membership[]
+  reservations  Reservation[]
+  createdAt     DateTime             @default(now())
 
   @@index([phone])
 }
 
 model LoyaltyTransaction {
-  id          String   @id @default(cuid())
-  customerId  String
-  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  delta       Int      // positive = earn, negative = redeem
-  balance     Int      // running balance after this txn
-  reason      String   // EARN | REDEEM | ADJUST | EXPIRE
-  orderId     String?
-  note        String?
-  outletId    String
-  createdAt   DateTime @default(now())
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  delta      Int // positive = earn, negative = redeem
+  balance    Int // running balance after this txn
+  reason     String // EARN | REDEEM | ADJUST | EXPIRE
+  orderId    String?
+  note       String?
+  outletId   String
+  createdAt  DateTime @default(now())
 
   @@index([customerId, createdAt])
 }
 
 model DiningTable {
-  id        String   @id @default(cuid())
-  name      String
-  area      String   @default("Main")
-  capacity  Int      @default(4)
+  id           String        @id @default(cuid())
+  name         String
+  area         String        @default("Main")
+  capacity     Int           @default(4)
   /// Canvas position for the floor-plan editor (audit TASK 5).
   /// Stored as percentage of the canvas (0..100) so it stays
   /// responsive across screen sizes.
-  posX      Float    @default(50)
-  posY      Float    @default(50)
+  posX         Float         @default(50)
+  posY         Float         @default(50)
   /// Visual shape — round / square / rectangle.
-  shape     String   @default("ROUND")
-  active    Boolean  @default(true)
-  outletId  String
-  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  shape        String        @default("ROUND")
+  active       Boolean       @default(true)
+  outletId     String
+  outlet       Outlet        @relation(fields: [outletId], references: [id])
   /// Optional table-group assignment. When set + the group has a captain
   /// the receptionist's assign-table flow auto-attributes the order to
   /// that captain so they don't have to be picked manually.
   tableGroupId String?
-  tableGroup   TableGroup? @relation(fields: [tableGroupId], references: [id])
-  orders    Order[]
+  tableGroup   TableGroup?   @relation(fields: [tableGroupId], references: [id])
+  orders       Order[]
   reservations Reservation[]
 }
 
@@ -398,14 +400,14 @@ model DiningTable {
 /// evening". On receptionist handoff the order's captainId is filled
 /// from the table's group automatically.
 model TableGroup {
-  id        String   @id @default(cuid())
+  id        String        @id @default(cuid())
   name      String
   captainId String?
-  captain   User?    @relation(fields: [captainId], references: [id], name: "TableGroupCaptain")
+  captain   User?         @relation(fields: [captainId], references: [id], name: "TableGroupCaptain")
   outletId  String
-  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  outlet    Outlet        @relation(fields: [outletId], references: [id])
   tables    DiningTable[]
-  createdAt DateTime @default(now())
+  createdAt DateTime      @default(now())
 
   @@index([outletId])
 }
@@ -440,55 +442,55 @@ model Reservation {
 }
 
 model Order {
-  id            String       @id @default(cuid())
-  invoiceNo     String       @unique
-  orderType     String       // DINE_IN | PICKUP | DELIVERY | ONLINE
-  status        String       @default("RUNNING") // RUNNING | SAVED | PRINTED | PAID | CANCELLED | PLACED | ACCEPTED | REJECTED | FOOD_READY | PICKED_UP | DELIVERED
-  channel       String       @default("POS") // POS | SWIGGY | ZOMATO | MAGICPIN | DOTPE | WEB | PHONE
-  subTotal      Float        @default(0)
-  taxTotal      Float        @default(0)
-  discount      Float        @default(0)
-  discountCode  String?
+  id             String          @id @default(cuid())
+  invoiceNo      String          @unique
+  orderType      String // DINE_IN | PICKUP | DELIVERY | ONLINE
+  status         String          @default("RUNNING") // RUNNING | SAVED | PRINTED | PAID | CANCELLED | PLACED | ACCEPTED | REJECTED | FOOD_READY | PICKED_UP | DELIVERED
+  channel        String          @default("POS") // POS | SWIGGY | ZOMATO | MAGICPIN | DOTPE | WEB | PHONE
+  subTotal       Float           @default(0)
+  taxTotal       Float           @default(0)
+  discount       Float           @default(0)
+  discountCode   String?
   /// Mandatory reason captured when a Manager applies a manual
   /// discount (spec Box 2 "Discount Rights — Enter Reason (Required)").
   /// Nullable so coupon-driven / auto discounts don't have to provide
   /// one. Surfaced on the printed bill + audit trail alongside the
   /// discount value.
   discountReason String?
-  grandTotal    Float        @default(0)
-  amountPaid    Float        @default(0) // running total of payments received
-  paymentMode   String?      // CASH | CARD | UPI | ONLINE | DUE (last-used mode summary)
-  tip           Float        @default(0)
-  customerId    String?
-  customer      Customer?    @relation(fields: [customerId], references: [id])
+  grandTotal     Float           @default(0)
+  amountPaid     Float           @default(0) // running total of payments received
+  paymentMode    String? // CASH | CARD | UPI | ONLINE | DUE (last-used mode summary)
+  tip            Float           @default(0)
+  customerId     String?
+  customer       Customer?       @relation(fields: [customerId], references: [id])
   /// Receipt-facing name + phone snapshot. Captured at place-order so the
   /// "Change customer name" action (POS access matrix) can edit the bill's
   /// printed name without retroactively renaming a saved Customer record
   /// across every historical bill. Nullable — legacy bills fall back to
   /// the linked Customer.name / Customer.phone in the UI.
-  customerName  String?
-  customerPhone String?
-  tableId       String?
-  table         DiningTable? @relation(fields: [tableId], references: [id])
-  outletId      String
-  outlet        Outlet       @relation(fields: [outletId], references: [id])
-  items         OrderItem[]
-  kots          KitchenTicket[]
-  returns       SalesReturn[]
-  feedback      Feedback[]
-  giftCardTxns  GiftCardTxn[]
-  payments      Payment[]
-  notes         String?
-  subOrderType  String?      // e.g. "Parcel" / "Takeaway" / "Bar"
-  captainId     String?      // user id of the captain who took the order
+  customerName   String?
+  customerPhone  String?
+  tableId        String?
+  table          DiningTable?    @relation(fields: [tableId], references: [id])
+  outletId       String
+  outlet         Outlet          @relation(fields: [outletId], references: [id])
+  items          OrderItem[]
+  kots           KitchenTicket[]
+  returns        SalesReturn[]
+  feedback       Feedback[]
+  giftCardTxns   GiftCardTxn[]
+  payments       Payment[]
+  notes          String?
+  subOrderType   String? // e.g. "Parcel" / "Takeaway" / "Bar"
+  captainId      String? // user id of the captain who took the order
   /// Captain relation — added so the live floor plan can join in the
   /// captain's name on the running-order tile without a separate
   /// User.findMany. FK already existed; this just teaches Prisma about
   /// the relationship so `include: { captain }` works.
-  captain       User?        @relation(name: "OrderCaptain", fields: [captainId], references: [id])
-  amendedAt     DateTime?    // last time the bill was modified post-settlement
-  reprintCount  Int          @default(0) // audit TASK 10 — leakage signal
-  reprintReason String?      // last reason captured
+  captain        User?           @relation(name: "OrderCaptain", fields: [captainId], references: [id])
+  amendedAt      DateTime? // last time the bill was modified post-settlement
+  reprintCount   Int             @default(0) // audit TASK 10 — leakage signal
+  reprintReason  String? // last reason captured
 
   // Online / aggregator fields
   aggregatorOrderId String?
@@ -496,16 +498,16 @@ model Order {
   deliveryOtp       String?
   riderName         String?
   riderPhone        String?
-  locality          String?  // derived/captured for delivery & locality reports
+  locality          String? // derived/captured for delivery & locality reports
   reconciledAt      DateTime?
-  reconciledAmount  Float?   // what the aggregator actually paid out
+  reconciledAmount  Float? // what the aggregator actually paid out
 
   // Loyalty
-  loyaltyEarned    Int  @default(0)
-  loyaltyRedeemed  Int  @default(0)
+  loyaltyEarned   Int @default(0)
+  loyaltyRedeemed Int @default(0)
 
-  createdAt     DateTime     @default(now())
-  closedAt      DateTime?
+  createdAt DateTime  @default(now())
+  closedAt  DateTime?
 
   @@index([status, createdAt])
   @@index([outletId, createdAt])
@@ -513,103 +515,108 @@ model Order {
 }
 
 model KitchenTicket {
-  id         String              @id @default(cuid())
-  kotNo      String              @unique
-  orderId    String
-  order      Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  status     String              @default("NEW") // NEW | IN_PROGRESS | READY | SERVED | CANCELLED
-  station    String              @default("MAIN") // MAIN | TANDOOR | BAR | DESSERT
-  outletId   String
-  outlet     Outlet              @relation(fields: [outletId], references: [id])
-  lines      KitchenTicketLine[]
-  notes      String?
+  id            String              @id @default(cuid())
+  kotNo         String              @unique
+  orderId       String
+  order         Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status        String              @default("NEW") // NEW | IN_PROGRESS | READY | SERVED | CANCELLED
+  station       String              @default("MAIN") // MAIN | TANDOOR | BAR | DESSERT
+  outletId      String
+  outlet        Outlet              @relation(fields: [outletId], references: [id])
+  lines         KitchenTicketLine[]
+  notes         String?
   /// KOT idempotency — Print KOT button locks after first send; reprints
   /// require a reason and bump this counter (audit anti-leakage signal).
-  printedCount  Int       @default(0)
-  reprintCount  Int       @default(0)
+  printedCount  Int                 @default(0)
+  reprintCount  Int                 @default(0)
   reprintReason String?
-  createdAt  DateTime            @default(now())
-  readyAt    DateTime?
-  servedAt   DateTime?
+  createdAt     DateTime            @default(now())
+  readyAt       DateTime?
+  servedAt      DateTime?
 
   @@index([status, createdAt])
   @@index([outletId, status])
 }
 
 model KitchenTicketLine {
-  id              String        @id @default(cuid())
-  ticketId        String
-  ticket          KitchenTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  itemId          String
-  item            Item          @relation(fields: [itemId], references: [id])
-  name            String
-  qty             Int
-  note            String?
-  status          String        @default("NEW") // NEW | READY
+  id       String        @id @default(cuid())
+  ticketId String
+  ticket   KitchenTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  itemId   String
+  item     Item          @relation(fields: [itemId], references: [id])
+  name     String
+  qty      Int
+  note     String?
+  status   String        @default("NEW") // NEW | READY
 }
 
 model OrderItem {
-  id           String   @id @default(cuid())
-  orderId      String
-  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  itemId       String
-  item         Item     @relation(fields: [itemId], references: [id])
-  name         String   // snapshot at order time
-  price        Float    // snapshot — includes variant + addons
-  qty          Int
-  taxRate      Float
-  variantName  String?  // e.g. "Half"
-  addonsJson   String?  // JSON snapshot: [{name, priceDelta}]
-  note         String?
+  id            String    @id @default(cuid())
+  orderId       String
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId        String
+  item          Item      @relation(fields: [itemId], references: [id])
+  name          String // snapshot at order time
+  price         Float // snapshot — includes variant + addons
+  qty           Int
+  taxRate       Float
+  variantName   String? // e.g. "Half"
+  addonsJson    String? // JSON snapshot: [{name, priceDelta}]
+  note          String?
   /// Soft-void columns (Phase 2 POS actions). When voidedAt is set, the
   /// line is excluded from sub/tax/grand totals on the order but the row
   /// is preserved for audit. voidReason captures why the cashier/manager
   /// voided it (mandatory at the action layer — DB allows null only for
   /// rows seeded before this column landed).
-  voidedAt     DateTime?
-  voidReason   String?
+  voidedAt      DateTime?
+  voidReason    String?
   /// Line-level complimentary (Box 2 of the spec). When true the price
   /// is preserved on the row (so reports can still see "₹X was given
   /// away") but is excluded from order subtotal/tax/grand. compReason is
   /// optional per the spec but recommended.
   complimentary Boolean   @default(false)
   compReason    String?
-  createdAt    DateTime @default(now())
+  /// Cost of goods sold for this line — sum of FIFO-consumed batch rates
+  /// times qty consumed at recipe-execute time. Snapshot at order place so
+  /// changes to batches afterwards don't retroactively rewrite the bill's
+  /// COGS. Zero for items without a recipe (drinks, packaged goods).
+  cogs          Float     @default(0)
+  createdAt     DateTime  @default(now())
 
   @@index([orderId, voidedAt])
 }
 
 model RawMaterial {
-  id              String   @id @default(cuid())
-  name            String
-  unit            String   @default("kg") // legacy single-unit, kept for backwards compat
-  purchaseUnit    String?  // unit used on supplier invoices
-  consumptionUnit String?  // unit used by recipes
-  conversionFactor Float   @default(1)    // 1 purchaseUnit = N consumptionUnit
-  parLevel        Float    @default(0)
-  minLevel        Float    @default(0)
-  currentQty      Float    @default(0)
-  avgCost         Float    @default(0)
-  purchasePrice   Float    @default(0)    // standard buy price
-  transferPrice   Float    @default(0)
-  reconciliationPrice Float @default(0)
-  taxType         String   @default("GST")
-  taxPct          Float    @default(0)
-  exciseDuty      Float    @default(0)
-  brand           String?
-  description     String?
-  hsnCode         String?
-  barcode         String?
-  shortCode       String?
-  imageUrl        String?
-  isFavourite     Boolean  @default(false)
-  active          Boolean  @default(true)
-  categoryName    String?
-  subCategory     String?
-  supplierId      String?
-  supplier        Supplier? @relation(fields: [supplierId], references: [id])
-  outletId        String
-  outlet          Outlet   @relation(fields: [outletId], references: [id])
+  id                  String    @id @default(cuid())
+  name                String
+  unit                String    @default("kg") // legacy single-unit, kept for backwards compat
+  purchaseUnit        String? // unit used on supplier invoices
+  consumptionUnit     String? // unit used by recipes
+  conversionFactor    Float     @default(1) // 1 purchaseUnit = N consumptionUnit
+  parLevel            Float     @default(0)
+  minLevel            Float     @default(0)
+  currentQty          Float     @default(0)
+  avgCost             Float     @default(0)
+  purchasePrice       Float     @default(0) // standard buy price
+  transferPrice       Float     @default(0)
+  reconciliationPrice Float     @default(0)
+  taxType             String    @default("GST")
+  taxPct              Float     @default(0)
+  exciseDuty          Float     @default(0)
+  brand               String?
+  description         String?
+  hsnCode             String?
+  barcode             String?
+  shortCode           String?
+  imageUrl            String?
+  isFavourite         Boolean   @default(false)
+  active              Boolean   @default(true)
+  categoryName        String?
+  subCategory         String?
+  supplierId          String?
+  supplier            Supplier? @relation(fields: [supplierId], references: [id])
+  outletId            String
+  outlet              Outlet    @relation(fields: [outletId], references: [id])
 
   /// Where this raw material comes from:
   ///   PURCHASED — bought from suppliers (default for everything that existed
@@ -618,7 +625,7 @@ model RawMaterial {
   ///               dal). Carries an avg cost rolled forward from the inputs.
   ///   BOTH      — can be either, e.g. paneer that's sometimes bought and
   ///               sometimes produced in-house.
-  source          String   @default("PURCHASED")
+  source String @default("PURCHASED")
 
   /// CSV of department kinds (KITCHEN | BAR | HOUSEKEEPING | STORE) that
   /// are allowed to see + request this item. NULL or empty means the item
@@ -628,31 +635,92 @@ model RawMaterial {
   /// allowedDepartments is "BAR".
   allowedDepartments String?
 
-  recipes         RecipeIngredient[]
-  movements       StockMovement[]
-  poLines         PurchaseOrderLine[]
-  purchaseLines   PurchaseLine[]
-  transferLines   TransferLine[]
-  productionInputs   ProductionInputLine[]
-  productionMastersAsOutput ProductionMaster[] @relation("ProductionOutputRM")
-  countLines      StockCountLine[]
-  rmSuppliers     RawMaterialSupplier[]
-  requisitionLines RequisitionLine[]
-  grnLines         GrnLine[]
-  vendorInvoiceLines VendorInvoiceLine[]
-  createdAt       DateTime @default(now())
+  recipes                   RecipeIngredient[]
+  movements                 StockMovement[]
+  poLines                   PurchaseOrderLine[]
+  purchaseLines             PurchaseLine[]
+  transferLines             TransferLine[]
+  productionInputs          ProductionInputLine[]
+  productionMastersAsOutput ProductionMaster[]    @relation("ProductionOutputRM")
+  countLines                StockCountLine[]
+  rmSuppliers               RawMaterialSupplier[]
+  requisitionLines          RequisitionLine[]
+  grnLines                  GrnLine[]
+  vendorInvoiceLines        VendorInvoiceLine[]
+  /// FIFO stock-batch ledger. Each GRN line spawns one StockBatch row with
+  /// its own landed rate; consumption draws oldest-first. RawMaterial.currentQty
+  /// is kept as a denormalised cache = sum of qtyRemaining across this RM's
+  /// open batches at the relevant department.
+  stockBatches              StockBatch[]
+  createdAt                 DateTime              @default(now())
+}
+
+/// FIFO stock batch — the immutable lot of a raw material received in one
+/// receipt event (GRN, opening backfill, stock count adjust, production
+/// output, or chain transfer-in). Consumption picks the oldest open batch
+/// first and decrements its qtyRemaining; this lets us compute COGS at
+/// actual landed cost instead of running-average. RawMaterial.currentQty
+/// remains as a fast denormalised cache.
+model StockBatch {
+  id            String      @id @default(cuid())
+  rawMaterialId String
+  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  outletId      String
+  outlet        Outlet      @relation(fields: [outletId], references: [id])
+  /// Where this batch sits — typically the STORE dept for purchased
+  /// material, the producing dept for production output, the receiving
+  /// dept for an internal transfer.
+  departmentId  String
+  department    Department  @relation(fields: [departmentId], references: [id])
+  /// Total qty received in this batch. Never mutated after creation —
+  /// consumption decrements qtyRemaining instead so we can audit
+  /// "this batch was ₹120/kg and produced X COGS".
+  qtyReceived   Float
+  /// Live qty still on hand from this batch. 0 means fully consumed; we
+  /// keep the row for audit + COGS history.
+  qtyRemaining  Float
+  /// Landed cost per consumption-unit (already includes apportioned
+  /// freight/delivery/discount/tax from the GRN header where applicable).
+  ratePerUnit   Float
+  /// Discriminator — where this batch came from:
+  ///   GRN_RECEIPT       — receipt against a PO or ad-hoc GRN (most common)
+  ///   OPENING           — backfilled at migration from RawMaterial.currentQty
+  ///   STOCK_COUNT       — closing-stock variance adjustment
+  ///   PRODUCTION_OUTPUT — output of a production run
+  ///   TRANSFER_IN       — receiver of an internal/chain transfer
+  ///   ADJUSTMENT        — manual correction
+  source        String      @default("GRN_RECEIPT")
+  /// FK back to the originating GRN line, when source = GRN_RECEIPT.
+  grnLineId     String?     @unique
+  grnLine       GrnLine?    @relation(fields: [grnLineId], references: [id])
+  /// FK back to the originating GRN header (denormalised so we can list
+  /// "batches from GRN X" without joining through the line).
+  grnId         String?
+  grn           Grn?        @relation(fields: [grnId], references: [id])
+  /// Vendor batch number from the supplier (printed on the cartons).
+  /// Distinct from this StockBatch.id (our internal ID) and from grnLineId.
+  batchNo       String?
+  expiryDate    DateTime?
+  receivedAt    DateTime    @default(now())
+  /// When fully consumed — null until qtyRemaining hits zero. Lets COGS
+  /// reports answer "which batches contributed to last week's COGS".
+  closedAt      DateTime?
+
+  @@index([rawMaterialId, departmentId, qtyRemaining])
+  @@index([outletId, receivedAt])
+  @@index([grnId])
 }
 
 /// Many-to-many between RawMaterial and Supplier with the per-pair negotiated rate.
 model RawMaterialSupplier {
-  id            String      @id @default(cuid())
-  rawMaterialId String
-  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id], onDelete: Cascade)
-  supplierId    String
-  supplier      Supplier    @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  id             String      @id @default(cuid())
+  rawMaterialId  String
+  rawMaterial    RawMaterial @relation(fields: [rawMaterialId], references: [id], onDelete: Cascade)
+  supplierId     String
+  supplier       Supplier    @relation(fields: [supplierId], references: [id], onDelete: Cascade)
   negotiatedRate Float       @default(0)
-  isPrimary     Boolean     @default(false)
-  createdAt     DateTime    @default(now())
+  isPrimary      Boolean     @default(false)
+  createdAt      DateTime    @default(now())
 
   @@unique([rawMaterialId, supplierId])
 }
@@ -661,7 +729,7 @@ model StockMovement {
   id            String      @id @default(cuid())
   rawMaterialId String
   rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id], onDelete: Cascade)
-  delta         Float       // signed: positive = in, negative = out
+  delta         Float // signed: positive = in, negative = out
   /// Reason codes — extended for chain inventory:
   ///   SALE | CANCEL_REVERSE | ADJUST | PURCHASE | WASTAGE | OPENING
   ///   PRODUCTION_INPUT  (consumed by a ProductionRun at BK)
@@ -670,7 +738,7 @@ model StockMovement {
   ///   CHAIN_TRANSFER    (BS → Outlet or BK → Outlet)
   ///   GRN_RECEIPT       (vendor goods received against PO/standalone GRN)
   reason        String
-  refType       String?     // Order | Outlet | Manual | Grn | Requisition | ProductionRun
+  refType       String? // Order | Outlet | Manual | Grn | Requisition | ProductionRun
   refId         String?
   qtyBefore     Float
   qtyAfter      Float
@@ -691,7 +759,7 @@ model StockMovement {
 }
 
 model Supplier {
-  id              String   @id @default(cuid())
+  id              String                @id @default(cuid())
   name            String
   company         String?
   contact         String?
@@ -700,34 +768,34 @@ model Supplier {
   pan             String?
   gstin           String?
   fssai           String?
-  type            String   @default("SUPPLIER") // SUPPLIER | THIRD_PARTY | BOTH
+  type            String                @default("SUPPLIER") // SUPPLIER | THIRD_PARTY | BOTH
   registerAddress String?
   shippingAddress String?
   state           String?
   city            String?
   pinCode         String?
-  address         String?  // legacy free-form
+  address         String? // legacy free-form
   termsOfPayment  String?
   termsOfDelivery String?
   /// Days of credit this supplier extends — 0 means cash-on-delivery.
   /// Shown alongside the rate card so the SM remembers what they negotiated.
-  creditDays      Int      @default(0)
-  openingBalance  Float    @default(0)
-  active          Boolean  @default(true)
+  creditDays      Int                   @default(0)
+  openingBalance  Float                 @default(0)
+  active          Boolean               @default(true)
   rawMaterials    RawMaterial[]
   purchaseOrders  PurchaseOrder[]
   purchases       Purchase[]
   vendorPayments  VendorPayment[]
   rmSuppliers     RawMaterialSupplier[]
   vendorInvoices  VendorInvoice[]
-  createdAt       DateTime @default(now())
+  createdAt       DateTime              @default(now())
 }
 
 model PurchaseOrder {
-  id           String              @id @default(cuid())
-  poNo         String              @unique
-  supplierId   String
-  supplier     Supplier            @relation(fields: [supplierId], references: [id])
+  id                String              @id @default(cuid())
+  poNo              String              @unique
+  supplierId        String
+  supplier          Supplier            @relation(fields: [supplierId], references: [id])
   /// Extended PO state machine (Prompt 1):
   ///   DRAFT
   ///   → PENDING_CC_APPROVAL  (when outlet.requireCostControlApproval = true;
@@ -737,63 +805,70 @@ model PurchaseOrder {
   ///   → PARTIALLY_RECEIVED  (one or more GRNs against this PO, more to come)
   ///   → CLOSED              (all qty received OR manually closed)
   ///   → CANCELLED
-  status       String              @default("DRAFT")
-  subTotal     Float               @default(0)
-  taxTotal     Float               @default(0)
-  grandTotal   Float               @default(0)
-  notes        String?
+  status            String              @default("DRAFT")
+  subTotal          Float               @default(0)
+  taxTotal          Float               @default(0)
+  grandTotal        Float               @default(0)
+  notes             String?
   /// Cost-controller approval audit columns. Null until the CC acts.
-  ccApprovedById      String?
-  ccApprovedAt        DateTime?
-  ccRejectionReason   String?
+  ccApprovedById    String?
+  ccApprovedAt      DateTime?
+  ccRejectionReason String?
   /// Department that raised this PO (typically the outlet's STORE). Nullable
   /// while we backfill; required for newly-created POs once Prompt 1 lands.
-  departmentId        String?
+  departmentId      String?
   /// Optional link back to the requisition that triggered this PO — set
   /// when a store manager raises a PO to cover a shortfall on an APPROVED
   /// req. 1:N (one req can spawn multiple POs across suppliers).
-  requisitionId       String?
-  requisition         Requisition? @relation(fields: [requisitionId], references: [id])
-  outletId     String
-  outlet       Outlet              @relation(fields: [outletId], references: [id])
-  lines        PurchaseOrderLine[]
-  purchases    Purchase[]
-  grns         Grn[]
+  requisitionId     String?
+  requisition       Requisition?        @relation(fields: [requisitionId], references: [id])
+  outletId          String
+  outlet            Outlet              @relation(fields: [outletId], references: [id])
+  lines             PurchaseOrderLine[]
+  purchases         Purchase[]
+  grns              Grn[]
   /// Stock Purchases (vendor bills) recorded against this PO.
-  stockPurchases VendorInvoice[]
-  receivedAt   DateTime?
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  stockPurchases    VendorInvoice[]
+  receivedAt        DateTime?
+  /// When an SM uses the multi-supplier auto-PO flow, N POs are created in
+  /// a single submit (one per preferred supplier). batchKey ties them
+  /// together so the list view can show "3 draft POs created from this
+  /// auto-PO" and the SM can review them as a group. Null for hand-crafted
+  /// POs.
+  batchKey          String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
 
   @@index([outletId, status])
   @@index([requisitionId])
+  @@index([batchKey])
 }
 
 model PurchaseOrderLine {
-  id            String        @id @default(cuid())
-  poId          String
-  po            PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
-  rawMaterialId String
-  rawMaterial   RawMaterial   @relation(fields: [rawMaterialId], references: [id])
-  qty           Float
-  unit          String
-  unitPrice     Float
-  lineTotal     Float
+  id               String        @id @default(cuid())
+  poId             String
+  po               PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  rawMaterialId    String
+  rawMaterial      RawMaterial   @relation(fields: [rawMaterialId], references: [id])
+  qty              Float
+  unit             String
+  unitPrice        Float
+  lineTotal        Float
   /// True when this item wasn't on the supplier's rate card at PO time —
   /// the SM explicitly added it via "Add other item" and acknowledged the
   /// warning. Surfaces on dashboards as off-card spend.
-  offCard       Boolean       @default(false)
+  offCard          Boolean       @default(false)
   /// When the SM edited the rate at PO time, this holds the rate-card rate
   /// at the moment of override. Null means the rate matches the card (or
   /// the item was off-card and had no card rate to begin with).
-  rateChangedFrom Float?
+  rateChangedFrom  Float?
   /// Reason the SM gave when overriding the card rate or adding off-card.
   /// Required by the client dialog when either of the above is set.
   rateChangeReason String?
   /// Running tally of how much of this line has been received via GRNs.
   /// Used to drive the PO status transition PARTIALLY_RECEIVED → CLOSED.
-  qtyReceived   Float         @default(0)
-  grnLines      GrnLine[]
+  qtyReceived      Float         @default(0)
+  grnLines         GrnLine[]
 }
 
 /// One recipe per (item, variant) pair. Items WITHOUT variants don't have
@@ -801,14 +876,14 @@ model PurchaseOrderLine {
 /// least one ItemVariant. Per-variant separation lets Burger (Veg) and
 /// Burger (Chicken) consume completely different raw materials.
 model Recipe {
-  id            String   @id @default(cuid())
+  id            String             @id @default(cuid())
   itemId        String
-  item          Item     @relation(fields: [itemId], references: [id])
+  item          Item               @relation(fields: [itemId], references: [id])
   itemVariantId String
-  itemVariant   ItemVariant @relation(fields: [itemVariantId], references: [id], onDelete: Cascade)
+  itemVariant   ItemVariant        @relation(fields: [itemVariantId], references: [id], onDelete: Cascade)
   ingredients   RecipeIngredient[]
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
 
   @@unique([itemId, itemVariantId])
   @@index([itemVariantId])
@@ -837,8 +912,8 @@ model RecipeIngredient {
 
 model TaxSlab {
   id        String   @id @default(cuid())
-  name      String   // "GST 5%" / "GST 12%" / "GST 18%" / "VAT 5%"
-  rate      Float    // 5 / 12 / 18
+  name      String // "GST 5%" / "GST 12%" / "GST 18%" / "VAT 5%"
+  rate      Float // 5 / 12 / 18
   active    Boolean  @default(true)
   outletId  String
   outlet    Outlet   @relation(fields: [outletId], references: [id])
@@ -858,11 +933,11 @@ model TaxSlab {
 /// kept so historical orders / reports continue to work without a
 /// backfill. New entries should use the modern column names instead.
 model Discount {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   /// Public coupon code. Required by the schema but can be auto-generated
   /// (e.g. "AUTO-{cuid}") for discounts that don't need a typed code —
   /// validationMode controls whether the cashier is prompted for it.
-  code        String   @unique
+  code        String    @unique
   /// Internal title shown in the discount list. The spec calls this "Title";
   /// `name` is kept for backward compat with existing queries.
   name        String
@@ -874,47 +949,47 @@ model Discount {
   /// DiscountBogo.bogoValue instead).
   value       Float
   /// Min cart core total for the discount to fire. Legacy "minOrder".
-  minOrder    Float    @default(0)
+  minOrder    Float     @default(0)
   /// Max cart core total — null means no upper bound. Spec §1 field 11.
   maxOrder    Float?
   /// % discount rupee cap. Used only for PERCENTAGE.
   maxDiscount Float?
-  active      Boolean  @default(true)
+  active      Boolean   @default(true)
   validFrom   DateTime?
   validTo     DateTime?
   /// Legacy isAuto flag — superseded by validationMode (NONE = automatic).
   /// Kept so the existing pickAutoDiscount engine keeps reading it until
   /// the engine is migrated in Phase 2.
-  isAuto      Boolean  @default(false)
+  isAuto      Boolean   @default(false)
   daysOfWeek  String?
 
   /// 24h time-of-day window stored as "HH:MM" strings (Petpooja-style).
   /// Legacy hourFrom/hourTo (integer hour) are kept for the existing
   /// engine; new code should read timeFrom/timeTo.
-  timeFrom    String?
-  timeTo      String?
-  hourFrom    Int?
-  hourTo      Int?
+  timeFrom String?
+  timeTo   String?
+  hourFrom Int?
+  hourTo   Int?
 
   /// Channel — STICKY after first save. One of: POS · ONLINE_PLATFORM ·
   /// ZOMATO · SWIGGY · KIOSK · GPAY · OS_AGGREGATOR · MR_DIVERT · IRCTC.
-  channel     String   @default("POS")
+  channel        String  @default("POS")
   /// CSV of order types (DELIVERY · PICKUP · DINE_IN). At least one.
-  orderTypes  String   @default("DELIVERY,PICKUP,DINE_IN")
+  orderTypes     String  @default("DELIVERY,PICKUP,DINE_IN")
   /// AMOUNT — applies to bill. PAYMENT_TYPE — applies only when the
   /// matching payment method is selected at settle.
-  applyOn     String   @default("AMOUNT")
+  applyOn        String  @default("AMOUNT")
   /// CSV of payment method ids (cash / card / upi / etc) — only used when
   /// applyOn = PAYMENT_TYPE.
   paymentMethods String?
 
   /// Apply at the pre-tax subtotal (CORE) or the post-tax grand total
   /// (TOTAL). Spec §1 field 8.
-  applyAt     String   @default("CORE")
+  applyAt String @default("CORE")
 
   /// Scope — ALL · CATEGORIES · ITEMS. The applicableIds CSV holds the
   /// matching category ids OR item ids depending on this enum.
-  applicableScope String @default("ALL")
+  applicableScope String  @default("ALL")
   applicableIds   String?
 
   /// Validation mode — NONE (auto) · CODE_ONLY (typed code, no master) ·
@@ -925,13 +1000,13 @@ model Discount {
   /// T&C — surfaced on POS and printed bill per spec.
   terms       String?
 
-  outletId    String
-  outlet      Outlet   @relation(fields: [outletId], references: [id])
-  bogo        DiscountBogo?
-  coupons     Coupon[]
-  usages      DiscountUsage[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt @default(now())
+  outletId  String
+  outlet    Outlet          @relation(fields: [outletId], references: [id])
+  bogo      DiscountBogo?
+  coupons   Coupon[]
+  usages    DiscountUsage[]
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @default(now()) @updatedAt
 
   @@index([outletId, active])
   @@index([outletId, isAuto, active])
@@ -941,62 +1016,62 @@ model Discount {
 /// 1:1 with Discount when type = BOGO. Sparse table keeps the main row
 /// clean for the 90% of discounts that aren't BOGO.
 model DiscountBogo {
-  discountId         String   @id
-  discount           Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  discountId       String   @id
+  discount         Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
   /// Minimum cart core total — separate from Discount.minOrder so BOGO
   /// rules can have a higher floor than generic discounts.
-  itemAmountMin      Float?
+  itemAmountMin    Float?
   /// Buy-side filter.
-  buyScope           String   @default("ALL") // ALL | CATEGORIES | ITEMS
-  buyScopeIds        String?  // CSV
+  buyScope         String   @default("ALL") // ALL | CATEGORIES | ITEMS
+  buyScopeIds      String? // CSV
   /// Get-side filter (what becomes free / discounted).
-  getScope           String   @default("ALL")
-  getScopeIds        String?
-  buyQty             Int      @default(1)
-  getQty             Int      @default(1)
+  getScope         String   @default("ALL")
+  getScopeIds      String?
+  buyQty           Int      @default(1)
+  getQty           Int      @default(1)
   /// PERCENTAGE — bogoValue is %. FIXED — bogoValue is ₹ off the Get items.
-  bogoValueType      String   @default("PERCENTAGE")
-  bogoValue          Float    @default(100)
+  bogoValueType    String   @default("PERCENTAGE")
+  bogoValue        Float    @default(100)
   /// Pricing strategy on the Get items: LOWER (cheapest = best for guest) ·
   /// HIGHER (priciest = clearance win) · SAME (Get must match Buy SKU).
-  getItemPricing     String   @default("LOWER")
+  getItemPricing   String   @default("LOWER")
   /// Same for the Buy side when there are extras: LOWER | HIGHER.
-  buyItemPricing     String   @default("LOWER")
+  buyItemPricing   String   @default("LOWER")
   /// When true the POS prints the free-qty line. When false the discount
   /// silently spreads across the qualifying items.
-  showFreeQtyOnPos   Boolean  @default(true)
+  showFreeQtyOnPos Boolean  @default(true)
   /// Optional cap — only this rupee value of the Buy side counts.
-  buyAmountCap       Float?
+  buyAmountCap     Float?
 }
 
 /// Coupon master — only used when Discount.validationMode = COUPON_VALIDATED.
 /// One Discount can have many Coupon codes (e.g. WELCOME10, WELCOME20).
 model Coupon {
-  id              String   @id @default(cuid())
-  discountId      String
-  discount        Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
-  code            String
-  outletId        String
-  outlet          Outlet   @relation(fields: [outletId], references: [id])
-  maxRedemptions  Int?     // null = unlimited
-  perUserLimit    Int?     // null = unlimited
-  usedCount       Int      @default(0)
-  expiresAt       DateTime?
-  active          Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  redemptions     CouponRedemption[]
+  id             String             @id @default(cuid())
+  discountId     String
+  discount       Discount           @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  code           String
+  outletId       String
+  outlet         Outlet             @relation(fields: [outletId], references: [id])
+  maxRedemptions Int? // null = unlimited
+  perUserLimit   Int? // null = unlimited
+  usedCount      Int                @default(0)
+  expiresAt      DateTime?
+  active         Boolean            @default(true)
+  createdAt      DateTime           @default(now())
+  redemptions    CouponRedemption[]
 
   @@unique([outletId, code])
   @@index([code])
 }
 
 model CouponRedemption {
-  id          String   @id @default(cuid())
-  couponId    String
-  coupon      Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
-  orderId     String
-  customerId  String?
-  redeemedAt  DateTime @default(now())
+  id         String   @id @default(cuid())
+  couponId   String
+  coupon     Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  orderId    String
+  customerId String?
+  redeemedAt DateTime @default(now())
 
   @@index([couponId, redeemedAt])
   @@index([orderId])
@@ -1006,16 +1081,16 @@ model CouponRedemption {
 /// the "₹ redeemed this month" stat on the list page + any redemption
 /// report.
 model DiscountUsage {
-  id          String   @id @default(cuid())
-  discountId  String
-  discount    Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
-  orderId     String
-  customerId  String?
+  id            String   @id @default(cuid())
+  discountId    String
+  discount      Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  orderId       String
+  customerId    String?
   appliedAmount Float
-  channel     String?
-  outletId    String
-  outlet      Outlet   @relation(fields: [outletId], references: [id])
-  createdAt   DateTime @default(now())
+  channel       String?
+  outletId      String
+  outlet        Outlet   @relation(fields: [outletId], references: [id])
+  createdAt     DateTime @default(now())
 
   @@index([discountId, createdAt])
   @@index([outletId, createdAt])
@@ -1025,7 +1100,7 @@ model DiscountUsage {
 model SubOrderType {
   id         String   @id @default(cuid())
   name       String
-  parentType String   // DINE_IN | PICKUP | DELIVERY
+  parentType String // DINE_IN | PICKUP | DELIVERY
   rank       Int      @default(0)
   active     Boolean  @default(true)
   outletId   String
@@ -1036,57 +1111,57 @@ model SubOrderType {
 }
 
 model MembershipPlan {
-  id            String   @id @default(cuid())
-  name          String
-  price         Float
-  durationDays  Int      // 365 for "one year"
-  active        Boolean  @default(true)
-  outletId      String   // owner outlet — but memberships work across all outlets
-  outlet        Outlet   @relation(fields: [outletId], references: [id])
-  benefits      MembershipBenefit[]
-  memberships   Membership[]
-  createdAt     DateTime @default(now())
+  id           String              @id @default(cuid())
+  name         String
+  price        Float
+  durationDays Int // 365 for "one year"
+  active       Boolean             @default(true)
+  outletId     String // owner outlet — but memberships work across all outlets
+  outlet       Outlet              @relation(fields: [outletId], references: [id])
+  benefits     MembershipBenefit[]
+  memberships  Membership[]
+  createdAt    DateTime            @default(now())
 }
 
 model MembershipBenefit {
-  id           String  @id @default(cuid())
-  planId       String
-  plan         MembershipPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  name         String  // "One free tea per day"
-  itemId       String? // grants free instance of this menu item
-  item         Item?   @relation(fields: [itemId], references: [id])
-  qtyPerDay    Int     @default(1)
-  redemptions  MembershipRedemption[]
+  id          String                 @id @default(cuid())
+  planId      String
+  plan        MembershipPlan         @relation(fields: [planId], references: [id], onDelete: Cascade)
+  name        String // "One free tea per day"
+  itemId      String? // grants free instance of this menu item
+  item        Item?                  @relation(fields: [itemId], references: [id])
+  qtyPerDay   Int                    @default(1)
+  redemptions MembershipRedemption[]
 }
 
 model Membership {
-  id           String  @id @default(cuid())
-  customerId   String
-  customer     Customer @relation(fields: [customerId], references: [id])
-  planId       String
-  plan         MembershipPlan @relation(fields: [planId], references: [id])
-  startsAt     DateTime
-  expiresAt    DateTime
-  active       Boolean @default(true)
-  redemptions  MembershipRedemption[]
-  otps         MembershipOtp[]
-  createdAt    DateTime @default(now())
+  id          String                 @id @default(cuid())
+  customerId  String
+  customer    Customer               @relation(fields: [customerId], references: [id])
+  planId      String
+  plan        MembershipPlan         @relation(fields: [planId], references: [id])
+  startsAt    DateTime
+  expiresAt   DateTime
+  active      Boolean                @default(true)
+  redemptions MembershipRedemption[]
+  otps        MembershipOtp[]
+  createdAt   DateTime               @default(now())
 
   @@index([customerId, active])
   @@index([expiresAt])
 }
 
 model MembershipRedemption {
-  id           String  @id @default(cuid())
+  id           String            @id @default(cuid())
   membershipId String
-  membership   Membership @relation(fields: [membershipId], references: [id])
+  membership   Membership        @relation(fields: [membershipId], references: [id])
   benefitId    String
   benefit      MembershipBenefit @relation(fields: [benefitId], references: [id])
   businessDay  DateTime // midnight of the day — used for the unique cap
-  outletId     String   // where redeemed
-  outlet       Outlet   @relation(fields: [outletId], references: [id])
-  orderId      String?  // tied to the bill it was applied on
-  createdAt    DateTime @default(now())
+  outletId     String // where redeemed
+  outlet       Outlet            @relation(fields: [outletId], references: [id])
+  orderId      String? // tied to the bill it was applied on
+  createdAt    DateTime          @default(now())
 
   // Foolproof daily cap: one row per (member, benefit, day) ACROSS all outlets
   @@unique([membershipId, benefitId, businessDay])
@@ -1094,98 +1169,98 @@ model MembershipRedemption {
 }
 
 model MembershipOtp {
-  id           String   @id @default(cuid())
+  id           String     @id @default(cuid())
   membershipId String
   membership   Membership @relation(fields: [membershipId], references: [id])
-  code         String   // 6-digit
+  code         String // 6-digit
   expiresAt    DateTime
   usedAt       DateTime?
-  createdAt    DateTime @default(now())
+  createdAt    DateTime   @default(now())
 
   @@index([membershipId, createdAt])
 }
 
 model TaskTemplate {
-  id            String   @id @default(cuid())
-  title         String
-  description   String?
-  type          String   // RECURRING | ADHOC | TODO
-  cadence       String   @default("ONE_OFF") // ONE_OFF | DAILY | WEEKLY | MONTHLY
-  defaultRole   String?  // OWNER | MANAGER | BILLER | CAPTAIN
-  slaMinutes    Int?     // soft SLA before task goes overdue
-  active        Boolean  @default(true)
-  outletId      String
-  outlet        Outlet   @relation(fields: [outletId], references: [id])
-  tasks         Task[]
-  lastRunAt     DateTime?
-  createdAt     DateTime @default(now())
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  type        String // RECURRING | ADHOC | TODO
+  cadence     String    @default("ONE_OFF") // ONE_OFF | DAILY | WEEKLY | MONTHLY
+  defaultRole String? // OWNER | MANAGER | BILLER | CAPTAIN
+  slaMinutes  Int? // soft SLA before task goes overdue
+  active      Boolean   @default(true)
+  outletId    String
+  outlet      Outlet    @relation(fields: [outletId], references: [id])
+  tasks       Task[]
+  lastRunAt   DateTime?
+  createdAt   DateTime  @default(now())
 
   @@index([outletId, active])
 }
 
 model Task {
-  id           String   @id @default(cuid())
+  id           String        @id @default(cuid())
   title        String
   description  String?
-  type         String   // RECURRING | ADHOC | TODO
-  status       String   @default("OPEN") // OPEN | IN_PROGRESS | DONE | CANCELLED | OVERDUE
+  type         String // RECURRING | ADHOC | TODO
+  status       String        @default("OPEN") // OPEN | IN_PROGRESS | DONE | CANCELLED | OVERDUE
   templateId   String?
   template     TaskTemplate? @relation(fields: [templateId], references: [id])
-  assignedRole String?  // role this task belongs to (any user with that role can claim)
-  assignedToId String?  // optional specific user
-  assignedTo   User?    @relation("AssignedTasks", fields: [assignedToId], references: [id])
+  assignedRole String? // role this task belongs to (any user with that role can claim)
+  assignedToId String? // optional specific user
+  assignedTo   User?         @relation("AssignedTasks", fields: [assignedToId], references: [id])
   dueAt        DateTime?
   completedAt  DateTime?
   photoUrl     String?
   createdById  String?
-  createdBy    User?    @relation("CreatedTasks", fields: [createdById], references: [id])
+  createdBy    User?         @relation("CreatedTasks", fields: [createdById], references: [id])
   outletId     String
-  outlet       Outlet   @relation(fields: [outletId], references: [id])
-  createdAt    DateTime @default(now())
+  outlet       Outlet        @relation(fields: [outletId], references: [id])
+  createdAt    DateTime      @default(now())
 
   @@index([outletId, status, dueAt])
 }
 
 model DayClose {
-  id              String   @id @default(cuid())
-  businessDay     DateTime // midnight of that day
-  openingCash     Float    @default(0)
-  expectedCash    Float    // computed: opening + top-ups - withdrawals + cash sales - cash expenses
-  countedCash     Float
-  variance        Float    // counted - expected
-  denominations   String   // JSON: { "2000": 5, "500": 12, ... }
-  note            String?
-  closedById      String?
-  closedBy        User?    @relation(fields: [closedById], references: [id])
-  outletId        String
-  outlet          Outlet   @relation(fields: [outletId], references: [id])
-  createdAt       DateTime @default(now())
+  id            String   @id @default(cuid())
+  businessDay   DateTime // midnight of that day
+  openingCash   Float    @default(0)
+  expectedCash  Float // computed: opening + top-ups - withdrawals + cash sales - cash expenses
+  countedCash   Float
+  variance      Float // counted - expected
+  denominations String // JSON: { "2000": 5, "500": 12, ... }
+  note          String?
+  closedById    String?
+  closedBy      User?    @relation(fields: [closedById], references: [id])
+  outletId      String
+  outlet        Outlet   @relation(fields: [outletId], references: [id])
+  createdAt     DateTime @default(now())
 
   @@unique([outletId, businessDay])
 }
 
 model OverrideRequest {
-  id           String   @id @default(cuid())
-  actionType   String   // DISCOUNT | VOID_LINE | REFUND | OTHER
-  contextJson  String   // JSON: { orderId, lineId, amount, percent, reason... }
-  status       String   @default("PENDING") // PENDING | APPROVED | REJECTED | EXPIRED
+  id            String    @id @default(cuid())
+  actionType    String // DISCOUNT | VOID_LINE | REFUND | OTHER
+  contextJson   String // JSON: { orderId, lineId, amount, percent, reason... }
+  status        String    @default("PENDING") // PENDING | APPROVED | REJECTED | EXPIRED
   requestedById String?
-  requestedBy  User?    @relation("RequestedOverrides", fields: [requestedById], references: [id])
-  approvedById String?
-  approvedBy   User?    @relation("ApprovedOverrides", fields: [approvedById], references: [id])
-  resolution   String?  // optional note on resolution
-  outletId     String
-  outlet       Outlet   @relation(fields: [outletId], references: [id])
-  createdAt    DateTime @default(now())
-  resolvedAt   DateTime?
+  requestedBy   User?     @relation("RequestedOverrides", fields: [requestedById], references: [id])
+  approvedById  String?
+  approvedBy    User?     @relation("ApprovedOverrides", fields: [approvedById], references: [id])
+  resolution    String? // optional note on resolution
+  outletId      String
+  outlet        Outlet    @relation(fields: [outletId], references: [id])
+  createdAt     DateTime  @default(now())
+  resolvedAt    DateTime?
 
   @@index([outletId, status, createdAt])
 }
 
 model CashEntry {
   id        String   @id @default(cuid())
-  kind      String   // OPENING | TOP_UP | WITHDRAWAL
-  amount    Float    // positive (kind determines direction)
+  kind      String // OPENING | TOP_UP | WITHDRAWAL
+  amount    Float // positive (kind determines direction)
   reason    String?
   actor     String   @default("system")
   outletId  String
@@ -1197,7 +1272,7 @@ model CashEntry {
 
 model Notification {
   id        String   @id @default(cuid())
-  kind      String   // ONLINE_ORDER | LOW_STOCK | STALE_BILL | INFO
+  kind      String // ONLINE_ORDER | LOW_STOCK | STALE_BILL | INFO
   title     String
   body      String?
   link      String?
@@ -1214,7 +1289,7 @@ model Payment {
   orderId   String
   order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   amount    Float
-  mode      String   // CASH | UPI | CARD | ONLINE | WALLET | GIFT_CARD
+  mode      String // CASH | UPI | CARD | ONLINE | WALLET | GIFT_CARD
   note      String?
   actor     String   @default("system")
   outletId  String
@@ -1226,46 +1301,46 @@ model Payment {
 }
 
 model SalesReturn {
-  id          String   @id @default(cuid())
-  returnNo    String   @unique
-  orderId     String
-  order       Order    @relation(fields: [orderId], references: [id])
-  reason      String
-  refundMode  String   @default("CASH") // CASH | UPI | CARD | WALLET | GIFT_CARD
-  amount      Float
-  actor       String   @default("system")
-  outletId    String
-  outlet      Outlet   @relation(fields: [outletId], references: [id])
-  lines       SalesReturnLine[]
-  createdAt   DateTime @default(now())
+  id         String            @id @default(cuid())
+  returnNo   String            @unique
+  orderId    String
+  order      Order             @relation(fields: [orderId], references: [id])
+  reason     String
+  refundMode String            @default("CASH") // CASH | UPI | CARD | WALLET | GIFT_CARD
+  amount     Float
+  actor      String            @default("system")
+  outletId   String
+  outlet     Outlet            @relation(fields: [outletId], references: [id])
+  lines      SalesReturnLine[]
+  createdAt  DateTime          @default(now())
 
   @@index([outletId, createdAt])
 }
 
 model SalesReturnLine {
-  id           String       @id @default(cuid())
-  returnId     String
-  return       SalesReturn  @relation(fields: [returnId], references: [id], onDelete: Cascade)
-  orderItemId  String?      // snapshot ref — line may be edited later
-  name         String
-  qty          Int
-  unitPrice    Float
-  lineTotal    Float
+  id          String      @id @default(cuid())
+  returnId    String
+  return      SalesReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  orderItemId String? // snapshot ref — line may be edited later
+  name        String
+  qty         Int
+  unitPrice   Float
+  lineTotal   Float
 }
 
 model GiftCard {
-  id            String   @id @default(cuid())
-  code          String   @unique
+  id            String        @id @default(cuid())
+  code          String        @unique
   balance       Float
   initialAmount Float
-  active        Boolean  @default(true)
+  active        Boolean       @default(true)
   expiresAt     DateTime?
   customerId    String?
-  customer      Customer? @relation(fields: [customerId], references: [id])
+  customer      Customer?     @relation(fields: [customerId], references: [id])
   outletId      String
-  outlet        Outlet   @relation(fields: [outletId], references: [id])
+  outlet        Outlet        @relation(fields: [outletId], references: [id])
   txns          GiftCardTxn[]
-  createdAt     DateTime @default(now())
+  createdAt     DateTime      @default(now())
 
   @@index([outletId, active])
 }
@@ -1274,8 +1349,8 @@ model GiftCardTxn {
   id        String   @id @default(cuid())
   cardId    String
   card      GiftCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
-  kind      String   // ISSUE | TOP_UP | REDEEM | REFUND
-  amount    Float    // signed: positive credits the card, negative debits
+  kind      String // ISSUE | TOP_UP | REDEEM | REFUND
+  amount    Float // signed: positive credits the card, negative debits
   orderId   String?
   order     Order?   @relation(fields: [orderId], references: [id])
   actor     String   @default("system")
@@ -1285,9 +1360,9 @@ model GiftCardTxn {
 }
 
 model Feedback {
-  id           String   @id @default(cuid())
-  category     String   // FOOD | SERVICE | AMBIANCE | DELIVERY | OTHER
-  rating       Int      // 1..5
+  id           String    @id @default(cuid())
+  category     String // FOOD | SERVICE | AMBIANCE | DELIVERY | OTHER
+  rating       Int // 1..5
   text         String?
   customerId   String?
   customer     Customer? @relation(fields: [customerId], references: [id])
@@ -1304,13 +1379,13 @@ model Feedback {
 }
 
 model Expense {
-  id                String   @id @default(cuid())
-  category          String   // RENT | SALARY | UTILITIES | RAW_MATERIAL | OTHER
-  vendor            String?
-  amount            Float
-  paymentMode       String   @default("CASH")
-  note              String?
-  status            String   @default("PENDING_MANAGER") // PENDING_MANAGER | PENDING_AUDITOR | APPROVED | REJECTED
+  id                  String    @id @default(cuid())
+  category            String // RENT | SALARY | UTILITIES | RAW_MATERIAL | OTHER
+  vendor              String?
+  amount              Float
+  paymentMode         String    @default("CASH")
+  note                String?
+  status              String    @default("PENDING_MANAGER") // PENDING_MANAGER | PENDING_AUDITOR | APPROVED | REJECTED
   managerApprovedById String?
   managerApprovedAt   DateTime?
   auditorApprovedById String?
@@ -1318,11 +1393,11 @@ model Expense {
   rejectedById        String?
   rejectedAt          DateTime?
   rejectionReason     String?
-  ownerFlagged        Boolean @default(false)
+  ownerFlagged        Boolean   @default(false)
   createdById         String?
-  outletId    String
-  outlet      Outlet   @relation(fields: [outletId], references: [id])
-  createdAt   DateTime @default(now())
+  outletId            String
+  outlet              Outlet    @relation(fields: [outletId], references: [id])
+  createdAt           DateTime  @default(now())
 
   @@index([outletId, status, createdAt])
 }
@@ -1330,46 +1405,46 @@ model Expense {
 // ─────────── Inventory module additions (per Inventory_Module_Implementation_Spec) ───────────
 
 model Unit {
-  id              String   @id @default(cuid())
-  name            String
-  baseUnit        String?  // e.g. "BOX" might roll up to "PIECE"
-  conversionFactor Float   @default(1)
-  outletId        String
-  outlet          Outlet   @relation(fields: [outletId], references: [id])
-  active          Boolean  @default(true)
-  createdAt       DateTime @default(now())
+  id               String   @id @default(cuid())
+  name             String
+  baseUnit         String? // e.g. "BOX" might roll up to "PIECE"
+  conversionFactor Float    @default(1)
+  outletId         String
+  outlet           Outlet   @relation(fields: [outletId], references: [id])
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
 
   @@unique([outletId, name])
 }
 
 /// One per (outlet, business day) — the day-end physical count snapshot.
 model StockCount {
-  id           String   @id @default(cuid())
-  outletId     String
-  outlet       Outlet   @relation(fields: [outletId], references: [id])
-  businessDay  DateTime
-  countType    String   @default("DAY_END") // DAY_END | DAY_START | SPOT
-  frozen       Boolean  @default(false)
-  frozenById   String?
-  frozenAt     DateTime?
-  countedById  String?
-  notes        String?
-  lines        StockCountLine[]
-  createdAt    DateTime @default(now())
+  id          String           @id @default(cuid())
+  outletId    String
+  outlet      Outlet           @relation(fields: [outletId], references: [id])
+  businessDay DateTime
+  countType   String           @default("DAY_END") // DAY_END | DAY_START | SPOT
+  frozen      Boolean          @default(false)
+  frozenById  String?
+  frozenAt    DateTime?
+  countedById String?
+  notes       String?
+  lines       StockCountLine[]
+  createdAt   DateTime         @default(now())
 
   @@unique([outletId, businessDay, countType])
   @@index([outletId, businessDay])
 }
 
 model StockCountLine {
-  id            String       @id @default(cuid())
+  id            String      @id @default(cuid())
   countId       String
-  count         StockCount   @relation(fields: [countId], references: [id], onDelete: Cascade)
+  count         StockCount  @relation(fields: [countId], references: [id], onDelete: Cascade)
   rawMaterialId String
-  rawMaterial   RawMaterial  @relation(fields: [rawMaterialId], references: [id])
-  expectedQty   Float        @default(0)
-  countedQty    Float        @default(0)
-  variance      Float        @default(0)
+  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  expectedQty   Float       @default(0)
+  countedQty    Float       @default(0)
+  variance      Float       @default(0)
   comments      String?
 
   @@index([countId])
@@ -1377,35 +1452,35 @@ model StockCountLine {
 
 /// Stock Purchase header — distinct from PurchaseOrder (the request) and Purchase Return.
 model Purchase {
-  id              String         @id @default(cuid())
-  invoiceNo       String?        // vendor invoice ref
+  id              String           @id @default(cuid())
+  invoiceNo       String? // vendor invoice ref
   invoiceDate     DateTime
   supplierId      String?
-  supplier        Supplier?      @relation(fields: [supplierId], references: [id])
-  poId            String?        // when this Purchase is recorded against a PurchaseOrder
-  purchaseOrder   PurchaseOrder? @relation(fields: [poId], references: [id])
+  supplier        Supplier?        @relation(fields: [supplierId], references: [id])
+  poId            String? // when this Purchase is recorded against a PurchaseOrder
+  purchaseOrder   PurchaseOrder?   @relation(fields: [poId], references: [id])
   poReferenceNo   String?
-  subTotal        Float          @default(0)
-  totalDiscount   Float          @default(0)
-  otherCharges    Float          @default(0)
-  otherTaxes      Float          @default(0)
-  grandTotal      Float          @default(0)
-  paymentType     String         @default("UNPAID") // UNPAID | PAID | PARTIAL
+  subTotal        Float            @default(0)
+  totalDiscount   Float            @default(0)
+  otherCharges    Float            @default(0)
+  otherTaxes      Float            @default(0)
+  grandTotal      Float            @default(0)
+  paymentType     String           @default("UNPAID") // UNPAID | PAID | PARTIAL
   paymentMode     String?
   paymentRef      String?
-  amountPaid      Float          @default(0)
-  updateStock     Boolean        @default(true)
-  status          String         @default("PENDING_MANAGER") // PENDING_MANAGER | PENDING_AUDITOR | APPROVED | REJECTED | CANCELLED
+  amountPaid      Float            @default(0)
+  updateStock     Boolean          @default(true)
+  status          String           @default("PENDING_MANAGER") // PENDING_MANAGER | PENDING_AUDITOR | APPROVED | REJECTED | CANCELLED
   rejectionReason String?
   invoiceFileUrl  String?
   outletId        String
-  outlet          Outlet         @relation(fields: [outletId], references: [id])
+  outlet          Outlet           @relation(fields: [outletId], references: [id])
   lines           PurchaseLine[]
   payments        VendorPayment[]
   returns         PurchaseReturn[]
   createdById     String?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   @@index([outletId, status])
   @@index([supplierId, invoiceDate])
@@ -1433,53 +1508,53 @@ model PurchaseLine {
 }
 
 model PurchaseReturn {
-  id              String   @id @default(cuid())
-  debitNoteNo     String?
-  debitNoteDate   DateTime
-  supplierId      String?
-  purchaseId      String?
-  purchase        Purchase? @relation(fields: [purchaseId], references: [id])
-  reason          String?
-  grandTotal      Float    @default(0)
-  outletId        String
-  status          String   @default("DRAFT")
-  linesJson       String?
-  createdAt       DateTime @default(now())
+  id            String    @id @default(cuid())
+  debitNoteNo   String?
+  debitNoteDate DateTime
+  supplierId    String?
+  purchaseId    String?
+  purchase      Purchase? @relation(fields: [purchaseId], references: [id])
+  reason        String?
+  grandTotal    Float     @default(0)
+  outletId      String
+  status        String    @default("DRAFT")
+  linesJson     String?
+  createdAt     DateTime  @default(now())
 }
 
 /// Stock movement between two outlets. Sender decrements on send; receiver
 /// increments only after the receiver marks Received.
 model Transfer {
-  id               String       @id @default(cuid())
+  id               String         @id @default(cuid())
   challanNo        String?
   transferDate     DateTime
-  status           String       @default("SENT") // SENT | RECEIVED | CANCELLED
+  status           String         @default("SENT") // SENT | RECEIVED | CANCELLED
   /// Outlet-level legacy fields — kept for back-compat reporting. New
   /// transfers populate these from the source/dest departments' outlets.
   senderOutletId   String
-  sender           Outlet       @relation("TransfersSent", fields: [senderOutletId], references: [id])
+  sender           Outlet         @relation("TransfersSent", fields: [senderOutletId], references: [id])
   receiverOutletId String
-  receiver         Outlet       @relation("TransfersReceived", fields: [receiverOutletId], references: [id])
+  receiver         Outlet         @relation("TransfersReceived", fields: [receiverOutletId], references: [id])
   /// Department-level transfer endpoints. Nullable while we backfill;
   /// services validate after Prompt 1 lands.
   fromDepartmentId String?
-  fromDepartment   Department?  @relation("TransferFromDept", fields: [fromDepartmentId], references: [id])
+  fromDepartment   Department?    @relation("TransferFromDept", fields: [fromDepartmentId], references: [id])
   toDepartmentId   String?
-  toDepartment     Department?  @relation("TransferToDept", fields: [toDepartmentId], references: [id])
+  toDepartment     Department?    @relation("TransferToDept", fields: [toDepartmentId], references: [id])
   /// Kind of transfer for reporting + permissions:
   ///   INTERNAL — within the same outlet (Store → Kitchen/Bar/HK)
   ///   CHAIN    — between outlets (BS → Outlet, BK → Outlet, etc.)
-  kind             String       @default("CHAIN")
+  kind             String         @default("CHAIN")
   /// When this Transfer was spawned by a Requisition approval, link back
   /// so the requisition's "delivered" status can roll up automatically.
-  requisitionId    String?      @unique
-  requisition      Requisition? @relation(fields: [requisitionId], references: [id])
+  requisitionId    String?        @unique
+  requisition      Requisition?   @relation(fields: [requisitionId], references: [id])
   notes            String?
   lines            TransferLine[]
   sentById         String?
   receivedById     String?
   receivedAt       DateTime?
-  createdAt        DateTime     @default(now())
+  createdAt        DateTime       @default(now())
 
   @@index([receiverOutletId, status])
   @@index([senderOutletId, status])
@@ -1488,43 +1563,43 @@ model Transfer {
 }
 
 model TransferLine {
-  id            String      @id @default(cuid())
-  transferId    String
-  transfer      Transfer    @relation(fields: [transferId], references: [id], onDelete: Cascade)
-  rawMaterialId String
-  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
-  qtySent       Float
-  qtyReceived   Float?
-  unit          String
-  priceAtTransfer Float     @default(0)
+  id              String      @id @default(cuid())
+  transferId      String
+  transfer        Transfer    @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  rawMaterialId   String
+  rawMaterial     RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  qtySent         Float
+  qtyReceived     Float?
+  unit            String
+  priceAtTransfer Float       @default(0)
 }
 
 /// Reusable conversion recipe — e.g. 5kg flour + 1kg ghee → 3kg dough.
 model ProductionMaster {
-  id            String   @id @default(cuid())
-  name          String
-  description   String?
-  defaultQty    Float    @default(1)
-  outputRMId    String
-  outputRM      RawMaterial @relation("ProductionOutputRM", fields: [outputRMId], references: [id])
-  outputQty     Float
-  outputUnit    String
-  inputs        ProductionInputLine[]
-  runs          ProductionRun[]
-  outletId      String
-  outlet        Outlet   @relation(fields: [outletId], references: [id])
-  active        Boolean  @default(true)
-  createdAt     DateTime @default(now())
+  id          String                @id @default(cuid())
+  name        String
+  description String?
+  defaultQty  Float                 @default(1)
+  outputRMId  String
+  outputRM    RawMaterial           @relation("ProductionOutputRM", fields: [outputRMId], references: [id])
+  outputQty   Float
+  outputUnit  String
+  inputs      ProductionInputLine[]
+  runs        ProductionRun[]
+  outletId    String
+  outlet      Outlet                @relation(fields: [outletId], references: [id])
+  active      Boolean               @default(true)
+  createdAt   DateTime              @default(now())
 }
 
 model ProductionInputLine {
-  id           String           @id @default(cuid())
-  masterId     String
-  master       ProductionMaster @relation(fields: [masterId], references: [id], onDelete: Cascade)
+  id            String           @id @default(cuid())
+  masterId      String
+  master        ProductionMaster @relation(fields: [masterId], references: [id], onDelete: Cascade)
   rawMaterialId String
-  rawMaterial   RawMaterial     @relation(fields: [rawMaterialId], references: [id])
-  qty          Float
-  unit         String
+  rawMaterial   RawMaterial      @relation(fields: [rawMaterialId], references: [id])
+  qty           Float
+  unit          String
 }
 
 model ProductionRun {
@@ -1545,26 +1620,26 @@ model ProductionRun {
 
 /// Payment made to a supplier — may settle one or many purchases via allocations JSON.
 model VendorPayment {
-  id          String   @id @default(cuid())
-  supplierId  String
-  supplier    Supplier @relation(fields: [supplierId], references: [id])
-  amount      Float
-  mode        String   @default("CASH")
-  reference   String?
-  occurredAt  DateTime @default(now())
-  allocations String?  // JSON [{ purchaseId, amount }, …]
-  notes       String?
-  purchaseId  String?
-  purchase    Purchase? @relation(fields: [purchaseId], references: [id])
+  id              String         @id @default(cuid())
+  supplierId      String
+  supplier        Supplier       @relation(fields: [supplierId], references: [id])
+  amount          Float
+  mode            String         @default("CASH")
+  reference       String?
+  occurredAt      DateTime       @default(now())
+  allocations     String? // JSON [{ purchaseId, amount }, …]
+  notes           String?
+  purchaseId      String?
+  purchase        Purchase?      @relation(fields: [purchaseId], references: [id])
   /// Chain-inventory v2 — payments can now also be allocated to a
   /// VendorInvoice. `purchaseId` stays for back-compat with the legacy
   /// Purchase-record-based payment screen.
   vendorInvoiceId String?
   vendorInvoice   VendorInvoice? @relation(fields: [vendorInvoiceId], references: [id])
-  outletId    String
-  outlet      Outlet   @relation(fields: [outletId], references: [id])
-  createdById String?
-  createdAt   DateTime @default(now())
+  outletId        String
+  outlet          Outlet         @relation(fields: [outletId], references: [id])
+  createdById     String?
+  createdAt       DateTime       @default(now())
 
   @@index([supplierId, occurredAt])
   @@index([vendorInvoiceId])
@@ -1602,37 +1677,37 @@ model ReportFavourite {
 /// Scheduled email delivery of a report. Multi-recipient, multi-format,
 /// daily / weekly / monthly cadence with relative date ranges resolved at send time.
 model ReportNotification {
-  id              String   @id @default(cuid())
-  name            String   // friendly label
-  slug            String   // report slug to render
-  recipients      String   // comma-separated email list
-  status          String   @default("ACTIVE") // ACTIVE | INACTIVE
-  frequency       String   @default("DAILY")  // DAILY | WEEKLY | MONTHLY
-  time            String   @default("08:00")  // HH:MM (24h, local)
-  dayOfWeek       String?  // CSV for WEEKLY (MON,TUE,…)
-  dayOfMonth      Int?     // 1..28 for MONTHLY
-  format          String   @default("EXCEL")  // EXCEL | PDF | BOTH
-  subject         String?
-  dateRange       String   @default("YESTERDAY") // YESTERDAY | LAST_7 | THIS_MONTH | LAST_MONTH | ROLLING_N
-  rollingDays     Int?     // when dateRange = ROLLING_N
-  outletScope     String?  // CSV of outlet ids; null = current outlet only
-  outletId        String
-  outlet          Outlet   @relation(fields: [outletId], references: [id])
-  createdById     String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  logs            ReportNotificationLog[]
+  id          String                  @id @default(cuid())
+  name        String // friendly label
+  slug        String // report slug to render
+  recipients  String // comma-separated email list
+  status      String                  @default("ACTIVE") // ACTIVE | INACTIVE
+  frequency   String                  @default("DAILY") // DAILY | WEEKLY | MONTHLY
+  time        String                  @default("08:00") // HH:MM (24h, local)
+  dayOfWeek   String? // CSV for WEEKLY (MON,TUE,…)
+  dayOfMonth  Int? // 1..28 for MONTHLY
+  format      String                  @default("EXCEL") // EXCEL | PDF | BOTH
+  subject     String?
+  dateRange   String                  @default("YESTERDAY") // YESTERDAY | LAST_7 | THIS_MONTH | LAST_MONTH | ROLLING_N
+  rollingDays Int? // when dateRange = ROLLING_N
+  outletScope String? // CSV of outlet ids; null = current outlet only
+  outletId    String
+  outlet      Outlet                  @relation(fields: [outletId], references: [id])
+  createdById String?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  logs        ReportNotificationLog[]
 
   @@index([outletId, status])
 }
 
 /// Send-history per notification — feeds the "delivery history" panel.
 model ReportNotificationLog {
-  id             String   @id @default(cuid())
+  id             String             @id @default(cuid())
   notificationId String
   notification   ReportNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
-  sentAt         DateTime @default(now())
-  status         String   @default("OK") // OK | FAILED | RETRY
+  sentAt         DateTime           @default(now())
+  status         String             @default("OK") // OK | FAILED | RETRY
   errorMsg       String?
   resolvedFrom   DateTime?
   resolvedTo     DateTime?
@@ -1643,14 +1718,14 @@ model ReportNotificationLog {
 /// Per-outlet override of the default page-access matrix from src/lib/permissions.ts.
 /// Lets the Owner toggle any role × page combination from /settings/permissions.
 model RolePermission {
-  id        String   @id @default(cuid())
-  outletId  String
-  outlet    Outlet   @relation(fields: [outletId], references: [id])
-  role      String   // OWNER | MANAGER | BILLER | CAPTAIN
-  pageId    String   // matches PageId in src/lib/permissions.ts
-  allowed   Boolean  @default(true)
+  id          String   @id @default(cuid())
+  outletId    String
+  outlet      Outlet   @relation(fields: [outletId], references: [id])
+  role        String // OWNER | MANAGER | BILLER | CAPTAIN
+  pageId      String // matches PageId in src/lib/permissions.ts
+  allowed     Boolean  @default(true)
   updatedById String?
-  updatedAt DateTime @updatedAt
+  updatedAt   DateTime @updatedAt
 
   @@unique([outletId, role, pageId])
   @@index([outletId])
@@ -1663,52 +1738,52 @@ model RolePermission {
 // found quantity surfaces as an anti-theft signal.
 
 model FixedAsset {
-  id           String   @id @default(cuid())
-  name         String
-  category     String   // FURNITURE | KITCHEN | ELECTRONICS | DECOR | OTHER
-  location     String?  // e.g. "Hall A", "Kitchen", "Storeroom"
-  qty          Int      @default(1)
-  unitValue    Float    @default(0)  // ₹ per unit at acquisition (optional)
-  condition    String   @default("GOOD") // GOOD | FAIR | DAMAGED | DISCARDED
-  purchasedAt  DateTime?
-  notes        String?
-  active       Boolean  @default(true)
-  outletId     String
-  outlet       Outlet   @relation(fields: [outletId], references: [id])
-  auditLines   AssetAuditLine[]
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id          String           @id @default(cuid())
+  name        String
+  category    String // FURNITURE | KITCHEN | ELECTRONICS | DECOR | OTHER
+  location    String? // e.g. "Hall A", "Kitchen", "Storeroom"
+  qty         Int              @default(1)
+  unitValue   Float            @default(0) // ₹ per unit at acquisition (optional)
+  condition   String           @default("GOOD") // GOOD | FAIR | DAMAGED | DISCARDED
+  purchasedAt DateTime?
+  notes       String?
+  active      Boolean          @default(true)
+  outletId    String
+  outlet      Outlet           @relation(fields: [outletId], references: [id])
+  auditLines  AssetAuditLine[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
 
   @@index([outletId, category])
   @@index([outletId, active])
 }
 
 model AssetAudit {
-  id           String   @id @default(cuid())
-  outletId     String
-  outlet       Outlet   @relation(fields: [outletId], references: [id])
-  auditedById  String?
-  auditedAt    DateTime @default(now())
+  id            String           @id @default(cuid())
+  outletId      String
+  outlet        Outlet           @relation(fields: [outletId], references: [id])
+  auditedById   String?
+  auditedAt     DateTime         @default(now())
   /// Total lines with variance > 0 — surfaced as anti-theft signal.
-  varianceLines Int     @default(0)
-  notes        String?
-  lines        AssetAuditLine[]
-  createdAt    DateTime @default(now())
+  varianceLines Int              @default(0)
+  notes         String?
+  lines         AssetAuditLine[]
+  createdAt     DateTime         @default(now())
 
   @@index([outletId, auditedAt])
 }
 
 model AssetAuditLine {
-  id              String      @id @default(cuid())
-  auditId         String
-  audit           AssetAudit  @relation(fields: [auditId], references: [id], onDelete: Cascade)
-  assetId         String
-  asset           FixedAsset  @relation(fields: [assetId], references: [id])
-  expectedQty     Int
-  foundQty        Int
-  variance        Int         // foundQty - expectedQty (negative = missing)
-  conditionAfter  String?     // optional update during audit
-  note            String?
+  id             String     @id @default(cuid())
+  auditId        String
+  audit          AssetAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  assetId        String
+  asset          FixedAsset @relation(fields: [assetId], references: [id])
+  expectedQty    Int
+  foundQty       Int
+  variance       Int // foundQty - expectedQty (negative = missing)
+  conditionAfter String? // optional update during audit
+  note           String?
 
   @@index([auditId])
 }
@@ -1732,14 +1807,14 @@ model AssetAuditLine {
 //      (m:n via VendorInvoiceGrnLink), then pays it via VendorPayment.
 
 model Requisition {
-  id              String   @id @default(cuid())
-  reqNo           String   @unique
-  outletId        String
-  outlet          Outlet   @relation(fields: [outletId], references: [id])
-  fromDepartmentId String   // the requesting dept (HOD's dept: KITCHEN/BAR/HK)
-  fromDepartment   Department @relation("RequisitionFromDept", fields: [fromDepartmentId], references: [id])
-  toDepartmentId   String   // always the STORE dept of the same outlet
-  toDepartment     Department @relation("RequisitionToDept", fields: [toDepartmentId], references: [id])
+  id               String            @id @default(cuid())
+  reqNo            String            @unique
+  outletId         String
+  outlet           Outlet            @relation(fields: [outletId], references: [id])
+  fromDepartmentId String // the requesting dept (HOD's dept: KITCHEN/BAR/HK)
+  fromDepartment   Department        @relation("RequisitionFromDept", fields: [fromDepartmentId], references: [id])
+  toDepartmentId   String // always the STORE dept of the same outlet
+  toDepartment     Department        @relation("RequisitionToDept", fields: [toDepartmentId], references: [id])
   /// Lifecycle:
   ///   NEW      — created by HOD, waiting for SM review
   ///   APPROVED — SM fully approved every line
@@ -1748,35 +1823,35 @@ model Requisition {
   ///   DECLINED — SM rejected the whole requisition with a reason
   ///   FULFILLED — Transfer spawned + received; stock moved
   ///   CANCELLED — HOD cancelled before SM acted
-  status          String   @default("NEW")
-  requestedById   String?  // the HOD's user id
-  reviewedById    String?  // the SM's user id
-  reviewedAt      DateTime?
-  declineReason   String?  // mandatory when status = DECLINED
-  notes           String?
-  lines           RequisitionLine[]
-  transfer        Transfer? // 1:1 — set after SM clicks "Transfer"
+  status           String            @default("NEW")
+  requestedById    String? // the HOD's user id
+  reviewedById     String? // the SM's user id
+  reviewedAt       DateTime?
+  declineReason    String? // mandatory when status = DECLINED
+  notes            String?
+  lines            RequisitionLine[]
+  transfer         Transfer? // 1:1 — set after SM clicks "Transfer"
   /// POs raised by the SM to cover a shortfall on this requisition.
   /// 1:N — one req can spawn multiple POs across different suppliers.
-  purchaseOrders  PurchaseOrder[]
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  purchaseOrders   PurchaseOrder[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
 
   @@index([outletId, status, createdAt])
   @@index([fromDepartmentId, status])
 }
 
 model RequisitionLine {
-  id              String   @id @default(cuid())
-  requisitionId   String
-  requisition     Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  rawMaterialId   String
-  rawMaterial     RawMaterial @relation(fields: [rawMaterialId], references: [id])
-  qtyRequested    Float
-  qtyApproved     Float    @default(0)   // SM edits this; defaults to 0 (= declined per-line)
-  unit            String
+  id            String      @id @default(cuid())
+  requisitionId String
+  requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  rawMaterialId String
+  rawMaterial   RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  qtyRequested  Float
+  qtyApproved   Float       @default(0) // SM edits this; defaults to 0 (= declined per-line)
+  unit          String
   /// Mandatory when qtyApproved < qtyRequested (per-line short-decline note).
-  declineReason   String?
+  declineReason String?
 }
 
 /// Goods Receipt Note. Source-of-truth doc for stock incoming from a
@@ -1784,85 +1859,109 @@ model RequisitionLine {
 /// CAN be created standalone (no PO) for emergency local purchases — the
 /// manager gets a notification + the Grn flashes a warning banner.
 model Grn {
-  id              String   @id @default(cuid())
-  grnNo           String   @unique
+  id                 String                 @id @default(cuid())
+  grnNo              String                 @unique
   /// Nullable for ad-hoc / no-PO receipts.
-  poId            String?
-  po              PurchaseOrder? @relation(fields: [poId], references: [id])
+  poId               String?
+  po                 PurchaseOrder?         @relation(fields: [poId], references: [id])
   /// When poId is null AND createdAt is set, this is an ad-hoc GRN. Used to
   /// drive the "flash warning to manager" notification at create time.
-  isAdHoc         Boolean  @default(false)
-  outletId        String
-  outlet          Outlet   @relation(fields: [outletId], references: [id])
-  departmentId    String   // always the STORE dept
-  department      Department @relation(fields: [departmentId], references: [id])
-  receivedById    String?
-  receivedAt      DateTime @default(now())
+  isAdHoc            Boolean                @default(false)
+  outletId           String
+  outlet             Outlet                 @relation(fields: [outletId], references: [id])
+  departmentId       String // always the STORE dept
+  department         Department             @relation(fields: [departmentId], references: [id])
+  receivedById       String?
+  receivedAt         DateTime               @default(now())
   /// OPEN  — partial receive, more expected later
   /// CLOSED — all expected qty received OR manually closed
-  status          String   @default("CLOSED")
-  notes           String?
-  lines           GrnLine[]
+  status             String                 @default("CLOSED")
+  notes              String?
+  /// Spec section 3 — Challan / Invoice details on the GRN header. The
+  /// freight/delivery/discount/other charges feed into the per-line
+  /// "landed cost" calculation that becomes the StockBatch rate. The
+  /// vendor invoice number/date are captured here so the AP module can
+  /// match this GRN to an invoice later.
+  vendorInvoiceNo    String?
+  vendorInvoiceDate  DateTime?
+  freightCharges     Float                  @default(0)
+  deliveryCharges    Float                  @default(0)
+  discountAmount     Float                  @default(0)
+  otherCharges       Float                  @default(0)
+  taxAmount          Float                  @default(0)
+  /// Denormalised totals derived from the line items + the charges above.
+  /// landedSubTotal = sum(qtyReceived × unitCost) across lines.
+  /// landedTotal    = landedSubTotal + freight + delivery + other + tax
+  ///                  − discount. Each line's batch carries an apportioned
+  ///                  share of the overhead so FIFO consumption sees the
+  ///                  true landed cost, not the bare unit price.
+  landedSubTotal     Float                  @default(0)
+  landedTotal        Float                  @default(0)
+  lines              GrnLine[]
   vendorInvoiceLinks VendorInvoiceGrnLink[]
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  stockBatches       StockBatch[]
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
 
   @@index([outletId, status, createdAt])
 }
 
 model GrnLine {
-  id              String   @id @default(cuid())
-  grnId           String
-  grn             Grn      @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  id            String             @id @default(cuid())
+  grnId         String
+  grn           Grn                @relation(fields: [grnId], references: [id], onDelete: Cascade)
   /// Optional FK to the PO line being received. Null for ad-hoc receipts.
-  poLineId        String?
-  poLine          PurchaseOrderLine? @relation(fields: [poLineId], references: [id])
-  rawMaterialId   String
-  rawMaterial     RawMaterial @relation(fields: [rawMaterialId], references: [id])
-  qtyReceived     Float
-  qtyDamaged      Float    @default(0)
-  qtyShort        Float    @default(0)   // expected but didn't arrive
-  unit            String
+  poLineId      String?
+  poLine        PurchaseOrderLine? @relation(fields: [poLineId], references: [id])
+  rawMaterialId String
+  rawMaterial   RawMaterial        @relation(fields: [rawMaterialId], references: [id])
+  qtyReceived   Float
+  qtyDamaged    Float              @default(0)
+  qtyShort      Float              @default(0) // expected but didn't arrive
+  unit          String
   /// Snapshot of unit cost at the moment of receipt — used for avg-cost
   /// roll-forward on the receiving dept's stock.
-  unitCost        Float
-  batchNo         String?
-  expiryDate      DateTime?
-  note            String?
+  unitCost      Float
+  batchNo       String?
+  expiryDate    DateTime?
+  note          String?
+  /// Optional reverse of StockBatch.grnLineId. Each GrnLine spawns at most
+  /// one StockBatch (source = GRN_RECEIPT) at receipt time.
+  stockBatch    StockBatch?
 }
 
 /// Vendor invoice — the AP doc the Accountant works with. One invoice can
 /// reference multiple GRNs (vendor batches their deliveries into one bill);
 /// one GRN can be split across multiple invoices.
 model VendorInvoice {
-  id              String   @id @default(cuid())
+  id          String                 @id @default(cuid())
   /// Vendor's invoice number (not ours).
-  invoiceNo       String
-  invoiceDate     DateTime
-  supplierId      String
-  supplier        Supplier @relation(fields: [supplierId], references: [id])
+  invoiceNo   String
+  invoiceDate DateTime
+  supplierId  String
+  supplier    Supplier               @relation(fields: [supplierId], references: [id])
   /// Optional link to the Purchase Order this stock purchase was raised
   /// against. The PO-first flow records this so qty caps + "already invoiced
   /// against PO" can be computed directly, without going through GRNs.
-  poId            String?
-  po              PurchaseOrder? @relation(fields: [poId], references: [id])
-  outletId        String
-  outlet          Outlet   @relation(fields: [outletId], references: [id])
-  subTotal        Float    @default(0)
-  taxTotal        Float    @default(0)
-  grandTotal      Float    @default(0)
+  poId        String?
+  po          PurchaseOrder?         @relation(fields: [poId], references: [id])
+  outletId    String
+  outlet      Outlet                 @relation(fields: [outletId], references: [id])
+  subTotal    Float                  @default(0)
+  taxTotal    Float                  @default(0)
+  grandTotal  Float                  @default(0)
   /// UNPAID | PARTIAL | PAID
-  status          String   @default("UNPAID")
-  amountPaid      Float    @default(0)
+  status      String                 @default("UNPAID")
+  amountPaid  Float                  @default(0)
   /// Supabase Storage path to the uploaded invoice PDF / image. Optional.
-  fileUrl         String?
-  notes           String?
-  createdById     String?
-  grnLinks        VendorInvoiceGrnLink[]
-  lines           VendorInvoiceLine[]
-  payments        VendorPayment[]
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  fileUrl     String?
+  notes       String?
+  createdById String?
+  grnLinks    VendorInvoiceGrnLink[]
+  lines       VendorInvoiceLine[]
+  payments    VendorPayment[]
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
 
   @@unique([supplierId, invoiceNo])
   @@index([outletId, status, invoiceDate])
@@ -1896,13 +1995,13 @@ model VendorInvoiceLine {
 }
 
 model VendorInvoiceGrnLink {
-  invoiceId       String
-  invoice         VendorInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  grnId           String
-  grn             Grn      @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  invoiceId String
+  invoice   VendorInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  grnId     String
+  grn       Grn           @relation(fields: [grnId], references: [id], onDelete: Cascade)
   /// Amount of this invoice attributable to this GRN. Useful when one
   /// invoice spans multiple GRNs and we need per-GRN accruals.
-  amount          Float    @default(0)
+  amount    Float         @default(0)
 
   @@id([invoiceId, grnId])
 }

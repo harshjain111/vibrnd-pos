@@ -23,7 +23,7 @@ import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
 import { getSessionUser } from "@/lib/session";
 import { logActivity } from "@/lib/audit";
-import { moveStock } from "@/lib/stock";
+import { moveStock, addStockBatch } from "@/lib/stock";
 import { inr } from "@/lib/utils";
 
 const LineInput = z.object({
@@ -49,6 +49,16 @@ const CreateInput = z.object({
   /** When true, this is a partial delivery — keep the GRN OPEN so the
    *  vendor can drop more later under the same doc. Defaults false. */
   keepOpen: z.boolean().default(false),
+  /// Spec section 3 — Challan / Invoice details on the GRN header.
+  /// These feed the per-line landed-cost calculation that becomes the
+  /// StockBatch.ratePerUnit.
+  vendorInvoiceNo: z.string().optional(),
+  vendorInvoiceDate: z.string().optional(),
+  freightCharges: z.coerce.number().nonnegative().default(0),
+  deliveryCharges: z.coerce.number().nonnegative().default(0),
+  discountAmount: z.coerce.number().nonnegative().default(0),
+  otherCharges: z.coerce.number().nonnegative().default(0),
+  taxAmount: z.coerce.number().nonnegative().default(0),
   lines: z.array(LineInput).min(1, "At least one line is required"),
 });
 
@@ -115,7 +125,34 @@ async function createGrnInner(input: z.infer<typeof CreateInput>): Promise<Creat
 
   const isAdHoc = !data.poId;
   const grnNo = await nextGrnNo(outlet.id, outlet.code);
-  const totalReceived = lines.reduce((s, l) => s + l.qtyReceived * l.unitCost, 0);
+
+  // Landed cost math — spec section 3.
+  // landedSubTotal = sum(qtyReceived × unitCost) across lines.
+  // landedTotal    = subTotal + overheads − discount.
+  // Each line's landed rate carries an apportioned share of the
+  // overheads, so FIFO consumption sees the real per-unit cost
+  // (not just the bare invoice rate). Apportionment is weighted by
+  // each line's contribution to the subTotal so heavier-spend lines
+  // absorb more of the freight/etc.
+  const landedSubTotal = lines.reduce((s, l) => s + l.qtyReceived * l.unitCost, 0);
+  const overheads =
+    (data.freightCharges || 0) +
+    (data.deliveryCharges || 0) +
+    (data.otherCharges || 0) +
+    (data.taxAmount || 0);
+  const landedTotal = Math.max(0, landedSubTotal + overheads - (data.discountAmount || 0));
+  // Per-line apportionment ratio. Falls back to even-split when
+  // landedSubTotal is 0 (entirely zero-rate receipt — rare but possible).
+  const apportionedRates = lines.map((l) => {
+    const lineSub = l.qtyReceived * l.unitCost;
+    const ratio =
+      landedSubTotal > 0
+        ? lineSub / landedSubTotal
+        : 1 / Math.max(1, lines.length);
+    const lineOverhead = overheads * ratio - (data.discountAmount || 0) * ratio;
+    const landedLineTotal = lineSub + lineOverhead;
+    return l.qtyReceived > 0 ? landedLineTotal / l.qtyReceived : l.unitCost;
+  });
 
   const grn = await db.grn.create({
     data: {
@@ -128,6 +165,15 @@ async function createGrnInner(input: z.infer<typeof CreateInput>): Promise<Creat
       receivedAt: data.receivedAt ? new Date(data.receivedAt) : new Date(),
       status: data.keepOpen ? "OPEN" : "CLOSED",
       notes: data.notes,
+      vendorInvoiceNo: data.vendorInvoiceNo,
+      vendorInvoiceDate: data.vendorInvoiceDate ? new Date(data.vendorInvoiceDate) : null,
+      freightCharges: data.freightCharges,
+      deliveryCharges: data.deliveryCharges,
+      discountAmount: data.discountAmount,
+      otherCharges: data.otherCharges,
+      taxAmount: data.taxAmount,
+      landedSubTotal,
+      landedTotal,
       lines: {
         create: lines.map((l) => ({
           poLineId: l.poLineId ?? null,
@@ -143,22 +189,52 @@ async function createGrnInner(input: z.infer<typeof CreateInput>): Promise<Creat
         })),
       },
     },
-    include: { lines: true },
+    include: { lines: { orderBy: { id: "asc" } } },
   });
 
-  // Stock movement + avg-cost roll-forward per line.
-  for (const l of lines) {
+  // Per-line: create a FIFO StockBatch at the landed rate + write the
+  // legacy StockMovement row + roll the running-average cost. Keeping
+  // moveStock here is intentional — currentQty is still the source for
+  // stockAtDepartment's STORE math and the low-stock notification gate
+  // both rely on the StockMovement audit row.
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
     if (l.qtyReceived <= 0) continue;
     const rm = await db.rawMaterial.findUnique({ where: { id: l.rawMaterialId } });
     if (!rm) continue;
-    // Weighted-average cost = (oldQty*oldCost + newQty*newCost) / (oldQty + newQty)
-    const newQty = rm.currentQty + l.qtyReceived;
+    const grnLine = grn.lines[i];
+    const landedRate = apportionedRates[i];
+
+    // FIFO batch — what consumption will draw from at the real
+    // landed cost.
+    await addStockBatch({
+      rawMaterialId: l.rawMaterialId,
+      departmentId: store.id,
+      qty: l.qtyReceived,
+      ratePerUnit: landedRate,
+      source: "GRN_RECEIPT",
+      grnId: grn.id,
+      grnLineId: grnLine?.id,
+      batchNo: l.batchNo,
+      expiryDate: l.expiryDate ? new Date(l.expiryDate) : undefined,
+    });
+
+    // Running-average roll-forward — kept for downstream consumers
+    // (dashboard, stock-value report) that aren't FIFO-aware yet.
+    // Uses landed rate so avg cost reflects true landed cost, not bare
+    // invoice rate.
+    const beforeQty = rm.currentQty;
+    const newQty = beforeQty + l.qtyReceived;
     const newAvgCost =
-      newQty > 0 ? (rm.currentQty * rm.avgCost + l.qtyReceived * l.unitCost) / newQty : l.unitCost;
+      newQty > 0 ? (beforeQty * rm.avgCost + l.qtyReceived * landedRate) / newQty : landedRate;
     await db.rawMaterial.update({
       where: { id: rm.id },
       data: { avgCost: newAvgCost },
     });
+
+    // currentQty bump + StockMovement audit row + low-stock
+    // notification. addStockBatch handles the FIFO ledger; moveStock
+    // owns the denormalised cache + audit trail.
     await moveStock({
       rawMaterialId: l.rawMaterialId,
       delta: l.qtyReceived,
@@ -166,7 +242,9 @@ async function createGrnInner(input: z.infer<typeof CreateInput>): Promise<Creat
       refType: "Grn",
       refId: grn.id,
       departmentId: store.id,
-      note: po ? `Against ${po.poNo} via ${grnNo}` : `Ad-hoc receipt via ${grnNo}`,
+      note: po
+        ? `Against ${po.poNo} via ${grnNo} · ${l.qtyReceived} ${l.unit} @ ₹${landedRate.toFixed(2)} (landed)`
+        : `Ad-hoc receipt via ${grnNo} · ${l.qtyReceived} ${l.unit} @ ₹${landedRate.toFixed(2)} (landed)`,
     });
   }
 
@@ -206,7 +284,7 @@ async function createGrnInner(input: z.infer<typeof CreateInput>): Promise<Creat
     action: "CREATE",
     entity: "RawMaterial",
     entityId: grn.id,
-    summary: `${isAdHoc ? "Ad-hoc " : ""}GRN ${grnNo} received — ${lines.length} line(s) · ${inr(Math.round(totalReceived))}`,
+    summary: `${isAdHoc ? "Ad-hoc " : ""}GRN ${grnNo} received — ${lines.length} line(s) · ${inr(Math.round(landedTotal))}`,
     outletId: outlet.id,
   });
 
@@ -218,7 +296,7 @@ async function createGrnInner(input: z.infer<typeof CreateInput>): Promise<Creat
         outletId: outlet.id,
         kind: "INFO",
         title: `Ad-hoc receipt ${grnNo}`,
-        body: `Stock received without a PO. ${lines.length} line(s) · ${inr(Math.round(totalReceived))}.`,
+        body: `Stock received without a PO. ${lines.length} line(s) · ${inr(Math.round(landedTotal))}.`,
         link: `/inventory/grn/${grn.id}`,
       },
     });
