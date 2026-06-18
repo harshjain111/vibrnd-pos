@@ -229,17 +229,19 @@ export function RmDialog({
             <Input name="currentQty" type="number" step="0.01" min="0" defaultValue={initial?.currentQty ?? 0} required />
           </div>
           <div>
-            <Label>Avg cost (₹/unit)</Label>
-            <Input name="avgCost" type="number" step="0.01" min="0" defaultValue={initial?.avgCost ?? 0} required />
-          </div>
-          <div>
             <Label>Min level</Label>
             <Input name="minLevel" type="number" step="0.01" min="0" defaultValue={initial?.minLevel ?? 0} />
+            <p className="text-[10px] text-muted-foreground mt-1">Reorder trigger.</p>
           </div>
           <div>
             <Label>Par level</Label>
             <Input name="parLevel" type="number" step="0.01" min="0" defaultValue={initial?.parLevel ?? 0} />
+            <p className="text-[10px] text-muted-foreground mt-1">Target stock — reorder up to this.</p>
           </div>
+          {/* Avg cost is captured automatically from purchases (running
+              weighted average), not by the HOD on Add — keeps the form
+              short and avoids stale manual values. */}
+          <input type="hidden" name="avgCost" value={initial?.avgCost ?? 0} />
           <div className="col-span-2">
             <Label>Available to departments</Label>
             <div className="rounded-md border bg-muted/20 p-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
