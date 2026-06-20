@@ -18,10 +18,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Empty } from "@/components/ui/empty";
+import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/rbac";
 import { canAccess } from "@/lib/permissions";
-import { inr } from "@/lib/utils";
+import { inr, fmtDate } from "@/lib/utils";
 import { Clock, AlertCircle, TrendingUp, Wallet, XCircle } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -141,36 +142,35 @@ export default async function ProcurementCockpitPage() {
       />
 
       {/* Top KPI strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-        <Kpi
+      <StatGrid cols={4} className="mb-4">
+        <StatCard
           label="Pending CC"
-          value={String(pendingCC.length)}
-          sub={`${inr(pendingTotalValue)} on the queue`}
+          value={pendingCC.length}
+          subline={`${inr(pendingTotalValue)} on the queue`}
           tone={pendingCC.length > 5 ? "warn" : "neutral"}
-          Icon={Clock}
+          icon={<Clock className="h-4 w-4" />}
         />
-        <Kpi
+        <StatCard
           label="Oldest pending"
           value={oldestPendingDays > 0 ? `${oldestPendingDays}d` : "—"}
-          sub={oldestPendingDays >= 3 ? "Take a look — ageing" : "Within SLA"}
+          subline={oldestPendingDays >= 3 ? "Take a look — ageing" : "Within SLA"}
           tone={oldestPendingDays >= 3 ? "bad" : oldestPendingDays > 0 ? "warn" : "good"}
-          Icon={AlertCircle}
+          icon={<AlertCircle className="h-4 w-4" />}
         />
-        <Kpi
+        <StatCard
           label="Outstanding AP"
           value={inr(Math.round(totalOutstanding))}
-          sub={`${unpaid.length} open invoices`}
+          subline={`${unpaid.length} open invoices`}
           tone={aging.d90plus > 0 ? "bad" : aging.d61_90 > 0 ? "warn" : "neutral"}
-          Icon={Wallet}
+          icon={<Wallet className="h-4 w-4" />}
         />
-        <Kpi
+        <StatCard
           label="90d spend"
           value={inr(Math.round(recentInvoices.reduce((s, i) => s + i.grandTotal, 0)))}
-          sub={`${recentInvoices.length} invoices · ${topSuppliers.length} suppliers`}
-          tone="neutral"
-          Icon={TrendingUp}
+          subline={`${recentInvoices.length} invoices · ${topSuppliers.length} suppliers`}
+          icon={<TrendingUp className="h-4 w-4" />}
         />
-      </div>
+      </StatGrid>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         {/* PO funnel */}
@@ -213,12 +213,12 @@ export default async function ProcurementCockpitPage() {
             <CardDescription>Outstanding stock purchases by age</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 gap-2 mb-3">
-              <AgeCell label="0–30 days" value={aging.d0_30} tone="neutral" />
-              <AgeCell label="31–60 days" value={aging.d31_60} tone="amber" />
-              <AgeCell label="61–90 days" value={aging.d61_90} tone="rose" />
-              <AgeCell label="90+ days" value={aging.d90plus} tone="rose-dark" />
-            </div>
+            <StatGrid cols={2} className="mb-3">
+              <StatCard label="0–30 days" value={inr(Math.round(aging.d0_30))} />
+              <StatCard label="31–60 days" value={inr(Math.round(aging.d31_60))} tone={aging.d31_60 > 0 ? "warn" : "neutral"} />
+              <StatCard label="61–90 days" value={inr(Math.round(aging.d61_90))} tone={aging.d61_90 > 0 ? "bad" : "neutral"} />
+              <StatCard label="90+ days" value={inr(Math.round(aging.d90plus))} tone={aging.d90plus > 0 ? "bad" : "neutral"} />
+            </StatGrid>
             <div className="text-xs text-muted-foreground">
               <Link href="/inventory/invoices" className="underline-offset-2 hover:underline">
                 Open invoices →
@@ -302,7 +302,7 @@ export default async function ProcurementCockpitPage() {
                       </div>
                       <div className="text-sm text-rose-800 mt-1">{r.ccRejectionReason}</div>
                       <div className="text-[10px] text-muted-foreground mt-0.5">
-                        {r.ccApprovedAt?.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}
+                        {fmtDate(r.ccApprovedAt)}
                         {r.ccApprovedById && (
                           <> by {rejActors.get(r.ccApprovedById) ?? "—"}</>
                         )}
@@ -351,54 +351,6 @@ export default async function ProcurementCockpitPage() {
           </CardContent>
         </Card>
       </div>
-    </div>
-  );
-}
-
-function Kpi({
-  label,
-  value,
-  sub,
-  tone,
-  Icon,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  tone: "good" | "warn" | "bad" | "neutral";
-  Icon: React.ComponentType<{ className?: string }>;
-}) {
-  const palette: Record<string, string> = {
-    good: "border-emerald-300 bg-emerald-50/40 text-emerald-900",
-    warn: "border-amber-300 bg-amber-50/40 text-amber-900",
-    bad: "border-rose-300 bg-rose-50/40 text-rose-900",
-    neutral: "border-border",
-  };
-  return (
-    <Card className={`border-2 ${palette[tone]}`}>
-      <CardContent className="p-3 flex items-center gap-3">
-        <Icon className="h-4 w-4 shrink-0 opacity-70" />
-        <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-wider opacity-70">{label}</div>
-          <div className="text-lg font-semibold leading-none mt-0.5">{value}</div>
-          {sub && <div className="text-[10px] mt-0.5 opacity-70 truncate">{sub}</div>}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function AgeCell({ label, value, tone }: { label: string; value: number; tone: "neutral" | "amber" | "rose" | "rose-dark" }) {
-  const palette: Record<string, string> = {
-    neutral: "bg-card border-border",
-    amber: "bg-amber-50 border-amber-300 text-amber-900",
-    rose: "bg-rose-50 border-rose-300 text-rose-900",
-    "rose-dark": "bg-rose-100 border-rose-400 text-rose-900",
-  };
-  return (
-    <div className={`rounded-md border-2 px-3 py-2 ${palette[tone]}`}>
-      <div className="text-[10px] uppercase tracking-wider opacity-70">{label}</div>
-      <div className="text-base font-semibold leading-none mt-0.5">{inr(Math.round(value))}</div>
     </div>
   );
 }

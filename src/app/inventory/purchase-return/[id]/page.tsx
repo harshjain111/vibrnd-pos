@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/shell/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { DescriptionList, DescriptionRow } from "@/components/ui/description-list";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ArrowLeft } from "lucide-react";
 import { db } from "@/lib/db";
@@ -107,13 +108,12 @@ export default async function PurchaseReturnDetailPage({
             <CardTitle className="text-base">Summary</CardTitle>
           </CardHeader>
           <CardContent className="p-4 pt-0 space-y-2 text-sm">
-            <Row label="Status" value={<Badge variant="secondary" className="text-[10px]">{ret.status}</Badge>} />
-            <Row label="Supplier" value={supplierName || "—"} />
-            <Row label="Against" value={sourceNo ? `${sourceType === "PO" ? "PO" : "Stock purchase"} ${sourceNo}` : "—"} />
-            <div className="flex items-center justify-between text-base font-semibold pt-2 border-t">
-              <span>Grand total</span>
-              <span>{inr(Math.round(ret.grandTotal))}</span>
-            </div>
+            <DescriptionList>
+              <DescriptionRow label="Status" value={<StatusBadge kind="return" status={ret.status} className="text-[10px]" />} />
+              <DescriptionRow label="Supplier" value={supplierName || "—"} />
+              <DescriptionRow label="Against" value={sourceNo ? `${sourceType === "PO" ? "PO" : "Stock purchase"} ${sourceNo}` : "—"} />
+              <DescriptionRow emphasis label="Grand total" value={inr(Math.round(ret.grandTotal))} />
+            </DescriptionList>
             {ret.reason && (
               <div className="pt-2 border-t">
                 <div className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Reason</div>
@@ -126,15 +126,6 @@ export default async function PurchaseReturnDetailPage({
           </CardContent>
         </Card>
       </div>
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="text-right">{value}</span>
     </div>
   );
 }
