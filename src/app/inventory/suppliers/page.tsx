@@ -4,9 +4,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Empty } from "@/components/ui/empty";
+import { InlineAlert } from "@/components/ui/inline-alert";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { AlertTriangle, ClipboardList, CheckCircle2, Plus } from "lucide-react";
+import { AlertTriangle, ClipboardList, CheckCircle2, Plus, Truck } from "lucide-react";
 import { SupplierDialog } from "../client";
 
 export const dynamic = "force-dynamic";
@@ -50,45 +52,24 @@ export default async function SuppliersPage() {
 
       {/* Coverage strip — green when 100%, amber when there's a gap. */}
       {rms.length > 0 && (
-        <Card
-          className={`mb-4 ${
+        <InlineAlert
+          tone={uncovered.length === 0 ? "good" : "warn"}
+          icon={uncovered.length === 0 ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+          title={
             uncovered.length === 0
-              ? "border-emerald-300 bg-emerald-50/40"
-              : "border-amber-300 bg-amber-50/40"
-          }`}
+              ? "Every item is covered"
+              : `${uncovered.length} item${uncovered.length === 1 ? "" : "s"} need a supplier`
+          }
+          className="mb-4"
         >
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              {uncovered.length === 0 ? (
-                <>
-                  <CheckCircle2 className="h-4 w-4 text-emerald-700" />
-                  <span className="text-emerald-900">Every item is covered</span>
-                </>
-              ) : (
-                <>
-                  <AlertTriangle className="h-4 w-4 text-amber-700" />
-                  <span className="text-amber-900">
-                    {uncovered.length} item{uncovered.length === 1 ? "" : "s"} need a
-                    supplier
-                  </span>
-                </>
-              )}
-            </CardTitle>
-            <CardDescription>
-              {uncovered.length === 0
-                ? "Every raw material is on at least one supplier's rate card. POs will auto-suggest the primary vendor."
-                : "These items have no supplier on file. Assign one from the raw materials page so PO builders find them on the right rate card."}
-            </CardDescription>
-          </CardHeader>
+          {uncovered.length === 0
+            ? "Every raw material is on at least one supplier's rate card. POs will auto-suggest the primary vendor."
+            : "These items have no supplier on file. Assign one from the raw materials page so PO builders find them on the right rate card."}
           {uncovered.length > 0 && (
-            <CardContent className="pt-0">
-              <div className="flex flex-wrap gap-1.5 mb-3">
+            <>
+              <div className="flex flex-wrap gap-1.5 mt-2 mb-3">
                 {uncovered.slice(0, 12).map((r) => (
-                  <Badge
-                    key={r.id}
-                    variant="warning"
-                    className="text-[10px] font-normal"
-                  >
+                  <Badge key={r.id} variant="warning" className="text-[10px] font-normal">
                     {r.name}
                   </Badge>
                 ))}
@@ -98,18 +79,19 @@ export default async function SuppliersPage() {
                   </Badge>
                 )}
               </div>
-              <Button asChild size="sm" variant="outline" className="border-amber-300">
-                <Link href="/inventory?filter=uncovered">
-                  Go assign suppliers
-                </Link>
+              <Button asChild size="sm" variant="outline">
+                <Link href="/inventory?filter=uncovered">Go assign suppliers</Link>
               </Button>
-            </CardContent>
+            </>
           )}
-        </Card>
+        </InlineAlert>
       )}
 
       <Card>
         <CardContent className="p-0">
+          {suppliers.length === 0 ? (
+            <Empty icon={Truck} title="No suppliers yet" desc="Add your first supplier to start building rate cards and raising POs." />
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -176,6 +158,7 @@ export default async function SuppliersPage() {
               ))}
             </TableBody>
           </Table>
+          )}
         </CardContent>
       </Card>
     </div>

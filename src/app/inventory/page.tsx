@@ -4,13 +4,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Empty } from "@/components/ui/empty";
+import { StatCard, StatGrid } from "@/components/ui/stat-card";
+import { InlineAlert } from "@/components/ui/inline-alert";
+import { FilterBar, FilterSelect } from "@/components/ui/filter-bar";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { getSessionUser } from "@/lib/session";
 import { inr } from "@/lib/utils";
 import { rmDepartmentFilter } from "@/lib/department-scope";
 import { ownedDepartmentKind } from "@/lib/rbac";
-import { AlertTriangle, Boxes, Pencil, Plus, Search, Users, X } from "lucide-react";
+import { AlertTriangle, Boxes, Pencil, Plus, TrendingDown, Users } from "lucide-react";
 import { ManageRmSuppliersDialog, RmDialog, StockAdjust } from "./client";
 
 export const dynamic = "force-dynamic";
@@ -119,59 +123,39 @@ export default async function InventoryPage({
         }
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-        <KpiCard label="Stock worth" value={inr(stockWorth)} icon={<Boxes className="h-4 w-4" />} />
-        <KpiCard label="Below min level" value={String(belowMin.length)} tone={belowMin.length ? "warn" : "neutral"} icon={<AlertTriangle className="h-4 w-4" />} />
-        <KpiCard label="Below par level" value={String(belowPar.length)} icon={<AlertTriangle className="h-4 w-4" />} />
-      </div>
+      <StatGrid cols={3} className="mb-4">
+        <StatCard label="Stock worth" value={inr(stockWorth)} icon={<Boxes className="h-4 w-4" />} />
+        <StatCard label="Below min level" value={belowMin.length} tone={belowMin.length ? "bad" : "neutral"} icon={<AlertTriangle className="h-4 w-4" />} />
+        <StatCard label="Below par level" value={belowPar.length} tone={belowPar.length ? "warn" : "neutral"} icon={<TrendingDown className="h-4 w-4" />} />
+      </StatGrid>
 
       {/* Filter strip + search */}
-      <form method="get" action="/inventory" className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[220px] max-w-md">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <input
-            name="q"
-            defaultValue={search}
-            placeholder="Search by name…"
-            className="h-9 w-full rounded-md border bg-background pl-8 pr-3 text-sm"
-          />
-        </div>
-        <select
-          name="cat"
-          defaultValue={cat}
-          className="h-9 rounded-md border bg-background px-3 text-sm"
-        >
+      <FilterBar
+        action="/inventory"
+        searchName="q"
+        searchPlaceholder="Search by name…"
+        searchDefault={search}
+        showClear={hasAnyFilter}
+        className="mb-3"
+      >
+        <FilterSelect name="cat" defaultValue={cat}>
           <option value="">All categories</option>
           {categories.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
           ))}
-        </select>
-        <select
-          name="sub"
-          defaultValue={sub}
-          disabled={!cat}
-          className="h-9 rounded-md border bg-background px-3 text-sm disabled:opacity-50"
-          title={cat ? "" : "Pick a category first"}
-        >
+        </FilterSelect>
+        <FilterSelect name="sub" defaultValue={sub} disabled={!cat} title={cat ? "" : "Pick a category first"}>
           <option value="">All sub-categories</option>
           {subOptions.map((s) => (
             <option key={s} value={s}>
               {s}
             </option>
           ))}
-        </select>
+        </FilterSelect>
         {onlyUncovered && <input type="hidden" name="filter" value="uncovered" />}
-        <Button type="submit" size="sm">Apply</Button>
-        {hasAnyFilter && (
-          <Button type="button" variant="ghost" size="sm" asChild>
-            <Link href="/inventory">
-              <X className="h-3.5 w-3.5" /> Clear
-            </Link>
-          </Button>
-        )}
-      </form>
+      </FilterBar>
 
       {/* Quick filter chips (preserves search/cat/sub) */}
       <div className="flex flex-wrap gap-1.5 mb-3">
@@ -205,19 +189,21 @@ export default async function InventoryPage({
       </div>
 
       {belowMin.length > 0 && (
-        <Card className="mb-4 border-amber-300 bg-amber-50/40">
-          <CardHeader>
-            <CardTitle className="text-amber-900">Low stock alert</CardTitle>
-            <CardDescription>These raw materials are below their minimum level.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
+        <InlineAlert
+          tone="warn"
+          icon={<AlertTriangle className="h-4 w-4" />}
+          title="Low stock alert"
+          className="mb-4"
+        >
+          <div className="text-muted-foreground mb-2">These raw materials are below their minimum level.</div>
+          <div className="flex flex-wrap gap-2">
             {belowMin.map((r) => (
               <Badge key={r.id} variant="warning">
                 {r.name}: {r.currentQty}{r.unit} (min {r.minLevel})
               </Badge>
             ))}
-          </CardContent>
-        </Card>
+          </div>
+        </InlineAlert>
       )}
 
       <Card>
@@ -386,10 +372,12 @@ export default async function InventoryPage({
               })}
               {visible.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-6">
-                    {hasAnyFilter
-                      ? "No items match the current filters."
-                      : "No raw materials yet."}
+                  <TableCell colSpan={8} className="p-0">
+                    <Empty
+                      icon={Boxes}
+                      title={hasAnyFilter ? "No items match" : "No raw materials yet"}
+                      desc={hasAnyFilter ? "Try clearing the filters above." : "Add your first raw material to start tracking stock."}
+                    />
                   </TableCell>
                 </TableRow>
               )}
@@ -398,19 +386,5 @@ export default async function InventoryPage({
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function KpiCard({ label, value, icon, tone = "neutral" }: { label: string; value: string; icon: React.ReactNode; tone?: "neutral" | "warn" }) {
-  return (
-    <Card>
-      <CardContent className="p-4 flex items-center justify-between">
-        <div>
-          <div className="text-xs text-muted-foreground">{label}</div>
-          <div className={`text-2xl font-semibold mt-1 ${tone === "warn" ? "text-amber-600" : ""}`}>{value}</div>
-        </div>
-        <div className="h-9 w-9 rounded-md bg-muted flex items-center justify-center text-muted-foreground">{icon}</div>
-      </CardContent>
-    </Card>
   );
 }

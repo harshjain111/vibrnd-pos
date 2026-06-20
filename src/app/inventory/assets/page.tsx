@@ -5,10 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Empty } from "@/components/ui/empty";
+import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
-import { inr } from "@/lib/utils";
+import { inr, fmtDate } from "@/lib/utils";
 import { ClipboardCheck, Plus, Sofa, AlertTriangle, Boxes } from "lucide-react";
 import { AssetDialog, DeleteAssetBtn } from "./client";
 
@@ -70,23 +71,17 @@ export default async function FixedAssetsPage() {
       />
 
       {/* KPI strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-        <Kpi label="Total items" value={String(assets.length)} Icon={Boxes} />
-        <Kpi label="Total units" value={String(totalUnits)} />
-        <Kpi label="Book value" value={inr(Math.round(totalValue))} tone="good" />
-        <Kpi
+      <StatGrid cols={4} className="mb-4">
+        <StatCard label="Total items" value={assets.length} icon={<Boxes className="h-4 w-4" />} />
+        <StatCard label="Total units" value={totalUnits} />
+        <StatCard label="Book value" value={inr(Math.round(totalValue))} tone="good" />
+        <StatCard
           label={damaged > 0 ? "Damaged units" : "Last audit"}
-          value={
-            damaged > 0
-              ? String(damaged)
-              : lastAudit
-                ? lastAudit.auditedAt.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
-                : "Never"
-          }
+          value={damaged > 0 ? damaged : lastAudit ? fmtDate(lastAudit.auditedAt) : "Never"}
           tone={damaged > 0 ? "bad" : "neutral"}
-          Icon={damaged > 0 ? AlertTriangle : ClipboardCheck}
+          icon={damaged > 0 ? <AlertTriangle className="h-4 w-4" /> : <ClipboardCheck className="h-4 w-4" />}
         />
-      </div>
+      </StatGrid>
 
       {assets.length === 0 ? (
         <Card>
@@ -200,13 +195,7 @@ export default async function FixedAssetsPage() {
                       <TableRow key={a.id} className="cursor-pointer hover:bg-accent/40">
                         <TableCell className="text-xs text-muted-foreground">
                           <Link href={`/inventory/assets/audits/${a.id}`} className="hover:underline">
-                            {a.auditedAt.toLocaleString("en-IN", {
-                              day: "2-digit",
-                              month: "short",
-                              year: "2-digit",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
+                            {fmtDate(a.auditedAt, "datetime")}
                           </Link>
                         </TableCell>
                         <TableCell className="text-sm">—</TableCell>
@@ -237,29 +226,4 @@ export default async function FixedAssetsPage() {
 
 function labelFor(cat: string) {
   return cat.charAt(0) + cat.slice(1).toLowerCase();
-}
-
-function Kpi({
-  label,
-  value,
-  tone,
-  Icon,
-}: {
-  label: string;
-  value: string;
-  tone?: "good" | "bad" | "neutral";
-  Icon?: React.ComponentType<{ className?: string }>;
-}) {
-  const color = tone === "good" ? "text-emerald-700" : tone === "bad" ? "text-rose-700" : "";
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="text-xs text-muted-foreground inline-flex items-center gap-1.5">
-          {Icon && <Icon className="h-3.5 w-3.5" />}
-          {label}
-        </div>
-        <div className={`text-2xl font-semibold mt-0.5 ${color}`}>{value}</div>
-      </CardContent>
-    </Card>
-  );
 }

@@ -3,8 +3,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Empty } from "@/components/ui/empty";
+import { StatCard, StatGrid } from "@/components/ui/stat-card";
+import { Boxes, TrendingDown, AlertTriangle } from "lucide-react";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
+import { inr } from "@/lib/utils";
 import { AvailableRow, FavouriteToggle } from "./client";
 
 export const dynamic = "force-dynamic";
@@ -29,23 +32,14 @@ export default async function AvailableStockPage({ searchParams }: { searchParam
     <div>
       <PageHeader
         title="Available Stock"
-        description={`${rms.length} raw material${rms.length === 1 ? "" : "s"} · ₹${Math.round(total).toLocaleString("en-IN")} on-hand value`}
+        description={`${rms.length} raw material${rms.length === 1 ? "" : "s"} · ${inr(Math.round(total))} on-hand value`}
       />
 
-      <div className="grid grid-cols-3 gap-3 mb-3">
-        <Card><CardContent className="p-3">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Total value</div>
-          <div className="font-semibold text-lg">₹{Math.round(total).toLocaleString("en-IN")}</div>
-        </CardContent></Card>
-        <Card><CardContent className="p-3">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Below par</div>
-          <div className="font-semibold text-lg text-amber-700">{belowPar}</div>
-        </CardContent></Card>
-        <Card><CardContent className="p-3">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Below min</div>
-          <div className="font-semibold text-lg text-rose-700">{belowMin}</div>
-        </CardContent></Card>
-      </div>
+      <StatGrid cols={3} className="mb-4">
+        <StatCard label="Total value" value={inr(Math.round(total))} icon={<Boxes className="h-4 w-4" />} />
+        <StatCard label="Below par" value={belowPar} tone={belowPar > 0 ? "warn" : "neutral"} icon={<TrendingDown className="h-4 w-4" />} />
+        <StatCard label="Below min" value={belowMin} tone={belowMin > 0 ? "bad" : "neutral"} icon={<AlertTriangle className="h-4 w-4" />} />
+      </StatGrid>
 
       {rms.length === 0 ? (
         <Card><CardContent><Empty title="No raw materials yet" desc="Create one in Inventory · Masters · Raw Materials." /></CardContent></Card>

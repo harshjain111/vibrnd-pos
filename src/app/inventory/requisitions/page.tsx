@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { PageHeader } from "@/components/shell/page-header";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
+import { FilterTabs } from "@/components/ui/filter-tabs";
 import { Plus, ClipboardList, Inbox, CheckCircle2, XCircle } from "lucide-react";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
@@ -161,28 +161,21 @@ export default async function RequisitionsListPage({
       />
 
       {/* Status tabs */}
-      <div className="flex flex-wrap gap-1.5 mb-3">
-        {STATUS_TABS.map((t) => {
-          const active = t.key === activeTab.key;
-          const n = countByKey[t.key] ?? 0;
+      <FilterTabs
+        className="mb-3"
+        basePath="/inventory/requisitions"
+        current={activeTab.key}
+        defaultKey="PENDING"
+        items={STATUS_TABS.map((t) => {
           const Icon = t.Icon;
-          return (
-            <Link
-              key={t.key}
-              href={t.key === "PENDING" ? "/inventory/requisitions" : `/inventory/requisitions?tab=${t.key}`}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
-                active ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
-              }`}
-            >
-              <Icon className="h-3.5 w-3.5" />
-              {t.label}
-              <Badge variant="outline" className="text-[10px] bg-background/50">
-                {n}
-              </Badge>
-            </Link>
-          );
+          return {
+            key: t.key,
+            label: t.label,
+            count: countByKey[t.key] ?? 0,
+            icon: <Icon className="h-3.5 w-3.5" />,
+          };
         })}
-      </div>
+      />
 
       <Card>
         <CardContent className="p-0">

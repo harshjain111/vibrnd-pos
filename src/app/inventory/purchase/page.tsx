@@ -4,10 +4,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Empty } from "@/components/ui/empty";
+import { FilterTabs } from "@/components/ui/filter-tabs";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { inr } from "@/lib/utils";
-import { Plus, ArrowLeft } from "lucide-react";
+import { inr, fmtDate } from "@/lib/utils";
+import { Plus, ArrowLeft, Receipt } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -152,26 +154,13 @@ export default async function POListPage({
       )}
 
       {/* Status tabs */}
-      <div className="flex flex-wrap gap-1.5 mb-3">
-        {TABS.map((t) => {
-          const active = t.key === activeTab.key;
-          const n = countByKey[t.key] ?? 0;
-          return (
-            <Link
-              key={t.key}
-              href={t.key === "ALL" ? "/inventory/purchase" : `/inventory/purchase?tab=${t.key}`}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors ${
-                active ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
-              }`}
-            >
-              {t.label}
-              <Badge variant="outline" className="text-[10px] bg-background/50">
-                {n}
-              </Badge>
-            </Link>
-          );
-        })}
-      </div>
+      <FilterTabs
+        className="mb-3"
+        basePath="/inventory/purchase"
+        current={activeTab.key}
+        defaultKey="ALL"
+        items={TABS.map((t) => ({ key: t.key, label: t.label, count: countByKey[t.key] ?? 0 }))}
+      />
 
       <Card>
         <CardContent className="p-0">
@@ -190,8 +179,8 @@ export default async function POListPage({
             <TableBody>
               {pos.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-12">
-                    No purchase orders yet. Create one to procure raw materials from a supplier.
+                  <TableCell colSpan={7} className="p-0">
+                    <Empty icon={Receipt} title="No purchase orders yet" desc="Create one to procure raw materials from a supplier." />
                   </TableCell>
                 </TableRow>
               ) : (
@@ -199,7 +188,7 @@ export default async function POListPage({
                   <TableRow key={p.id}>
                     <TableCell className="font-mono text-xs">{p.poNo}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {new Date(p.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+                      {fmtDate(p.createdAt, "long")}
                     </TableCell>
                     <TableCell>{p.supplier.name}</TableCell>
                     <TableCell className="text-right">{p.lines.length}</TableCell>

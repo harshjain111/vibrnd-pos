@@ -3,11 +3,13 @@ import { PageHeader } from "@/components/shell/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Empty } from "@/components/ui/empty";
+import { FilterBar, FilterSelect } from "@/components/ui/filter-bar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { ArrowLeft, Search } from "lucide-react";
+import { fmtDate, qtyUnit } from "@/lib/utils";
+import { ArrowLeft, ArrowLeftRight } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -59,24 +61,16 @@ export default async function MovementsPage({
 
       <Card className="mb-3">
         <CardContent className="p-3">
-          <form className="flex gap-2 flex-wrap" action="/inventory/movements" method="GET">
-            <select
-              name="rm"
-              defaultValue={sp.rm ?? "all"}
-              className="h-9 rounded-md border bg-background px-3 text-sm min-w-[200px]"
-            >
+          <FilterBar action="/inventory/movements" showSearch={false}>
+            <FilterSelect name="rm" defaultValue={sp.rm ?? "all"} className="min-w-[200px]">
               <option value="all">All raw materials</option>
               {rms.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.name}
                 </option>
               ))}
-            </select>
-            <select
-              name="reason"
-              defaultValue={sp.reason ?? "all"}
-              className="h-9 rounded-md border bg-background px-3 text-sm"
-            >
+            </FilterSelect>
+            <FilterSelect name="reason" defaultValue={sp.reason ?? "all"}>
               <option value="all">All reasons</option>
               <option value="SALE">Sale</option>
               <option value="CANCEL_REVERSE">Cancel reverse</option>
@@ -84,54 +78,46 @@ export default async function MovementsPage({
               <option value="PURCHASE">Purchase</option>
               <option value="WASTAGE">Wastage</option>
               <option value="OPENING">Opening</option>
-            </select>
-            <Button type="submit">Apply</Button>
-          </form>
+            </FilterSelect>
+          </FilterBar>
         </CardContent>
       </Card>
 
       <Card>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-44">When</TableHead>
-                <TableHead>Raw material</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead className="text-right">Δ</TableHead>
-                <TableHead className="text-right">Before</TableHead>
-                <TableHead className="text-right">After</TableHead>
-                <TableHead>Reference</TableHead>
-                <TableHead>Note</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {movements.length === 0 ? (
+          {movements.length === 0 ? (
+            <Empty
+              icon={ArrowLeftRight}
+              title="No movements yet"
+              desc="Settle a bill, cancel an order, or adjust stock and entries show up here."
+            />
+          ) : (
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-12">
-                    No movements yet — settle a bill, cancel an order, or adjust stock and entries show up here.
-                  </TableCell>
+                  <TableHead className="w-44">When</TableHead>
+                  <TableHead>Raw material</TableHead>
+                  <TableHead>Reason</TableHead>
+                  <TableHead className="text-right">Δ</TableHead>
+                  <TableHead className="text-right">Before</TableHead>
+                  <TableHead className="text-right">After</TableHead>
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Note</TableHead>
                 </TableRow>
-              ) : (
-                movements.map((m) => {
+              </TableHeader>
+              <TableBody>
+                {movements.map((m) => {
                   const positive = m.delta > 0;
                   return (
                     <TableRow key={m.id}>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {new Date(m.createdAt).toLocaleString("en-IN", {
-                          day: "2-digit",
-                          month: "short",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{fmtDate(m.createdAt, "datetime")}</TableCell>
                       <TableCell className="font-medium">{m.rawMaterial.name}</TableCell>
                       <TableCell>
                         <Badge variant={REASON_TONE[m.reason] ?? "secondary"}>{m.reason}</Badge>
                       </TableCell>
                       <TableCell className={`text-right font-mono ${positive ? "text-emerald-700" : "text-rose-700"}`}>
                         {positive ? "+" : ""}
-                        {m.delta.toFixed(2)} {m.rawMaterial.unit}
+                        {qtyUnit(m.delta, m.rawMaterial.unit)}
                       </TableCell>
                       <TableCell className="text-right text-muted-foreground">
                         {m.qtyBefore.toFixed(2)}
@@ -150,10 +136,10 @@ export default async function MovementsPage({
                       </TableCell>
                     </TableRow>
                   );
-                })
-              )}
-            </TableBody>
-          </Table>
+                })}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>

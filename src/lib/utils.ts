@@ -27,6 +27,36 @@ export function pct(value: number) {
 }
 
 /**
+ * Consistent date rendering across the inventory module. Replaces the many
+ * one-off `toLocaleDateString({ day, month, ... })` variants.
+ *   short    → 18 Jun 26
+ *   long     → 18 June 2026
+ *   datetime → 18 Jun, 14:30
+ */
+export function fmtDate(
+  d: Date | string | number | null | undefined,
+  style: "short" | "long" | "datetime" = "short"
+) {
+  if (d === null || d === undefined) return "—";
+  const date = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(date.getTime())) return "—";
+  const opts: Intl.DateTimeFormatOptions =
+    style === "long"
+      ? { day: "2-digit", month: "long", year: "numeric" }
+      : style === "datetime"
+        ? { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }
+        : { day: "2-digit", month: "short", year: "2-digit" };
+  return date.toLocaleString("en-IN", opts);
+}
+
+/** Quantity + unit, trimming trailing zeros (e.g. `qtyUnit(2.5, "kg")` → "2.5 kg"). */
+export function qtyUnit(n: number | null | undefined, unit?: string | null) {
+  const v = Number(n ?? 0);
+  const num = Number.isInteger(v) ? String(v) : String(Number(v.toFixed(3)));
+  return unit ? `${num} ${unit}` : num;
+}
+
+/**
  * Build an invoice number for a single outlet.
  *
  * In single-outlet setups invoice numbers were simply `INV-000001`. When a

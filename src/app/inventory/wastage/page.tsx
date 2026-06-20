@@ -3,11 +3,13 @@ import { PageHeader } from "@/components/shell/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Empty } from "@/components/ui/empty";
+import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { inr } from "@/lib/utils";
-import { ArrowLeft } from "lucide-react";
+import { inr, fmtDate, qtyUnit } from "@/lib/utils";
+import { ArrowLeft, Trash2 } from "lucide-react";
 import { WastageForm } from "./client";
 
 export const dynamic = "force-dynamic";
@@ -44,11 +46,11 @@ export default async function WastagePage() {
         }
       />
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-        <Kpi label="Entries (7 days)" value={String(weekly.length)} />
-        <Kpi label="Value lost (7 days)" value={inr(weeklyValue)} tone="bad" />
-        <Kpi label="Entries (all time)" value={String(moves.length)} />
-      </div>
+      <StatGrid cols={3} className="mb-4">
+        <StatCard label="Entries (7 days)" value={weekly.length} />
+        <StatCard label="Value lost (7 days)" value={inr(weeklyValue)} tone="bad" icon={<Trash2 className="h-4 w-4" />} />
+        <StatCard label="Entries (all time)" value={moves.length} />
+      </StatGrid>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-4">
         <Card>
@@ -66,37 +68,26 @@ export default async function WastagePage() {
             <CardTitle>Recent wastage</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>When</TableHead>
-                  <TableHead>Raw material</TableHead>
-                  <TableHead className="text-right">Qty</TableHead>
-                  <TableHead className="text-right">Cost</TableHead>
-                  <TableHead>Reason</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {moves.length === 0 ? (
+            {moves.length === 0 ? (
+              <Empty icon={Trash2} title="No wastage recorded yet" desc="Record a loss on the left and it shows up here and on the movements audit trail." />
+            ) : (
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-12">
-                      No wastage recorded yet.
-                    </TableCell>
+                    <TableHead>When</TableHead>
+                    <TableHead>Raw material</TableHead>
+                    <TableHead className="text-right">Qty</TableHead>
+                    <TableHead className="text-right">Cost</TableHead>
+                    <TableHead>Reason</TableHead>
                   </TableRow>
-                ) : (
-                  moves.map((m) => (
+                </TableHeader>
+                <TableBody>
+                  {moves.map((m) => (
                     <TableRow key={m.id}>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {new Date(m.createdAt).toLocaleString("en-IN", {
-                          day: "2-digit",
-                          month: "short",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{fmtDate(m.createdAt, "datetime")}</TableCell>
                       <TableCell className="font-medium">{m.rawMaterial.name}</TableCell>
                       <TableCell className="text-right font-mono text-rose-700">
-                        {m.delta.toFixed(2)} {m.rawMaterial.unit}
+                        {qtyUnit(m.delta, m.rawMaterial.unit)}
                       </TableCell>
                       <TableCell className="text-right">
                         <Badge variant="destructive" className="text-[10px]">
@@ -107,24 +98,13 @@ export default async function WastagePage() {
                         {m.note ?? "—"}
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </CardContent>
         </Card>
       </div>
     </div>
-  );
-}
-
-function Kpi({ label, value, tone }: { label: string; value: string; tone?: "bad" }) {
-  return (
-    <Card>
-      <CardContent className="p-3">
-        <div className="text-xs text-muted-foreground">{label}</div>
-        <div className={`text-xl font-semibold mt-0.5 ${tone === "bad" ? "text-rose-700" : ""}`}>{value}</div>
-      </CardContent>
-    </Card>
   );
 }
