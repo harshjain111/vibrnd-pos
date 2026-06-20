@@ -18,10 +18,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Empty } from "@/components/ui/empty";
+import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/rbac";
 import { canAccess } from "@/lib/permissions";
-import { ArrowDown, ArrowUp, Equal } from "lucide-react";
+import { ArrowDown, ArrowUp, Equal, ClipboardList } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -199,30 +200,25 @@ export default async function RequisitionVariancePage({
       </div>
 
       {/* KPI strip */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-        <KpiCard label="Requested" value={totalRequested} unit="lines" />
-        <KpiCard
+      <StatGrid cols={4} className="mb-4">
+        <StatCard label="Requested" value={`${totalRequested.toFixed(1)} lines`} />
+        <StatCard
           label="Approved"
-          value={totalApproved}
-          unit="lines"
-          deltaPct={pct(totalApproved, totalRequested)}
-          tone="neutral"
+          value={`${totalApproved.toFixed(1)} lines`}
+          subline={pct(totalApproved, totalRequested) !== null ? `${pct(totalApproved, totalRequested)}% of prior step` : undefined}
         />
-        <KpiCard
+        <StatCard
           label="Sent"
-          value={totalSent}
-          unit="lines"
-          deltaPct={pct(totalSent, totalApproved)}
-          tone="neutral"
+          value={`${totalSent.toFixed(1)} lines`}
+          subline={pct(totalSent, totalApproved) !== null ? `${pct(totalSent, totalApproved)}% of prior step` : undefined}
         />
-        <KpiCard
+        <StatCard
           label="Received"
-          value={totalReceived}
-          unit="lines"
-          deltaPct={pct(totalReceived, totalSent)}
+          value={`${totalReceived.toFixed(1)} lines`}
+          subline={pct(totalReceived, totalSent) !== null ? `${pct(totalReceived, totalSent)}% of prior step` : undefined}
           tone={linesWithGap > 0 ? "warn" : "good"}
         />
-      </div>
+      </StatGrid>
 
       <Card>
         <CardHeader className="pb-2">
@@ -235,7 +231,7 @@ export default async function RequisitionVariancePage({
         </CardHeader>
         <CardContent className="p-0">
           {linesAll.length === 0 ? (
-            <Empty title="Nothing in range" desc="Try a wider date range or different outlet." />
+            <Empty icon={ClipboardList} title="Nothing in range" desc="Try a wider date range or different outlet." />
           ) : (
             <Table>
               <TableHeader>
@@ -294,41 +290,6 @@ export default async function RequisitionVariancePage({
 function pct(a: number, b: number): number | null {
   if (b <= 0) return null;
   return Math.round((a / b) * 100);
-}
-
-function KpiCard({
-  label,
-  value,
-  unit,
-  deltaPct,
-  tone = "neutral",
-}: {
-  label: string;
-  value: number;
-  unit?: string;
-  deltaPct?: number | null;
-  tone?: "good" | "warn" | "bad" | "neutral";
-}) {
-  const palette: Record<string, string> = {
-    good: "border-emerald-300 bg-emerald-50/40 text-emerald-900",
-    warn: "border-amber-300 bg-amber-50/40 text-amber-900",
-    bad: "border-rose-300 bg-rose-50/40 text-rose-900",
-    neutral: "border-border",
-  };
-  return (
-    <Card className={`border-2 ${palette[tone]}`}>
-      <CardContent className="p-3">
-        <div className="text-[10px] uppercase tracking-wider opacity-70">{label}</div>
-        <div className="text-xl font-semibold mt-0.5">
-          {value.toFixed(1)}
-          {unit && <span className="text-xs font-normal opacity-70 ml-1">{unit}</span>}
-        </div>
-        {deltaPct !== undefined && deltaPct !== null && (
-          <div className="text-[10px] mt-1 opacity-70">{deltaPct}% of prior step</div>
-        )}
-      </CardContent>
-    </Card>
-  );
 }
 
 function QtyCell({ qty, prev, hideIfZero }: { qty: number; prev: number; hideIfZero?: boolean }) {

@@ -1,10 +1,15 @@
 import { PageHeader } from "@/components/shell/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Empty } from "@/components/ui/empty";
+import { FilterBar } from "@/components/ui/filter-bar";
+import { Boxes } from "lucide-react";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
+import { fmtDate } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -77,22 +82,21 @@ export default async function StockSummaryPage({ searchParams }: { searchParams:
     <div>
       <PageHeader
         title="Stock Summary Report"
-        description={`Variance reconciliation · ${from.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} → ${to.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}`}
+        description={`Variance reconciliation · ${fmtDate(from)} → ${fmtDate(to)}`}
       />
-      <form className="mb-3 flex flex-wrap gap-2 items-end" action="/inventory/reports/summary" method="GET">
+      <FilterBar action="/inventory/reports/summary" showSearch={false} showClear={false} className="mb-3">
         <div>
-          <label className="text-xs text-muted-foreground block mb-1">From</label>
-          <input name="from" type="date" defaultValue={from.toISOString().slice(0,10)} className="h-9 rounded-md border bg-background px-3 text-sm" />
+          <Label className="text-xs text-muted-foreground block mb-1">From</Label>
+          <Input name="from" type="date" defaultValue={from.toISOString().slice(0, 10)} className="w-auto" />
         </div>
         <div>
-          <label className="text-xs text-muted-foreground block mb-1">To</label>
-          <input name="to" type="date" defaultValue={to.toISOString().slice(0,10)} className="h-9 rounded-md border bg-background px-3 text-sm" />
+          <Label className="text-xs text-muted-foreground block mb-1">To</Label>
+          <Input name="to" type="date" defaultValue={to.toISOString().slice(0, 10)} className="w-auto" />
         </div>
-        <button type="submit" className="h-9 px-3 rounded-md bg-primary text-primary-foreground text-sm">Apply</button>
-      </form>
+      </FilterBar>
 
       {rms.length === 0 ? (
-        <Card><CardContent><Empty title="No raw materials" desc="Create one in Inventory · Masters · Raw Materials." /></CardContent></Card>
+        <Card><CardContent><Empty icon={Boxes} title="No raw materials" desc="Create one in Inventory · Masters · Raw Materials." /></CardContent></Card>
       ) : (
         <Card>
           <CardContent className="p-0 overflow-x-auto">

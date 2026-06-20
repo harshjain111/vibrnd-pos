@@ -8,6 +8,7 @@ import { Empty } from "@/components/ui/empty";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
+import { fmtDate } from "@/lib/utils";
 import { ClipboardCheck } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -45,7 +46,7 @@ export default async function AllAuditsPage() {
       <Card>
         <CardContent className="p-0">
           {audits.length === 0 ? (
-            <Empty title="No audits yet" desc="Click 'New audit' to do your first floor walk." />
+            <Empty icon={ClipboardCheck} title="No audits yet" desc="Click 'New audit' to do your first floor walk." />
           ) : (
             <Table>
               <TableHeader>
@@ -62,13 +63,7 @@ export default async function AllAuditsPage() {
                   <TableRow key={a.id} className="hover:bg-accent/40">
                     <TableCell>
                       <Link href={`/inventory/assets/audits/${a.id}`} className="hover:underline text-sm">
-                        {a.auditedAt.toLocaleString("en-IN", {
-                          day: "2-digit",
-                          month: "short",
-                          year: "2-digit",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                        {fmtDate(a.auditedAt, "datetime")}
                       </Link>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
