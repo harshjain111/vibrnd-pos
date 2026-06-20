@@ -70,6 +70,12 @@ export function NewGrnForm({
     qtyDamaged: string;
     batchNo: string;
     note: string;
+    /** Rate the vendor actually billed on the challan. Defaults to the
+     *  PO line's unitPrice so doing nothing keeps the historic
+     *  behaviour; the SM types over it when the vendor's challan
+     *  differs (price increase, special pricing, etc.). This value is
+     *  what becomes GrnLine.unitCost + the StockBatch landed rate. */
+    vendorRate: string;
     taxRate: string;
     lineDiscount: string;
   };
@@ -84,6 +90,7 @@ export function NewGrnForm({
           qtyDamaged: "",
           batchNo: "",
           note: "",
+          vendorRate: String(l.unitPrice),
           taxRate: "",
           lineDiscount: "",
         },
@@ -117,7 +124,9 @@ export function NewGrnForm({
               qtyDamaged,
               qtyShort: Math.max(0, pl.qtyOrdered - pl.qtyAlreadyReceived - qtyReceived - qtyDamaged),
               unit: pl.unit,
-              unitCost: pl.unitPrice,
+              // Vendor-billed rate from the challan — falls back to the
+              // PO rate when the SM hasn't typed over it.
+              unitCost: Number(r?.vendorRate) || pl.unitPrice,
               taxRate: Number(r?.taxRate) || 0,
               lineDiscount: Number(r?.lineDiscount) || 0,
               batchNo: r?.batchNo || undefined,
@@ -300,6 +309,7 @@ function PoLines({
     qtyDamaged: string;
     batchNo: string;
     note: string;
+    vendorRate: string;
     taxRate: string;
     lineDiscount: string;
   }>;
@@ -317,7 +327,8 @@ function PoLines({
               <th className="text-right p-2 w-20">Already</th>
               <th className="text-right p-2 w-24">Receiving</th>
               <th className="text-right p-2 w-20">Damaged</th>
-              <th className="text-right p-2 w-20">Rate (₹)</th>
+              <th className="text-right p-2 w-16">PO rate</th>
+              <th className="text-right p-2 w-24" title="Rate the vendor billed on the challan — double-matched against the PO rate">Vendor rate (₹)</th>
               <th className="text-right p-2 w-16">Tax %</th>
               <th className="text-right p-2 w-20">Disc (₹)</th>
               <th className="text-right p-2 w-24">Line total</th>
@@ -364,8 +375,32 @@ function PoLines({
                       className="h-8 w-20 text-right ml-auto"
                     />
                   </td>
-                  <td className="p-2 text-right text-xs text-muted-foreground">
+                  <td className="p-2 text-right text-xs text-muted-foreground tabular-nums">
                     {inr2(l.unitPrice)}
+                  </td>
+                  <td className="p-2 text-right">
+                    {(() => {
+                      const vendor = Number(r?.vendorRate);
+                      const mismatch = Number.isFinite(vendor) && Math.abs(vendor - l.unitPrice) > 0.005;
+                      return (
+                        <>
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={r?.vendorRate ?? ""}
+                            onChange={(e) => update(l.id, { vendorRate: e.target.value })}
+                            className={`h-8 w-24 text-right ml-auto tabular-nums ${mismatch ? "border-amber-400 bg-amber-50/40" : ""}`}
+                          />
+                          {mismatch && (
+                            <div className="text-[10px] text-amber-700 mt-0.5">
+                              {vendor > l.unitPrice ? "+" : ""}
+                              {inr2(vendor - l.unitPrice)} vs PO
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </td>
                   <td className="p-2 text-right">
                     <Input
@@ -392,7 +427,10 @@ function PoLines({
                   <td className="p-2 text-right text-xs tabular-nums">
                     {(() => {
                       const qty = Number(r?.qtyReceived) || 0;
-                      const rate = l.unitPrice;
+                      // Use the vendor-billed rate as the line basis — this is
+                      // the number that reaches GrnLine.unitCost and feeds the
+                      // FIFO StockBatch landed rate.
+                      const rate = Number(r?.vendorRate) || l.unitPrice;
                       const tax = qty * rate * (Number(r?.taxRate) || 0) / 100;
                       const disc = Number(r?.lineDiscount) || 0;
                       const total = qty * rate + tax - disc;
