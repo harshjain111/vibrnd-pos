@@ -1,13 +1,14 @@
 import { PageHeader } from "@/components/shell/page-header";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Empty } from "@/components/ui/empty";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { stockAtDepartment } from "@/lib/stock";
-import { Plus } from "lucide-react";
+import { fmtDate } from "@/lib/utils";
+import { ArrowLeftRight, Plus } from "lucide-react";
 import { NewTransferDialog, ReceiveBtn, PendingRequisitions } from "./client";
 
 export const dynamic = "force-dynamic";
@@ -121,7 +122,7 @@ export default async function TransfersPage() {
       <PendingRequisitions requisitions={pendingReqs} />
 
       {transfers.length === 0 ? (
-        <Card><CardContent><Empty title="No transfers yet" desc="Tap New transfer to send raw material to another outlet." /></CardContent></Card>
+        <Card><CardContent><Empty icon={ArrowLeftRight} title="No transfers yet" desc="Tap New transfer to send raw material to another outlet." /></CardContent></Card>
       ) : (
         <Card>
           <CardContent className="p-0 overflow-x-auto">
@@ -143,16 +144,14 @@ export default async function TransfersPage() {
                   return (
                     <TableRow key={t.id}>
                       <TableCell className="text-xs text-muted-foreground">
-                        {t.transferDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" })}
+                        {fmtDate(t.transferDate)}
                       </TableCell>
                       <TableCell className="font-medium">{t.sender.name}</TableCell>
                       <TableCell className="font-medium">{t.receiver.name}</TableCell>
                       <TableCell className="text-xs font-mono">{t.challanNo ?? t.id.slice(0, 8)}</TableCell>
                       <TableCell className="text-right text-muted-foreground">{t.lines.length}</TableCell>
                       <TableCell>
-                        <Badge variant={t.status === "RECEIVED" ? "success" : t.status === "SENT" ? "warning" : "secondary"} className="text-[10px]">
-                          {t.status}
-                        </Badge>
+                        <StatusBadge kind="transfer" status={t.status} className="text-[10px]" />
                       </TableCell>
                       <TableCell className="text-right">
                         {incoming && (

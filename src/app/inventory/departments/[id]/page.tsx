@@ -5,12 +5,15 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
+import { StatCard, StatGrid } from "@/components/ui/stat-card";
+import { FilterBar } from "@/components/ui/filter-bar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Plus, ChefHat, Sofa, Sparkles, Wrench } from "lucide-react";
+import { ArrowLeft, Plus, ChefHat, Sofa, Sparkles, Wrench, TrendingDown } from "lucide-react";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
 import { stockAtDepartment } from "@/lib/stock";
+import { inr, inr2, qtyUnit } from "@/lib/utils";
 import { RaiseGrnButton } from "./raise-grn";
 
 export const dynamic = "force-dynamic";
@@ -172,48 +175,36 @@ export default async function DepartmentStockPage({
         }
       />
 
-      {/* KPI strip */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+      {/* KPI strip — first tile keeps the department's signature colour. */}
+      <StatGrid cols={3} className="mb-4">
         <Card className={`border-2 ${meta.tone}`}>
-          <CardContent className="p-3 flex items-center gap-3">
+          <CardContent className="p-4 flex items-center gap-3">
             <Icon className="h-5 w-5 opacity-70" />
             <div>
               <div className="text-[10px] uppercase tracking-wider opacity-70">Items on hand</div>
-              <div className="text-2xl font-semibold leading-none mt-0.5">
-                {visibleNonZero.length}
-              </div>
+              <div className="text-2xl font-semibold leading-none mt-0.5">{visibleNonZero.length}</div>
             </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="p-3">
-            <div className="text-[10px] uppercase tracking-wider opacity-70">Stock value</div>
-            <div className="text-2xl font-semibold leading-none mt-0.5">
-              ₹{Math.round(totalValue).toLocaleString("en-IN")}
-            </div>
-            <div className="text-[10px] opacity-70 mt-1">at avg cost</div>
-          </CardContent>
-        </Card>
-        <Card className={lowItems > 0 ? "border-amber-300 bg-amber-50/40" : ""}>
-          <CardContent className="p-3">
-            <div className="text-[10px] uppercase tracking-wider opacity-70">Below par</div>
-            <div className={`text-2xl font-semibold leading-none mt-0.5 ${lowItems > 0 ? "text-amber-800" : ""}`}>
-              {lowItems}
-            </div>
-            <div className="text-[10px] opacity-70 mt-1">items short</div>
-          </CardContent>
-        </Card>
-      </div>
+        <StatCard label="Stock value" value={inr(Math.round(totalValue))} subline="at avg cost" />
+        <StatCard
+          label="Below par"
+          value={lowItems}
+          subline="items short"
+          tone={lowItems > 0 ? "warn" : "neutral"}
+          icon={<TrendingDown className="h-4 w-4" />}
+        />
+      </StatGrid>
 
       {/* Search */}
-      <form className="mb-3">
-        <input
-          name="q"
-          defaultValue={search}
-          placeholder="Search items…"
-          className="h-9 rounded-md border bg-background px-3 text-sm w-full md:w-80"
-        />
-      </form>
+      <FilterBar
+        action={`/inventory/departments/${dept.id}`}
+        searchName="q"
+        searchPlaceholder="Search items…"
+        searchDefault={search}
+        showClear={!!search}
+        className="mb-3"
+      />
 
       <Card>
         <CardContent className="p-0">
@@ -255,15 +246,14 @@ export default async function DepartmentStockPage({
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         <span className={low ? "text-amber-700 font-semibold" : ""}>
-                          {r.qtyAtDept.toFixed(2)}{" "}
-                          <span className="text-[10px] text-muted-foreground">{r.rm.unit}</span>
+                          {qtyUnit(r.qtyAtDept, r.rm.unit)}
                         </span>
                       </TableCell>
                       <TableCell className="text-right text-xs text-muted-foreground tabular-nums">
-                        ₹{r.rm.avgCost.toFixed(2)}
+                        {inr2(r.rm.avgCost)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums font-medium">
-                        ₹{Math.round(value).toLocaleString("en-IN")}
+                        {inr(Math.round(value))}
                       </TableCell>
                       <TableCell className="text-right text-xs text-muted-foreground tabular-nums">
                         {r.rm.parLevel}

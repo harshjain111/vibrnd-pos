@@ -5,9 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Empty } from "@/components/ui/empty";
+import { InlineAlert } from "@/components/ui/inline-alert";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { ChefHat, Plus, AlertTriangle } from "lucide-react";
+import { fmtDate } from "@/lib/utils";
+import { ChefHat, Plus, AlertTriangle, Factory } from "lucide-react";
 import { ProductionMasterDialog, DeleteMasterBtn, RunBtn } from "./client";
 
 export const dynamic = "force-dynamic";
@@ -52,41 +54,30 @@ export default async function ProductionPage() {
       />
 
       {!isBK && (
-        <Card className="mb-3 border-amber-300 bg-amber-50/50">
-          <CardContent className="p-3 flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-700 mt-0.5 shrink-0" />
-            <div>
-              <div className="font-semibold text-amber-900 text-sm">
-                Not a Base Kitchen
-              </div>
-              <div className="text-sm text-amber-800 mt-0.5">
-                This outlet's kind is <strong>{outletKind}</strong>. Production runs work
-                here but conceptually belong at a Base Kitchen — switch outlets via the
-                location switcher to a BK to run chain-level production. (Owner can also
-                promote this outlet's kind from <strong>/outlets</strong>.)
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <InlineAlert
+          tone="warn"
+          icon={<AlertTriangle className="h-4 w-4" />}
+          title="Not a Base Kitchen"
+          className="mb-3"
+        >
+          This outlet&apos;s kind is <strong>{outletKind}</strong>. Production runs work here but
+          conceptually belong at a Base Kitchen — switch outlets via the location switcher to a BK to
+          run chain-level production. (Owner can also promote this outlet&apos;s kind from{" "}
+          <strong>/outlets</strong>.)
+        </InlineAlert>
       )}
 
       {isBK && (
-        <Card className="mb-3 border-sky-300 bg-sky-50/50">
-          <CardContent className="p-3 flex items-start gap-2">
-            <ChefHat className="h-4 w-4 text-sky-700 mt-0.5 shrink-0" />
-            <div>
-              <div className="font-semibold text-sky-900 text-sm">
-                {outlet.name} — Base Kitchen
-              </div>
-              <div className="text-sm text-sky-800 mt-0.5">
-                Define a process master (recipe), then run batches. Each run consumes from
-                this BK's store, produces semi-finished goods that ship to outlets via
-                CHAIN transfers. Output cost = sum(input cost) ÷ output qty, rolled into
-                the produced raw material's avg cost.
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <InlineAlert
+          tone="info"
+          icon={<ChefHat className="h-4 w-4" />}
+          title={`${outlet.name} — Base Kitchen`}
+          className="mb-3"
+        >
+          Define a process master (recipe), then run batches. Each run consumes from this BK&apos;s
+          store, produces semi-finished goods that ship to outlets via CHAIN transfers. Output cost =
+          sum(input cost) ÷ output qty, rolled into the produced raw material&apos;s avg cost.
+        </InlineAlert>
       )}
       <Tabs defaultValue="masters">
         <TabsList>
@@ -96,7 +87,7 @@ export default async function ProductionPage() {
 
         <TabsContent value="masters">
           {masters.length === 0 ? (
-            <Card><CardContent><Empty title="No production processes" desc="Tap New process — define inputs and output." /></CardContent></Card>
+            <Card><CardContent><Empty icon={Factory} title="No production processes" desc="Tap New process — define inputs and output." /></CardContent></Card>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               {masters.map((m) => (
@@ -148,7 +139,7 @@ export default async function ProductionPage() {
 
         <TabsContent value="runs">
           {runs.length === 0 ? (
-            <Card><CardContent><Empty title="No runs yet" desc="Open a process and tap Execute to run a batch." /></CardContent></Card>
+            <Card><CardContent><Empty icon={Factory} title="No runs yet" desc="Open a process and tap Execute to run a batch." /></CardContent></Card>
           ) : (
             <Card>
               <CardContent className="p-0">
@@ -167,7 +158,7 @@ export default async function ProductionPage() {
                     {runs.map((r) => (
                       <TableRow key={r.id}>
                         <TableCell className="text-xs text-muted-foreground">
-                          {r.executedAt.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                          {fmtDate(r.executedAt, "datetime")}
                         </TableCell>
                         <TableCell className="font-medium">{r.master.name}</TableCell>
                         <TableCell className="text-right">{r.runQty}</TableCell>

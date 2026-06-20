@@ -2,16 +2,18 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/shell/page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { InlineAlert } from "@/components/ui/inline-alert";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Truck, Check, X, AlertCircle, ShoppingCart } from "lucide-react";
+import { ArrowLeft, Truck, X, ShoppingCart } from "lucide-react";
 import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
-import { requireUser, hasAtLeast } from "@/lib/rbac";
+import { requireUser } from "@/lib/rbac";
 import { getSessionUser } from "@/lib/session";
 import { canAccess } from "@/lib/permissions";
 import { stockAtDepartment } from "@/lib/stock";
+import { fmtDate } from "@/lib/utils";
 import { ReviewForm, CancelButton } from "./client";
 
 export const dynamic = "force-dynamic";
@@ -84,10 +86,7 @@ export default async function RequisitionDetailPage({
     <div>
       <PageHeader
         title={`Requisition · ${req.reqNo}`}
-        description={`Raised by ${userMap.get(req.requestedById ?? "") ?? "—"} from ${req.fromDepartment.name} on ${req.createdAt.toLocaleString(
-          "en-IN",
-          { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }
-        )}`}
+        description={`Raised by ${userMap.get(req.requestedById ?? "") ?? "—"} from ${req.fromDepartment.name} on ${fmtDate(req.createdAt, "datetime")}`}
         actions={
           <Button asChild variant="ghost" size="sm">
             <Link href="/inventory/requisitions">
@@ -102,11 +101,11 @@ export default async function RequisitionDetailPage({
         <CardContent className="p-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground uppercase tracking-wider">Status</span>
-            <StatusBadge status={req.status} />
+            <StatusBadge kind="requisition" status={req.status} />
             {req.reviewedById && (
               <span className="text-xs text-muted-foreground ml-2">
                 Reviewed by {userMap.get(req.reviewedById) ?? "—"}
-                {req.reviewedAt && ` · ${req.reviewedAt.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}`}
+                {req.reviewedAt && ` · ${fmtDate(req.reviewedAt, "datetime")}`}
               </span>
             )}
           </div>
@@ -132,35 +131,23 @@ export default async function RequisitionDetailPage({
 
       {/* Decline reason banner when applicable */}
       {req.status === "DECLINED" && req.declineReason && (
-        <Card className="mb-3 border-rose-300 bg-rose-50/50">
-          <CardContent className="p-3 flex items-start gap-2">
-            <X className="h-4 w-4 text-rose-700 mt-0.5 shrink-0" />
-            <div>
-              <div className="font-semibold text-rose-900 text-sm">Declined</div>
-              <div className="text-sm text-rose-800 mt-0.5">{req.declineReason}</div>
-            </div>
-          </CardContent>
-        </Card>
+        <InlineAlert tone="bad" icon={<X className="h-4 w-4" />} title="Declined" className="mb-3">
+          {req.declineReason}
+        </InlineAlert>
       )}
 
       {/* Fulfilment banner — dispatched (awaiting dept GRN) vs received */}
       {req.status === "FULFILLED" && req.transfer && (
-        <Card className="mb-3 border-emerald-300 bg-emerald-50/50">
-          <CardContent className="p-3 flex items-start gap-2">
-            <Truck className="h-4 w-4 text-emerald-700 mt-0.5 shrink-0" />
-            <div>
-              <div className="font-semibold text-emerald-900 text-sm">
-                {req.transfer.status === "RECEIVED" ? "Received" : "Dispatched"} via transfer{" "}
-                {req.transfer.challanNo ?? req.transfer.id}
-              </div>
-              <div className="text-sm text-emerald-800 mt-0.5">
-                {req.transfer.status === "RECEIVED"
-                  ? `Stock received into ${req.fromDepartment.name} from ${req.toDepartment.name}.`
-                  : `Stock dispatched from ${req.toDepartment.name}. Awaiting GRN at ${req.fromDepartment.name} (Raise GRN on the department page).`}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <InlineAlert
+          tone="good"
+          icon={<Truck className="h-4 w-4" />}
+          title={`${req.transfer.status === "RECEIVED" ? "Received" : "Dispatched"} via transfer ${req.transfer.challanNo ?? req.transfer.id}`}
+          className="mb-3"
+        >
+          {req.transfer.status === "RECEIVED"
+            ? `Stock received into ${req.fromDepartment.name} from ${req.toDepartment.name}.`
+            : `Stock dispatched from ${req.toDepartment.name}. Awaiting GRN at ${req.fromDepartment.name} (Raise GRN on the department page).`}
+        </InlineAlert>
       )}
 
       {/* Lines — either readonly or as a review form */}
@@ -239,22 +226,5 @@ export default async function RequisitionDetailPage({
         </Card>
       )}
     </div>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { variant: any; label: string }> = {
-    NEW: { variant: "warning", label: "Pending review" },
-    APPROVED: { variant: "success", label: "Approved" },
-    PARTIAL: { variant: "secondary", label: "Partially approved" },
-    DECLINED: { variant: "destructive", label: "Declined" },
-    FULFILLED: { variant: "success", label: "Fulfilled" },
-    CANCELLED: { variant: "outline", label: "Cancelled" },
-  };
-  const cfg = map[status] ?? { variant: "outline", label: status };
-  return (
-    <Badge variant={cfg.variant} className="text-[10px]">
-      {cfg.label}
-    </Badge>
   );
 }
