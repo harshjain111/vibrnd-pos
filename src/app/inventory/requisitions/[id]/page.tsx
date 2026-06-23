@@ -71,16 +71,13 @@ export default async function RequisitionDetailPage({
     onHand.set(l.rawMaterialId, await stockAtDepartment(l.rawMaterialId, req.toDepartmentId));
   }
 
-  // Show "Raise PO" whenever this req has any shortfall — covers NEW (uses
-  // requested qty) and APPROVED/PARTIAL (uses approved qty).
+  // "Raise PO for shortfall" appears only AFTER approval (APPROVED / PARTIAL)
+  // and only when the approved qty exceeds what the store holds.
   const canRaisePo =
     !!user &&
     canAccess(user.role, "inventory.requisitions.approve") &&
-    (req.status === "NEW" || req.status === "APPROVED" || req.status === "PARTIAL") &&
-    req.lines.some((l) => {
-      const want = req.status === "NEW" ? l.qtyRequested : l.qtyApproved;
-      return want > (onHand.get(l.rawMaterialId) ?? 0);
-    });
+    (req.status === "APPROVED" || req.status === "PARTIAL") &&
+    req.lines.some((l) => l.qtyApproved > (onHand.get(l.rawMaterialId) ?? 0));
 
   return (
     <div>

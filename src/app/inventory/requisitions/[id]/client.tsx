@@ -77,7 +77,6 @@ export function ReviewForm({
             <th className="text-right p-2 w-32">Requested</th>
             <th className="text-right p-2 w-32">In store</th>
             <th className="text-right p-2 w-32">Approve</th>
-            <th className="text-left p-2 w-64">Reason if reducing</th>
           </tr>
         </thead>
         <tbody>
@@ -85,7 +84,6 @@ export function ReviewForm({
             const row = state.find((r) => r.id === l.id)!;
             const approving = Number(row.qtyApproved) || 0;
             const insufficient = approving > l.onHandAtStore;
-            const reducing = approving > 0 && approving < l.qtyRequested;
             return (
               <tr key={l.id} className="border-b last:border-0">
                 <td className="p-2 font-medium">{l.name}</td>
@@ -109,14 +107,6 @@ export function ReviewForm({
                     value={row.qtyApproved}
                     onChange={(e) => setLine(l.id, { qtyApproved: e.target.value })}
                     className={`h-8 w-24 text-right ml-auto ${insufficient ? "border-rose-400" : ""}`}
-                  />
-                </td>
-                <td className="p-2">
-                  <Input
-                    value={row.declineReason}
-                    onChange={(e) => setLine(l.id, { declineReason: e.target.value })}
-                    placeholder={reducing ? "Required" : "Optional"}
-                    className={reducing && !row.declineReason ? "border-amber-400" : ""}
                   />
                 </td>
               </tr>

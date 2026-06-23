@@ -175,14 +175,11 @@ function ExpandedPanel({
 
   const isReviewable = canReview && row.status === "NEW";
   const isFulfillable = canReview && (row.status === "APPROVED" || row.status === "PARTIAL");
-  // Surface "Raise PO" whenever a store stock hint exists AND at least one line
-  // can't be covered. Lets the SM convert the shortfall into a vendor PO in
-  // one click — items prefill on the next page.
+  // "Raise PO" only appears AFTER approval (never during review) and only when
+  // the approved qty can't be covered by store stock — i.e. a real shortfall.
   const hasShortfall =
-    canReview &&
-    row.lines.some(
-      (l) => l.onHandAtStore !== null && Math.max(l.qtyApproved, l.qtyRequested) > l.onHandAtStore
-    );
+    isFulfillable &&
+    row.lines.some((l) => l.onHandAtStore !== null && l.qtyApproved > l.onHandAtStore);
 
   const submitReview = (declineAll: boolean) => {
     startTransition(async () => {
@@ -262,7 +259,6 @@ function ExpandedPanel({
               <th className="text-right p-2 font-medium w-28">
                 {isReviewable ? "Approve" : "Approved"}
               </th>
-              {isReviewable && <th className="text-left p-2 font-medium w-48">Reason if reducing</th>}
               {!isReviewable && row.lines.some((l) => l.declineReason) && (
                 <th className="text-left p-2 font-medium w-48">Reason</th>
               )}
@@ -274,7 +270,6 @@ function ExpandedPanel({
               const approving = Number(rowState?.qtyApproved) || 0;
               const insufficient =
                 isReviewable && l.onHandAtStore !== null && approving > l.onHandAtStore;
-              const reducing = isReviewable && approving > 0 && approving < l.qtyRequested;
               return (
                 <tr key={l.id} className="border-b last:border-0">
                   <td className="p-2 font-medium">{l.name}</td>
@@ -316,16 +311,6 @@ function ExpandedPanel({
                       </span>
                     )}
                   </td>
-                  {isReviewable && (
-                    <td className="p-2">
-                      <Input
-                        value={rowState.declineReason}
-                        onChange={(e) => setLine(l.id, { declineReason: e.target.value })}
-                        placeholder={reducing ? "Required" : "Optional"}
-                        className={`h-8 ${reducing && !rowState.declineReason ? "border-amber-400" : ""}`}
-                      />
-                    </td>
-                  )}
                   {!isReviewable && row.lines.some((l2) => l2.declineReason) && (
                     <td className="p-2 text-xs text-muted-foreground">{l.declineReason ?? "—"}</td>
                   )}

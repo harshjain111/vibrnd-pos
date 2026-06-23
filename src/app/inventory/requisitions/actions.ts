@@ -271,9 +271,7 @@ async function reviewRequisitionInner(input: z.infer<typeof ReviewInput>): Promi
     const orig = lineById.get(l.lineId);
     if (!orig) throw new Error("Line not found on this requisition");
     const qtyApproved = data.declineAll ? 0 : Math.min(l.qtyApproved, orig.qtyRequested);
-    if (qtyApproved > 0 && qtyApproved < orig.qtyRequested && !l.declineReason) {
-      throw new Error(`Reason required when partially approving ${orig.rawMaterialId}`);
-    }
+    // Per-line reason is no longer required when reducing a line.
     return { id: l.lineId, qtyApproved, declineReason: l.declineReason ?? null, qtyRequested: orig.qtyRequested };
   });
 
