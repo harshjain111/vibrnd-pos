@@ -678,3 +678,216 @@ async function receiveInternalTransferInner(fd: FormData): Promise<ActionResult>
   if (transfer.toDepartmentId) revalidatePath(`/inventory/departments/${transfer.toDepartmentId}`);
   return { ok: true };
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Dispatch with explicit per-line quantities (Transfers page).
+ *
+ * The Store Manager picks one or more APPROVED/PARTIAL internal requisitions
+ * and enters how much of each item to actually send (pre-filled but editable).
+ * Each requisition becomes ONE internal SENT transfer (store → requesting
+ * dept) and is marked FULFILLED. Optional "extra items" (not on any
+ * requisition) go out as a single ad-hoc transfer to a chosen department.
+ * Store stock drops now; the department's stock rises when it raises a GRN.
+ * ────────────────────────────────────────────────────────────────────────── */
+const DispatchReqInput = z.object({
+  requisitionId: z.string(),
+  lines: z.array(z.object({ rawMaterialId: z.string(), qty: z.coerce.number().nonnegative() })).min(1),
+});
+const DispatchInput = z.object({
+  requisitions: z.array(DispatchReqInput).default([]),
+  adhoc: z
+    .object({
+      toDepartmentId: z.string(),
+      lines: z
+        .array(z.object({ rawMaterialId: z.string(), qty: z.coerce.number().positive(), unit: z.string().min(1) }))
+        .default([]),
+    })
+    .optional(),
+});
+
+export async function dispatchRequisitions(input: z.input<typeof DispatchInput>): Promise<ActionResult> {
+  try {
+    return await dispatchRequisitionsInner(input);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function dispatchRequisitionsInner(input: z.input<typeof DispatchInput>): Promise<ActionResult> {
+  const user = await requireInventoryOps();
+  const data = DispatchInput.parse(input);
+  const outlet = await getActiveOutlet();
+
+  const store = await db.department.findFirst({
+    where: { outletId: outlet.id, kind: "STORE", active: true },
+  });
+  if (!store) throw new Error("No STORE department for this outlet");
+
+  const hasAdhoc = !!data.adhoc && data.adhoc.lines.length > 0;
+  if (data.requisitions.length === 0 && !hasAdhoc) {
+    throw new Error("Pick at least one requisition (or add an item) to transfer");
+  }
+
+  let challanSeq = await db.transfer.count({ where: { senderOutletId: outlet.id } });
+  let dispatched = 0;
+
+  // Requisitions are processed sequentially so two requisitions wanting the
+  // same item respect the *running* store availability (each send reduces it).
+  for (const entry of data.requisitions) {
+    const req = await db.requisition.findFirst({
+      where: { id: entry.requisitionId, outletId: outlet.id },
+      include: { lines: { include: { rawMaterial: true } }, transfer: true, fromDepartment: true, toDepartment: true },
+    });
+    if (!req) throw new Error("Requisition not found");
+    if (req.status !== "APPROVED" && req.status !== "PARTIAL") {
+      throw new Error(`${req.reqNo} is ${req.status.toLowerCase()} — only approved requisitions can be transferred`);
+    }
+    if (req.transfer) throw new Error(`${req.reqNo} has already been transferred`);
+    if (req.fromDepartment.outletId !== req.toDepartment.outletId) {
+      throw new Error(`${req.reqNo} is a chain requisition — dispatch it from the chain flow`);
+    }
+
+    const lineByRm = new Map(req.lines.map((l) => [l.rawMaterialId, l]));
+    const toSend: { rawMaterialId: string; qty: number; unit: string; name: string }[] = [];
+    for (const l of entry.lines) {
+      if (l.qty <= 0) continue;
+      const rl = lineByRm.get(l.rawMaterialId);
+      if (!rl) throw new Error(`An item isn't on ${req.reqNo}`);
+      if (l.qty > rl.qtyApproved + 0.001) {
+        throw new Error(`${rl.rawMaterial.name}: ${l.qty} exceeds approved ${rl.qtyApproved} on ${req.reqNo}`);
+      }
+      const avail = await stockAtDepartment(l.rawMaterialId, store.id);
+      if (l.qty > avail + 0.001) {
+        throw new Error(`${rl.rawMaterial.name}: ${l.qty} exceeds store stock ${avail.toFixed(2)}`);
+      }
+      toSend.push({ rawMaterialId: l.rawMaterialId, qty: l.qty, unit: rl.unit, name: rl.rawMaterial.name });
+    }
+    if (toSend.length === 0) throw new Error(`${req.reqNo}: enter a quantity for at least one item`);
+
+    const challanNo = `${req.reqNo}-T`;
+    await db.$transaction(async (tx) => {
+      await tx.transfer.create({
+        data: {
+          challanNo,
+          transferDate: new Date(),
+          status: "SENT",
+          senderOutletId: outlet.id,
+          receiverOutletId: outlet.id,
+          fromDepartmentId: req.toDepartmentId,
+          toDepartmentId: req.fromDepartmentId,
+          kind: "INTERNAL",
+          requisitionId: req.id,
+          sentById: user.id,
+          notes: `Dispatch of ${req.reqNo} — awaiting GRN at requesting department`,
+          lines: {
+            create: toSend.map((d) => ({
+              rawMaterialId: d.rawMaterialId,
+              qtySent: d.qty,
+              qtyReceived: 0,
+              unit: d.unit,
+              priceAtTransfer: 0,
+            })),
+          },
+        },
+      });
+      await tx.requisition.update({ where: { id: req.id }, data: { status: "FULFILLED" } });
+    });
+    await Promise.all(
+      toSend.map((d) =>
+        postInternalTransferSend({
+          rawMaterialId: d.rawMaterialId,
+          qty: d.qty,
+          fromDepartmentId: req.toDepartmentId,
+          refType: "Requisition",
+          refId: req.id,
+          note: `${req.reqNo} dispatch`,
+        })
+      )
+    );
+    if (req.requestedById) {
+      await db.notification.create({
+        data: {
+          outletId: outlet.id,
+          kind: "INFO",
+          title: `Requisition ${req.reqNo} dispatched`,
+          body: `Stock dispatched from store. Receive it via "Raise GRN" on your department page.`,
+          link: `/inventory/requisitions/${req.id}`,
+        },
+      });
+    }
+    await logActivity({
+      action: "UPDATE",
+      entity: "RawMaterial",
+      entityId: req.id,
+      summary: `Requisition ${req.reqNo} dispatched — ${toSend.length} item(s)`,
+      outletId: outlet.id,
+    });
+    dispatched++;
+  }
+
+  // Ad-hoc extra items (not tied to a requisition) → one transfer to the dept.
+  if (hasAdhoc) {
+    const dept = await db.department.findFirst({
+      where: { id: data.adhoc!.toDepartmentId, outletId: outlet.id, active: true },
+    });
+    if (!dept) throw new Error("Extra-items destination department not found");
+    if (dept.kind === "STORE") throw new Error("Extra items must go to a non-store department");
+
+    const adhocSend: { rawMaterialId: string; qty: number; unit: string }[] = [];
+    for (const l of data.adhoc!.lines) {
+      if (l.qty <= 0) continue;
+      const avail = await stockAtDepartment(l.rawMaterialId, store.id);
+      if (l.qty > avail + 0.001) {
+        const rm = await db.rawMaterial.findUnique({ where: { id: l.rawMaterialId }, select: { name: true } });
+        throw new Error(`${rm?.name ?? "Item"}: ${l.qty} exceeds store stock ${avail.toFixed(2)}`);
+      }
+      adhocSend.push({ rawMaterialId: l.rawMaterialId, qty: l.qty, unit: l.unit });
+    }
+    if (adhocSend.length > 0) {
+      const challanNo = `XFER-${outlet.code}-${String(challanSeq + 1).padStart(6, "0")}`;
+      challanSeq++;
+      await db.transfer.create({
+        data: {
+          challanNo,
+          transferDate: new Date(),
+          status: "SENT",
+          senderOutletId: outlet.id,
+          receiverOutletId: outlet.id,
+          fromDepartmentId: store.id,
+          toDepartmentId: dept.id,
+          kind: "INTERNAL",
+          sentById: user.id,
+          notes: `Ad-hoc transfer to ${dept.name}`,
+          lines: {
+            create: adhocSend.map((d) => ({
+              rawMaterialId: d.rawMaterialId,
+              qtySent: d.qty,
+              qtyReceived: 0,
+              unit: d.unit,
+              priceAtTransfer: 0,
+            })),
+          },
+        },
+      });
+      await Promise.all(
+        adhocSend.map((d) =>
+          postInternalTransferSend({
+            rawMaterialId: d.rawMaterialId,
+            qty: d.qty,
+            fromDepartmentId: store.id,
+            refType: "Transfer",
+            refId: challanNo,
+            note: `Ad-hoc dispatch to ${dept.name}`,
+          })
+        )
+      );
+      dispatched++;
+    }
+  }
+
+  revalidatePath("/inventory/transfers");
+  revalidatePath("/inventory/requisitions");
+  revalidatePath("/inventory/dashboard");
+  revalidatePath("/inventory/available");
+  return { ok: true };
+}

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty } from "@/components/ui/empty";
 import {
   Dialog,
   DialogContent,
@@ -19,60 +20,239 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import { ClipboardList, Plus, Trash2, Truck, ShoppingCart, AlertTriangle } from "lucide-react";
 import { createTransfer, receiveTransfer } from "./actions";
-import { fulfilRequisition } from "../requisitions/actions";
+import { fulfilRequisition, dispatchRequisitions } from "../requisitions/actions";
 
+/* ── shared types passed from the server page ──────────────────────────── */
+export type PendingReqLine = {
+  rawMaterialId: string;
+  name: string;
+  unit: string;
+  approved: number;
+  available: number;
+};
 export type PendingReq = {
   id: string;
   reqNo: string;
+  requesterDeptId: string;
   requesterDeptName: string;
-  lines: { name: string; unit: string; approved: number; available: number }[];
+  lines: PendingReqLine[];
   hasShortfall: boolean;
   canTransfer: boolean;
 };
+export type StoreItem = { id: string; name: string; unit: string; available: number };
 
-/**
- * Approved internal requisitions waiting for the Store Manager to dispatch.
- * Shows approved-vs-available per line so the shortfall is visible up front.
- * "Transfer" dispatches as much as the store holds (partial allowed); the
- * remainder is covered by a PO via "Raise PO for shortfall".
- */
-export function PendingRequisitions({ requisitions }: { requisitions: PendingReq[] }) {
+/* ── editable-line state used by both dispatch dialogs ─────────────────── */
+type ExtraLine = { key: string; rawMaterialId: string; qty: string };
+const newExtra = (): ExtraLine => ({ key: Math.random().toString(36).slice(2), rawMaterialId: "", qty: "" });
+
+function ExtraItemsEditor({
+  storeItems,
+  excludeIds,
+  extras,
+  setExtras,
+}: {
+  storeItems: StoreItem[];
+  excludeIds: Set<string>;
+  extras: ExtraLine[];
+  setExtras: React.Dispatch<React.SetStateAction<ExtraLine[]>>;
+}) {
+  const byId = React.useMemo(() => new Map(storeItems.map((s) => [s.id, s])), [storeItems]);
+  const options = storeItems.filter((s) => !excludeIds.has(s.id) && s.available > 0);
+  const update = (key: string, patch: Partial<ExtraLine>) =>
+    setExtras((arr) => arr.map((e) => (e.key === key ? { ...e, ...patch } : e)));
+  return (
+    <div className="space-y-1.5">
+      {extras.map((e) => {
+        const item = e.rawMaterialId ? byId.get(e.rawMaterialId) : null;
+        const over = item && Number(e.qty) > item.available + 0.001;
+        return (
+          <div key={e.key} className="flex items-end gap-2">
+            <select
+              value={e.rawMaterialId}
+              onChange={(ev) => update(e.key, { rawMaterialId: ev.target.value })}
+              className="h-8 flex-1 rounded-md border bg-background px-2 text-xs"
+            >
+              <option value="">Add an item…</option>
+              {options.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name} ({o.available} {o.unit})
+                </option>
+              ))}
+              {/* keep the currently-picked item visible even if filtered */}
+              {item && excludeIds.has(item.id) && <option value={item.id}>{item.name}</option>}
+            </select>
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              value={e.qty}
+              onChange={(ev) => update(e.key, { qty: ev.target.value })}
+              className={`h-8 w-24 text-right ${over ? "border-rose-500" : ""}`}
+              placeholder="qty"
+            />
+            <span className="text-[10px] text-muted-foreground w-8">{item?.unit ?? ""}</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-rose-600"
+              onClick={() => setExtras((arr) => arr.filter((x) => x.key !== e.key))}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        );
+      })}
+      <Button type="button" variant="outline" size="sm" onClick={() => setExtras((arr) => [...arr, newExtra()])}>
+        <Plus className="h-3.5 w-3.5" /> Add extra item
+      </Button>
+    </div>
+  );
+}
+
+/* ── 1) Single-requisition transfer dialog (per-line qty + extras) ─────── */
+function TransferReqDialog({ req, storeItems }: { req: PendingReq; storeItems: StoreItem[] }) {
   const router = useRouter();
   const { toast } = useToast();
-  const [pendingId, setPendingId] = React.useState<string | null>(null);
+  const [open, setOpen] = React.useState(false);
+  const [pending, startTransition] = React.useTransition();
+  const [qty, setQty] = React.useState<Record<string, string>>({});
+  const [extras, setExtras] = React.useState<ExtraLine[]>([]);
 
-  if (requisitions.length === 0) return null;
+  // Pre-fill each line with min(approved, available).
+  React.useEffect(() => {
+    if (!open) return;
+    setQty(Object.fromEntries(req.lines.map((l) => [l.rawMaterialId, String(Math.max(0, Math.min(l.approved, l.available)))])));
+    setExtras([]);
+  }, [open, req]);
 
-  const transfer = (req: PendingReq) => {
-    const fd = new FormData();
-    fd.set("id", req.id);
-    setPendingId(req.id);
-    (async () => {
-      const res = await fulfilRequisition(fd);
-      setPendingId(null);
+  const reqRmIds = React.useMemo(() => new Set(req.lines.map((l) => l.rawMaterialId)), [req]);
+
+  const submit = () => {
+    const lines = req.lines
+      .map((l) => ({ rawMaterialId: l.rawMaterialId, qty: Number(qty[l.rawMaterialId]) || 0 }))
+      .filter((l) => l.qty > 0);
+    const adhocLines = extras
+      .filter((e) => e.rawMaterialId && Number(e.qty) > 0)
+      .map((e) => {
+        const s = storeItems.find((x) => x.id === e.rawMaterialId)!;
+        return { rawMaterialId: e.rawMaterialId, qty: Number(e.qty), unit: s.unit };
+      });
+    if (lines.length === 0 && adhocLines.length === 0) {
+      return toast({ variant: "destructive", title: "Enter a quantity for at least one item" });
+    }
+    startTransition(async () => {
+      const res = await dispatchRequisitions({
+        requisitions: lines.length ? [{ requisitionId: req.id, lines }] : [],
+        adhoc: adhocLines.length ? { toDepartmentId: req.requesterDeptId, lines: adhocLines } : undefined,
+      });
       if (!res.ok) {
         toast({ variant: "destructive", title: "Couldn't transfer", description: res.error });
         return;
       }
-      toast({
-        variant: "success",
-        title: `Dispatched ${req.reqNo}`,
-        description: "The department receives it via Raise GRN.",
-      });
+      toast({ variant: "success", title: `Transferred ${req.reqNo}`, description: "Department receives it via Raise GRN." });
+      setOpen(false);
       router.refresh();
-    })();
+    });
   };
 
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" disabled={!req.canTransfer} title={req.canTransfer ? "Enter quantities to transfer" : "Nothing in store to transfer"}>
+          <Truck className="h-4 w-4" />
+          Transfer
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Transfer {req.reqNo} → {req.requesterDeptName}</DialogTitle>
+          <DialogDescription>
+            Quantities are pre-filled with what the store can cover. Edit any line, then transfer. The
+            department receives it via Raise GRN; this marks the requisition transferred.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="rounded-md border overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40">
+              <tr>
+                <th className="text-left p-2">Item</th>
+                <th className="text-right p-2 w-24">Approved</th>
+                <th className="text-right p-2 w-24">In store</th>
+                <th className="text-right p-2 w-28">Transfer</th>
+              </tr>
+            </thead>
+            <tbody>
+              {req.lines.map((l) => {
+                const v = Number(qty[l.rawMaterialId]) || 0;
+                const over = v > Math.min(l.approved, l.available) + 0.001;
+                return (
+                  <tr key={l.rawMaterialId} className="border-t">
+                    <td className="p-2 font-medium">{l.name}</td>
+                    <td className="p-2 text-right text-muted-foreground tabular-nums">{l.approved} {l.unit}</td>
+                    <td className={`p-2 text-right tabular-nums ${l.available < l.approved ? "text-rose-700 font-semibold" : "text-muted-foreground"}`}>
+                      {l.available} {l.unit}
+                    </td>
+                    <td className="p-2 text-right">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={qty[l.rawMaterialId] ?? ""}
+                        onChange={(e) => setQty((q) => ({ ...q, [l.rawMaterialId]: e.target.value }))}
+                        className={`h-8 w-24 text-right ml-auto ${over ? "border-rose-500" : ""}`}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <Label className="text-xs">Extra items (optional) → {req.requesterDeptName}</Label>
+          <div className="mt-1">
+            <ExtraItemsEditor storeItems={storeItems} excludeIds={reqRmIds} extras={extras} setExtras={setExtras} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button type="button" onClick={submit} disabled={pending}>
+            <Truck className="h-4 w-4" />
+            {pending ? "Transferring…" : "Transfer"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── pending-requisitions section on the transfers page ────────────────── */
+export function PendingRequisitions({
+  requisitions,
+  storeItems,
+}: {
+  requisitions: PendingReq[];
+  storeItems: StoreItem[];
+}) {
+  if (requisitions.length === 0) {
+    return (
+      <Card className="mb-4">
+        <CardContent>
+          <Empty icon={ClipboardList} title="No pending requisitions" desc="Approved requisitions waiting to be dispatched show up here." />
+        </CardContent>
+      </Card>
+    );
+  }
   return (
     <Card className="mb-4 border-sky-200">
       <CardHeader className="pb-2">
         <CardTitle className="text-base flex items-center gap-1.5">
           <ClipboardList className="h-4 w-4 text-sky-700" />
-          Pending requisitions
+          Pending requisitions ({requisitions.length})
         </CardTitle>
         <CardDescription>
-          Approved requests awaiting dispatch. Transfer moves only what the store currently
-          holds — raise a PO for any shortfall.
+          Approved requests awaiting dispatch. Click Transfer to enter quantities per item; raise a PO for any shortfall.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -97,15 +277,7 @@ export function PendingRequisitions({ requisitions }: { requisitions: PendingReq
                     </Link>
                   </Button>
                 )}
-                <Button
-                  size="sm"
-                  onClick={() => transfer(r)}
-                  disabled={!r.canTransfer || pendingId === r.id}
-                  title={r.canTransfer ? "Dispatch available stock" : "Nothing in store to transfer"}
-                >
-                  <Truck className="h-4 w-4" />
-                  {pendingId === r.id ? "Transferring…" : "Transfer"}
-                </Button>
+                <TransferReqDialog req={r} storeItems={storeItems} />
               </div>
             </div>
             <table className="w-full text-sm">
@@ -114,24 +286,17 @@ export function PendingRequisitions({ requisitions }: { requisitions: PendingReq
                   <th className="text-left font-medium py-1">Item</th>
                   <th className="text-right font-medium py-1 w-28">Approved</th>
                   <th className="text-right font-medium py-1 w-28">In store</th>
-                  <th className="text-right font-medium py-1 w-28">Will send</th>
                 </tr>
               </thead>
               <tbody>
-                {r.lines.map((l, i) => {
-                  const willSend = Math.max(0, Math.min(l.approved, l.available));
+                {r.lines.map((l) => {
                   const short = l.available < l.approved;
                   return (
-                    <tr key={i} className="border-b last:border-0">
+                    <tr key={l.rawMaterialId} className="border-b last:border-0">
                       <td className="py-1 font-medium">{l.name}</td>
-                      <td className="py-1 text-right text-muted-foreground tabular-nums">
-                        {l.approved} {l.unit}
-                      </td>
+                      <td className="py-1 text-right text-muted-foreground tabular-nums">{l.approved} {l.unit}</td>
                       <td className={`py-1 text-right tabular-nums ${short ? "text-rose-700 font-semibold" : "text-muted-foreground"}`}>
                         {l.available} {l.unit}
-                      </td>
-                      <td className="py-1 text-right tabular-nums font-medium">
-                        {willSend} {l.unit}
                       </td>
                     </tr>
                   );
@@ -145,9 +310,192 @@ export function PendingRequisitions({ requisitions }: { requisitions: PendingReq
   );
 }
 
+/* ── 2) Combined multi-requisition transfer dialog ─────────────────────── */
+export function CombinedTransferDialog({
+  children,
+  requisitions,
+  storeItems,
+  departments,
+}: {
+  children: React.ReactNode;
+  requisitions: PendingReq[];
+  storeItems: StoreItem[];
+  departments: { id: string; name: string }[];
+}) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [open, setOpen] = React.useState(false);
+  const [pending, startTransition] = React.useTransition();
+  const [picked, setPicked] = React.useState<Set<string>>(new Set());
+  // qty keyed by `${reqId}:${rawMaterialId}`
+  const [qty, setQty] = React.useState<Record<string, string>>({});
+  const [extras, setExtras] = React.useState<ExtraLine[]>([]);
+  const [extraDeptId, setExtraDeptId] = React.useState<string>(departments[0]?.id ?? "");
+
+  const reset = () => {
+    setPicked(new Set());
+    setQty({});
+    setExtras([]);
+  };
+
+  const toggle = (req: PendingReq) =>
+    setPicked((s) => {
+      const next = new Set(s);
+      if (next.has(req.id)) {
+        next.delete(req.id);
+      } else {
+        next.add(req.id);
+        // pre-fill its lines
+        setQty((q) => {
+          const nq = { ...q };
+          for (const l of req.lines) nq[`${req.id}:${l.rawMaterialId}`] = String(Math.max(0, Math.min(l.approved, l.available)));
+          return nq;
+        });
+      }
+      return next;
+    });
+
+  const pickedReqs = requisitions.filter((r) => picked.has(r.id));
+
+  const submit = () => {
+    const reqPayload = pickedReqs
+      .map((r) => ({
+        requisitionId: r.id,
+        lines: r.lines
+          .map((l) => ({ rawMaterialId: l.rawMaterialId, qty: Number(qty[`${r.id}:${l.rawMaterialId}`]) || 0 }))
+          .filter((l) => l.qty > 0),
+      }))
+      .filter((r) => r.lines.length > 0);
+    const adhocLines = extras
+      .filter((e) => e.rawMaterialId && Number(e.qty) > 0)
+      .map((e) => {
+        const s = storeItems.find((x) => x.id === e.rawMaterialId)!;
+        return { rawMaterialId: e.rawMaterialId, qty: Number(e.qty), unit: s.unit };
+      });
+    if (reqPayload.length === 0 && adhocLines.length === 0) {
+      return toast({ variant: "destructive", title: "Select at least one requisition (or add an item)" });
+    }
+    if (adhocLines.length > 0 && !extraDeptId) {
+      return toast({ variant: "destructive", title: "Pick a department for the extra items" });
+    }
+    startTransition(async () => {
+      const res = await dispatchRequisitions({
+        requisitions: reqPayload,
+        adhoc: adhocLines.length ? { toDepartmentId: extraDeptId, lines: adhocLines } : undefined,
+      });
+      if (!res.ok) {
+        toast({ variant: "destructive", title: "Couldn't transfer", description: res.error });
+        return;
+      }
+      toast({ variant: "success", title: "Transfer dispatched", description: `${reqPayload.length} requisition(s) marked transferred.` });
+      setOpen(false);
+      reset();
+      router.refresh();
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset(); }}>
+      <DialogTrigger asChild>{children}</DialogTrigger>
+      <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>New transfer — combine requisitions</DialogTitle>
+          <DialogDescription>
+            Tick the requisitions to fulfil. Their items load with editable quantities; reduce or add
+            extra items as needed. Each selected requisition is dispatched and marked transferred.
+          </DialogDescription>
+        </DialogHeader>
+
+        {requisitions.length === 0 ? (
+          <Empty icon={ClipboardList} title="No approved requisitions" desc="Approve a requisition first, then combine and transfer here." />
+        ) : (
+          <div className="space-y-3">
+            {requisitions.map((r) => {
+              const isPicked = picked.has(r.id);
+              return (
+                <div key={r.id} className={`rounded-md border ${isPicked ? "border-sky-300 bg-sky-50/30" : ""}`}>
+                  <label className="flex items-center gap-2 p-2 cursor-pointer">
+                    <input type="checkbox" checked={isPicked} onChange={() => toggle(r)} className="h-4 w-4" />
+                    <span className="font-mono text-xs font-medium">{r.reqNo}</span>
+                    <span className="text-xs text-muted-foreground">· {r.requesterDeptName} · {r.lines.length} item(s)</span>
+                    {r.hasShortfall && <Badge variant="warning" className="text-[9px] ml-auto"><AlertTriangle className="h-3 w-3" /> short</Badge>}
+                  </label>
+                  {isPicked && (
+                    <table className="w-full text-sm border-t">
+                      <thead className="bg-muted/40 text-xs text-muted-foreground">
+                        <tr>
+                          <th className="text-left p-2">Item</th>
+                          <th className="text-right p-2 w-24">Approved</th>
+                          <th className="text-right p-2 w-24">In store</th>
+                          <th className="text-right p-2 w-28">Transfer</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {r.lines.map((l) => {
+                          const k = `${r.id}:${l.rawMaterialId}`;
+                          const v = Number(qty[k]) || 0;
+                          const over = v > Math.min(l.approved, l.available) + 0.001;
+                          return (
+                            <tr key={l.rawMaterialId} className="border-t">
+                              <td className="p-2">{l.name}</td>
+                              <td className="p-2 text-right text-muted-foreground tabular-nums">{l.approved} {l.unit}</td>
+                              <td className={`p-2 text-right tabular-nums ${l.available < l.approved ? "text-rose-700" : "text-muted-foreground"}`}>{l.available} {l.unit}</td>
+                              <td className="p-2 text-right">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={qty[k] ?? ""}
+                                  onChange={(e) => setQty((q) => ({ ...q, [k]: e.target.value }))}
+                                  className={`h-8 w-24 text-right ml-auto ${over ? "border-rose-500" : ""}`}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* extra items */}
+            <div className="rounded-md border p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label className="text-xs">Extra items (not on a requisition)</Label>
+                {departments.length > 0 && (
+                  <select
+                    value={extraDeptId}
+                    onChange={(e) => setExtraDeptId(e.target.value)}
+                    className="h-8 rounded-md border bg-background px-2 text-xs"
+                  >
+                    {departments.map((d) => (
+                      <option key={d.id} value={d.id}>to {d.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              <ExtraItemsEditor storeItems={storeItems} excludeIds={new Set()} extras={extras} setExtras={setExtras} />
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button type="button" onClick={submit} disabled={pending || requisitions.length === 0}>
+            <Truck className="h-4 w-4" />
+            {pending ? "Transferring…" : `Transfer ${pickedReqs.length || ""}`.trim()}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ── chain / ad-hoc cross-outlet transfer (unchanged behaviour) ────────── */
 type Outlet = { id: string; name: string };
 type RM = { id: string; name: string; unit: string; price: number };
-
 type Line = { rawMaterialId: string; qty: number; unit: string; priceAtTransfer: number };
 
 export type ReqOption = {
@@ -171,8 +519,6 @@ export function NewTransferDialog({
   outlets: Outlet[];
   rawMaterials: RM[];
   units: string[];
-  /** Approved/partial requisitions this outlet can supply. When picked,
-   *  lines auto-fill and the destination is locked to the requester. */
   requisitions?: ReqOption[];
 }) {
   const router = useRouter();
@@ -187,41 +533,23 @@ export function NewTransferDialog({
   const [pending, startTransition] = React.useTransition();
 
   const rmMap = React.useMemo(() => new Map(rawMaterials.map((r) => [r.id, r])), [rawMaterials]);
-  const reqById = React.useMemo(
-    () => new Map((requisitions ?? []).map((r) => [r.id, r])),
-    [requisitions]
-  );
+  const reqById = React.useMemo(() => new Map((requisitions ?? []).map((r) => [r.id, r])), [requisitions]);
   const pickedReq = pickedReqId ? reqById.get(pickedReqId) : null;
   const fromReq = !!pickedReq;
 
   const updateLine = (i: number, patch: Partial<Line>) =>
     setLines((arr) => arr.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
-
   const onSelectRm = (i: number, id: string) => {
     const rm = rmMap.get(id);
     updateLine(i, { rawMaterialId: id, unit: rm?.unit ?? "", priceAtTransfer: rm?.price ?? 0 });
   };
-
   const addLine = () => setLines((arr) => [...arr, { rawMaterialId: "", qty: 0, unit: "", priceAtTransfer: 0 }]);
   const removeLine = (i: number) => setLines((arr) => (arr.length === 1 ? arr : arr.filter((_, idx) => idx !== i)));
 
-  // When the user picks a requisition, prefill lines + lock the receiver.
-  // Lines from requisitions reference the REQUESTER's raw-material ids; we
-  // can't map them to local RM ids cleanly without a name match, so we keep
-  // the lines display-only (no need to edit — they've been reviewed already).
   React.useEffect(() => {
     if (!pickedReq) return;
-    setLines(
-      pickedReq.lines.map((l) => ({
-        rawMaterialId: l.rawMaterialId,
-        qty: l.qty,
-        unit: l.unit,
-        priceAtTransfer: 0,
-      }))
-    );
-    if (pickedReq.kind === "CHAIN") {
-      setReceiverOutletId(pickedReq.requesterOutletId);
-    }
+    setLines(pickedReq.lines.map((l) => ({ rawMaterialId: l.rawMaterialId, qty: l.qty, unit: l.unit, priceAtTransfer: 0 })));
+    setReceiverOutletId(pickedReq.requesterOutletId);
     setChallanNo(`${pickedReq.reqNo}-T`);
   }, [pickedReq]);
 
@@ -233,9 +561,6 @@ export function NewTransferDialog({
   };
 
   const submit = () => {
-    // Fulfilling a requisition — delegate to fulfilRequisition which handles
-    // both INTERNAL (same outlet, dept→dept) and CHAIN (cross-outlet w/
-    // markup) modes + stamps the link back on the resulting transfer row.
     if (pickedReq) {
       const fd = new FormData();
       fd.set("id", pickedReq.id);
@@ -252,15 +577,9 @@ export function NewTransferDialog({
       });
       return;
     }
-
-    // Ad-hoc cross-outlet transfer — the original path.
-    if (!receiverOutletId) {
-      toast({ variant: "destructive", title: "Pick a receiving outlet" });
-      return;
-    }
+    if (!receiverOutletId) return toast({ variant: "destructive", title: "Pick a receiving outlet" });
     if (lines.some((l) => !l.rawMaterialId || l.qty <= 0)) {
-      toast({ variant: "destructive", title: "Each line needs an RM and qty > 0" });
-      return;
+      return toast({ variant: "destructive", title: "Each line needs an RM and qty > 0" });
     }
     startTransition(async () => {
       try {
@@ -269,12 +588,7 @@ export function NewTransferDialog({
           challanNo: challanNo || undefined,
           transferDate,
           notes: notes || undefined,
-          lines: lines.map((l) => ({
-            rawMaterialId: l.rawMaterialId,
-            qty: l.qty,
-            unit: l.unit,
-            priceAtTransfer: l.priceAtTransfer,
-          })),
+          lines: lines.map((l) => ({ rawMaterialId: l.rawMaterialId, qty: l.qty, unit: l.unit, priceAtTransfer: l.priceAtTransfer })),
         });
         toast({ variant: "success", title: "Transfer sent" });
         setOpen(false);
@@ -287,89 +601,40 @@ export function NewTransferDialog({
   };
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        setOpen(o);
-        if (!o) resetForm();
-      }}
-    >
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) resetForm(); }}>
       <DialogTrigger asChild>{children}</DialogTrigger>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>New transfer</DialogTitle>
+          <DialogTitle>Send to another outlet</DialogTitle>
           <DialogDescription>
-            Pick an approved requisition to auto-fill, or send raw materials ad-hoc to
-            another outlet. Sender stock decrements on save.
+            Fulfil a chain requisition or send raw materials ad-hoc to another outlet. Sender stock decrements on save.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          {/* Requisition picker — top of the form so the user sees it first */}
           {requisitions && requisitions.length > 0 && (
             <div className="rounded-md border-2 border-sky-200 bg-sky-50/40 p-3 space-y-2">
               <Label className="flex items-center gap-1.5 text-sky-900">
                 <ClipboardList className="h-3.5 w-3.5" />
-                From requisition (optional)
+                From chain requisition (optional)
               </Label>
-              <select
-                value={pickedReqId}
-                onChange={(e) => setPickedReqId(e.target.value)}
-                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-              >
+              <select value={pickedReqId} onChange={(e) => setPickedReqId(e.target.value)} className="h-9 w-full rounded-md border bg-background px-3 text-sm">
                 <option value="">— Ad-hoc transfer (no requisition) —</option>
                 {requisitions.map((r) => (
                   <option key={r.id} value={r.id}>
-                    {r.reqNo} · {r.requesterDeptName}
-                    {r.kind === "CHAIN" ? ` @ ${r.requesterOutletName}` : ""} · {r.lines.length}{" "}
-                    item(s)
+                    {r.reqNo} · {r.requesterDeptName} @ {r.requesterOutletName} · {r.lines.length} item(s)
                   </option>
                 ))}
               </select>
-              {pickedReq && (
-                <div className="text-xs text-sky-800 flex flex-wrap items-center gap-1.5">
-                  <Badge variant={pickedReq.kind === "INTERNAL" ? "secondary" : "info"} className="text-[9px]">
-                    {pickedReq.kind === "INTERNAL" ? "internal" : "chain"}
-                  </Badge>
-                  {pickedReq.kind === "INTERNAL" ? (
-                    <>
-                      Dispatched from <strong>this outlet&apos;s STORE</strong> →{" "}
-                      <strong>{pickedReq.requesterDeptName}</strong>. Store stock drops now; the
-                      department&apos;s stock rises when they receive it via Raise GRN. Only
-                      what the store holds is sent.
-                    </>
-                  ) : (
-                    <>
-                      Stock moves from <strong>this outlet&apos;s STORE</strong> →{" "}
-                      <strong>
-                        {pickedReq.requesterDeptName} @ {pickedReq.requesterOutletName}
-                      </strong>
-                      . Items + qty come from the approved requisition.
-                    </>
-                  )}
-                </div>
-              )}
             </div>
           )}
-
-          {/* Standard fields — disabled when a requisition is locked in */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
               <Label>To outlet</Label>
               {fromReq ? (
-                <div className="h-9 rounded-md border bg-muted/50 px-3 flex items-center text-sm">
-                  {pickedReq.kind === "CHAIN" ? pickedReq.requesterOutletName : "Same outlet (internal)"}
-                </div>
+                <div className="h-9 rounded-md border bg-muted/50 px-3 flex items-center text-sm">{pickedReq.requesterOutletName}</div>
               ) : (
-                <select
-                  value={receiverOutletId}
-                  onChange={(e) => setReceiverOutletId(e.target.value)}
-                  className="h-9 w-full rounded-md border bg-background px-3 text-sm"
-                >
-                  {outlets.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.name}
-                    </option>
-                  ))}
+                <select value={receiverOutletId} onChange={(e) => setReceiverOutletId(e.target.value)} className="h-9 w-full rounded-md border bg-background px-3 text-sm">
+                  {outlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
                 </select>
               )}
             </div>
@@ -390,21 +655,14 @@ export function NewTransferDialog({
           )}
           <div className="border rounded-md p-2 space-y-2">
             {fromReq ? (
-              <div className="text-sm">
-                <div className="text-xs text-muted-foreground mb-2">
-                  Items pulled from {pickedReq.reqNo} (approved quantities):
-                </div>
-                <ul className="divide-y">
-                  {pickedReq.lines.map((l, i) => (
-                    <li key={i} className="py-1.5 flex items-center justify-between gap-2">
-                      <span className="font-medium">{l.rawMaterialName}</span>
-                      <span className="tabular-nums text-muted-foreground">
-                        {l.qty} {l.unit}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              <ul className="divide-y text-sm">
+                {pickedReq.lines.map((l, i) => (
+                  <li key={i} className="py-1.5 flex items-center justify-between gap-2">
+                    <span className="font-medium">{l.rawMaterialName}</span>
+                    <span className="tabular-nums text-muted-foreground">{l.qty} {l.unit}</span>
+                  </li>
+                ))}
+              </ul>
             ) : (
               <>
                 {lines.map((l, i) => (
@@ -439,8 +697,7 @@ export function NewTransferDialog({
                   </div>
                 ))}
                 <Button type="button" variant="outline" size="sm" onClick={addLine}>
-                  <Plus className="h-4 w-4" />
-                  Add line
+                  <Plus className="h-4 w-4" /> Add line
                 </Button>
               </>
             )}
@@ -448,9 +705,7 @@ export function NewTransferDialog({
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button onClick={submit} disabled={pending}>
-            {pending ? "Sending…" : fromReq ? `Fulfil ${pickedReq.reqNo}` : "Send"}
-          </Button>
+          <Button onClick={submit} disabled={pending}>{pending ? "Sending…" : fromReq ? `Fulfil ${pickedReq.reqNo}` : "Send"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -474,10 +729,7 @@ export function ReceiveBtn({
   const submit = () => {
     startTransition(async () => {
       try {
-        await receiveTransfer({
-          transferId,
-          lines: lines.map((l) => ({ id: l.id, qtyReceived: received[l.id] ?? 0 })),
-        });
+        await receiveTransfer({ transferId, lines: lines.map((l) => ({ id: l.id, qtyReceived: received[l.id] ?? 0 })) });
         toast({ variant: "success", title: "Transfer received" });
         setOpen(false);
         router.refresh();
