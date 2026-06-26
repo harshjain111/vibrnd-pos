@@ -122,6 +122,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Sub-order types", href: "/settings/sub-types", icon: "Globe2", pageId: "settings.sub-types" },
       { label: "Floor plan", href: "/settings/floor-plan", icon: "Store", pageId: "settings.floor-plan" },
       { label: "Table groups", href: "/settings/table-groups", icon: "Users", pageId: "settings.table-groups" },
+      { label: "KOT printers", href: "/settings/printers", icon: "Receipt", pageId: "settings.printers" },
       { label: "Users", href: "/settings/users", icon: "Users", pageId: "settings.users" },
       { label: "Permissions", href: "/settings/permissions", icon: "Shield", pageId: "settings.permissions" },
       { label: "Outlets", href: "/outlets", icon: "Store", pageId: "outlets" },

@@ -631,21 +631,26 @@ export function BillingScreen({
         // Round 1 — no order exists yet, holdOrder creates it.
         if (!kotSent && !resumedOrderId) {
           const res = await holdOrder(commonOrderInput());
-          // Notify the local print-agent (no-op stub today, real printer
-          // hook tomorrow). No UI redirect / preview either way — the
-          // captain stays on this page and can click "View KOT" in the
-          // success banner below if they want to see the receipt.
-          fetch("/api/print/kot", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              orderId: res.id,
-              kotNo: res.invoiceNo,
-              station: "MAIN",
-              lines: linesPayload(),
-              auto: kdsEnabled ? "kds" : "print",
-            }),
-          }).catch(() => {});
+          // Items are split into one KOT per station; route each station's
+          // ticket to that department's printer (the route maps station →
+          // printer). Falls back to a single job if no per-station kots came
+          // back (older payloads).
+          const kots = res.kots && res.kots.length > 0
+            ? res.kots
+            : [{ kotNo: res.invoiceNo, station: "MAIN", lines: linesPayload() }];
+          for (const k of kots) {
+            fetch("/api/print/kot", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                orderId: res.id,
+                kotNo: k.kotNo,
+                station: k.station,
+                lines: k.lines,
+                auto: kdsEnabled ? "kds" : "print",
+              }),
+            }).catch(() => {});
+          }
           setKotSent({ invoiceNo: res.invoiceNo });
           // Mark every cart line as sent in round 1.
           setCart((c) => c.map((l) => ({ ...l, sentInRound: 1 })));

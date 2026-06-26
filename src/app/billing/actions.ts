@@ -963,7 +963,13 @@ export async function verifyBillOtp(membershipId: string, code: string) {
 
 const HoldInput = PlaceOrderInput.omit({ paymentMode: true });
 
-export async function holdOrder(input: z.infer<typeof HoldInput>): Promise<{ id: string; invoiceNo: string }> {
+export async function holdOrder(
+  input: z.infer<typeof HoldInput>
+): Promise<{
+  id: string;
+  invoiceNo: string;
+  kots: { kotNo: string; station: string; lines: { name: string; qty: number; note?: string }[] }[];
+}> {
   const data = HoldInput.parse(input);
   const outlet = await getActiveOutlet();
 
@@ -1109,6 +1115,9 @@ export async function holdOrder(input: z.infer<typeof HoldInput>): Promise<{ id:
     linesByStation.set(st, arr);
   }
   let kotCount = await db.kitchenTicket.count({ where: { outletId: outlet.id } });
+  // Collected per-station tickets so the caller can route each one to its
+  // department's printer.
+  const kots: { kotNo: string; station: string; lines: { name: string; qty: number; note?: string }[] }[] = [];
   for (const [station, ls] of linesByStation) {
     kotCount += 1;
     // Loop on the rare clash with a legacy `KOT-000123` row from before
@@ -1120,6 +1129,11 @@ export async function holdOrder(input: z.infer<typeof HoldInput>): Promise<{ id:
       if (!clash) break;
     }
     if (!kotNo) throw new Error("Could not allocate a KOT number");
+    const ticketLines = ls.map((l) => {
+      const it = itemMap.get(l.itemId)!;
+      const note = [l.variantName, ...l.addons.map((a) => `+ ${a.name}`)].filter(Boolean).join(" · ");
+      return { itemId: it.id, name: it.name, qty: l.qty, note: note || undefined };
+    });
     await db.kitchenTicket.create({
       data: {
         kotNo,
@@ -1127,15 +1141,10 @@ export async function holdOrder(input: z.infer<typeof HoldInput>): Promise<{ id:
         outletId: outlet.id,
         station,
         status: "NEW",
-        lines: {
-          create: ls.map((l) => {
-            const it = itemMap.get(l.itemId)!;
-            const note = [l.variantName, ...l.addons.map((a) => `+ ${a.name}`)].filter(Boolean).join(" · ");
-            return { itemId: it.id, name: it.name, qty: l.qty, note: note || undefined };
-          }),
-        },
+        lines: { create: ticketLines },
       },
     });
+    kots.push({ kotNo, station, lines: ticketLines.map(({ name, qty, note }) => ({ name, qty, note })) });
   }
 
   await logActivity({
@@ -1150,5 +1159,5 @@ export async function holdOrder(input: z.infer<typeof HoldInput>): Promise<{ id:
   revalidatePath("/orders/live");
   revalidatePath("/kds");
   revalidatePath("/logs");
-  return { id: order.id, invoiceNo };
+  return { id: order.id, invoiceNo, kots };
 }

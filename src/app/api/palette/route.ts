@@ -107,6 +107,7 @@ function pageHref(id: string): string {
     logs: "/logs",
     settings: "/settings",
     "settings.sub-types": "/settings/sub-types",
+    "settings.printers": "/settings/printers",
     "settings.users": "/settings/users",
     "settings.permissions": "/settings/permissions",
     outlets: "/outlets",

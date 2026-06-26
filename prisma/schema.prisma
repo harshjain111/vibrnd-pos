@@ -114,6 +114,7 @@ model Outlet {
   rolePermissions       RolePermission[]
   fixedAssets           FixedAsset[]
   assetAudits           AssetAudit[]
+  printers              Printer[]
 
   departments    Department[]
   requisitions   Requisition[]
@@ -512,6 +513,27 @@ model Order {
   @@index([status, createdAt])
   @@index([outletId, createdAt])
   @@index([channel, status])
+}
+
+/// A physical/virtual KOT printer mapped to a kitchen station (department).
+/// When a bill is sent, items are already split into one KitchenTicket per
+/// station; each station's ticket is routed to the printer(s) assigned to that
+/// station here.
+model Printer {
+  id        String   @id @default(cuid())
+  name      String
+  /// Station/department this printer serves — matches Item.station /
+  /// KitchenTicket.station (MAIN | TANDOOR | BAR | DESSERT | …).
+  station   String   @default("MAIN")
+  /// Optional device target for the local print agent (IP:port, host, or
+  /// device id). Null = the agent's default device for the station.
+  target    String?
+  active    Boolean  @default(true)
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([outletId, station, active])
 }
 
 model KitchenTicket {
