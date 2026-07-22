@@ -25,6 +25,12 @@ import {
 } from "lucide-react";
 import { SpendChart } from "./chart";
 import { tierFor } from "@/lib/loyalty";
+import { getSessionUser } from "@/lib/session";
+import { bucketBreakdown, getBalance, history as walletHistory } from "@/lib/cve/wallet";
+import { WalletPanel, type WalletHistoryRow } from "./wallet-panel";
+import type { WalletBucket } from "@/lib/cve/types";
+import { evaluateCustomerOffers } from "@/lib/cve/offers";
+import { Sparkles } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +56,7 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
       },
       loyaltyTxns: { orderBy: { createdAt: "desc" }, take: 50 },
       memberships: { include: { plan: { include: { benefits: true } } }, orderBy: { createdAt: "desc" } },
+      walletAccount: { select: { cachedBalance: true } },
     },
   });
   if (!customer) return notFound();
@@ -122,7 +129,37 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
     silverMult: outlet.tierSilverMult,
     goldMult: outlet.tierGoldMult,
   });
+
+  // ─── Wallet ─────────────────────────────────────────────────────────────
+  // Live balance from the ledger; the customer row's cachedBalance is a
+  // best-effort denorm we surface for drift diagnostics only.
+  const cachedWalletBalance = customer.walletAccount?.cachedBalance ?? 0;
+  const [liveWalletBalance, walletBucketBreakdown, walletTxRows, viewer] = await Promise.all([
+    getBalance(customer.id),
+    bucketBreakdown(customer.id),
+    walletHistory(customer.id, 25),
+    getSessionUser(),
+  ]);
+  const walletHistoryRows: WalletHistoryRow[] = walletTxRows.map((r) => ({
+    id: r.id,
+    type: r.type as "CREDIT" | "DEBIT",
+    bucket: r.bucket as WalletBucket,
+    amount: r.amount,
+    remaining: r.remaining,
+    source: r.source,
+    createdAt: r.createdAt.toISOString(),
+    expiresAt: r.expiresAt?.toISOString() ?? null,
+    remarks: r.remarks,
+  }));
+  const isManagerPlus = viewer?.role === "OWNER" || viewer?.role === "MANAGER";
   const tierTone: "secondary" | "info" | "warning" = tier === "GOLD" ? "warning" : tier === "SILVER" ? "info" : "secondary";
+
+  // ─── CVE eligibility preview ────────────────────────────────────────────
+  // Runs the rule engine with no order snapshot — surfaces campaigns that
+  // qualify on customer facts alone (birthday, membership, tags, etc).
+  // Bill-dependent campaigns will re-evaluate when the POS actually has
+  // items on the ticket.
+  const eligibleOffers = await evaluateCustomerOffers(customer.id, outlet.id);
 
   return (
     <div>
@@ -477,6 +514,50 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
 
         {/* ─── Right rail: profile sidebar ─────────────────────────────────── */}
         <div className="space-y-4">
+          <WalletPanel
+            customerId={customer.id}
+            cachedBalance={cachedWalletBalance}
+            liveBalance={liveWalletBalance}
+            breakdown={walletBucketBreakdown}
+            history={walletHistoryRows}
+            canCredit={isManagerPlus}
+            canRedeem={true}
+          />
+
+          {eligibleOffers.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Sparkles className="h-4 w-4" />
+                  Eligible offers
+                </CardTitle>
+                <CardDescription>
+                  Campaigns that would fire on the customer&apos;s current profile. Bill-dependent
+                  rules re-evaluate at the POS with items on the ticket.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {eligibleOffers.map((r) => (
+                  <div key={r.campaign.id} className="rounded-md border p-2 text-xs">
+                    <div className="font-medium">{r.campaign.name}</div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {r.benefits.map((b) => (
+                        <span
+                          key={b.benefitDefId}
+                          className="rounded-full border bg-muted/40 px-2 py-0.5 text-[10px]"
+                          title={b.type}
+                        >
+                          {b.label}
+                          {b.amount > 0 ? ` · ${inr(Math.round(b.amount))}` : ""}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Profile</CardTitle>
