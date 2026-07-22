@@ -126,6 +126,14 @@ model Outlet {
   tableGroups    TableGroup[]
   reservations   Reservation[]
   stockBatches   StockBatch[]
+
+  // Customer Value Engine (Phase 1)
+  walletAccounts     WalletAccount[]
+  walletTransactions WalletTransaction[]
+  campaigns          Campaign[]
+  benefitDefs        BenefitDef[]
+  redemptionHistory  RedemptionHistory[]
+  otpChallenges      OtpChallenge[]
 }
 
 /// A stock-holding sub-unit within an outlet. Every outlet has at minimum a
@@ -328,31 +336,37 @@ model Addon {
 }
 
 model Customer {
-  id            String               @id @default(cuid())
-  name          String
-  phone         String?
-  email         String?
-  address       String?
-  gstin         String?
-  tags          String? // CSV of segment tags
-  allergies     String? // CSV — surfaced to the captain on every visit
+  id                String               @id @default(cuid())
+  name              String
+  phone             String?
+  email             String?
+  address           String?
+  gstin             String?
+  tags              String? // CSV of segment tags
+  allergies         String? // CSV — surfaced to the captain on every visit
   /// Free-form special notes captured at receptionist intake (Box 1 of
   /// the POS spec — "Special Notes"). Examples: "Wheelchair seating",
   /// "VIP family · sons name Aarav", "Wants extra pickle". Surfaced on
   /// every future visit alongside allergies.
-  specialNotes  String?
-  birthday      DateTime?
-  anniversary   DateTime?
-  loyaltyPoints Int                  @default(0)
-  outletId      String
-  outlet        Outlet               @relation(fields: [outletId], references: [id])
-  orders        Order[]
-  loyaltyTxns   LoyaltyTransaction[]
-  feedback      Feedback[]
-  giftCards     GiftCard[]
-  memberships   Membership[]
-  reservations  Reservation[]
-  createdAt     DateTime             @default(now())
+  specialNotes      String?
+  birthday          DateTime?
+  anniversary       DateTime?
+  loyaltyPoints     Int                  @default(0)
+  outletId          String
+  outlet            Outlet               @relation(fields: [outletId], references: [id])
+  orders            Order[]
+  loyaltyTxns       LoyaltyTransaction[]
+  feedback          Feedback[]
+  giftCards         GiftCard[]
+  memberships       Membership[]
+  reservations      Reservation[]
+  /// Customer Value Engine — the wallet is the source of truth for
+  /// campaign/cashback/refund credits. One account per customer, lazily
+  /// created on first credit. Distinct from `loyaltyPoints` which stays
+  /// on the Customer row for backwards compat.
+  walletAccount     WalletAccount?
+  redemptionHistory RedemptionHistory[]
+  createdAt         DateTime             @default(now())
 
   @@index([phone])
 }
@@ -509,6 +523,10 @@ model Order {
 
   createdAt DateTime  @default(now())
   closedAt  DateTime?
+
+  // Customer Value Engine (Phase 1) — wallet ledger + campaign redemption trace
+  walletTransactions WalletTransaction[]
+  redemptionHistory  RedemptionHistory[]
 
   @@index([status, createdAt])
   @@index([outletId, createdAt])
@@ -1133,27 +1151,35 @@ model SubOrderType {
 }
 
 model MembershipPlan {
-  id           String              @id @default(cuid())
-  name         String
-  price        Float
-  durationDays Int // 365 for "one year"
-  active       Boolean             @default(true)
-  outletId     String // owner outlet — but memberships work across all outlets
-  outlet       Outlet              @relation(fields: [outletId], references: [id])
-  benefits     MembershipBenefit[]
-  memberships  Membership[]
-  createdAt    DateTime            @default(now())
+  id                String              @id @default(cuid())
+  name              String
+  price             Float
+  durationDays      Int // 365 for "one year"
+  active            Boolean             @default(true)
+  outletId          String // owner outlet — but memberships work across all outlets
+  outlet            Outlet              @relation(fields: [outletId], references: [id])
+  benefits          MembershipBenefit[]
+  memberships       Membership[]
+  createdAt         DateTime            @default(now())
+  WalletTransaction WalletTransaction[]
 }
 
 model MembershipBenefit {
-  id          String                 @id @default(cuid())
-  planId      String
-  plan        MembershipPlan         @relation(fields: [planId], references: [id], onDelete: Cascade)
-  name        String // "One free tea per day"
-  itemId      String? // grants free instance of this menu item
-  item        Item?                  @relation(fields: [itemId], references: [id])
-  qtyPerDay   Int                    @default(1)
-  redemptions MembershipRedemption[]
+  id           String                 @id @default(cuid())
+  planId       String
+  plan         MembershipPlan         @relation(fields: [planId], references: [id], onDelete: Cascade)
+  name         String // "One free tea per day"
+  itemId       String? // grants free instance of this menu item
+  item         Item?                  @relation(fields: [itemId], references: [id])
+  qtyPerDay    Int                    @default(1)
+  /// Optional link into the Customer Value Engine benefit registry.
+  /// New benefits created via the CVE membership builder point here so
+  /// evaluation flows through the shared rule/benefit code. Historic
+  /// benefits keep working via the fields above; the CVE resolver
+  /// falls back to (itemId, qtyPerDay) when benefitDefId is null.
+  benefitDefId String?
+  benefitDef   BenefitDef?            @relation(fields: [benefitDefId], references: [id])
+  redemptions  MembershipRedemption[]
 }
 
 model Membership {
@@ -1948,9 +1974,9 @@ model GrnLine {
   /// the GRN spec. The line's contribution to the GRN header's tax
   /// total is taxAmount; discountAmount is netted out of the landed
   /// cost calculation for this line.
-  taxRate       Float              @default(0)  // % GST applied to this item
-  taxAmount     Float              @default(0)  // = qtyReceived × unitCost × taxRate / 100
-  lineDiscount  Float              @default(0)  // ₹ discount on this line
+  taxRate       Float              @default(0) // % GST applied to this item
+  taxAmount     Float              @default(0) // = qtyReceived × unitCost × taxRate / 100
+  lineDiscount  Float              @default(0) // ₹ discount on this line
   batchNo       String?
   expiryDate    DateTime?
   note          String?
@@ -1963,61 +1989,61 @@ model GrnLine {
 /// reference multiple GRNs (vendor batches their deliveries into one bill);
 /// one GRN can be split across multiple invoices.
 model VendorInvoice {
-  id          String                 @id @default(cuid())
+  id             String                 @id @default(cuid())
   /// Vendor's invoice number (not ours).
-  invoiceNo   String
-  invoiceDate DateTime
-  supplierId  String
-  supplier    Supplier               @relation(fields: [supplierId], references: [id])
+  invoiceNo      String
+  invoiceDate    DateTime
+  supplierId     String
+  supplier       Supplier               @relation(fields: [supplierId], references: [id])
   /// Optional link to the Purchase Order this stock purchase was raised
   /// against. The PO-first flow records this so qty caps + "already invoiced
   /// against PO" can be computed directly, without going through GRNs.
-  poId        String?
-  po          PurchaseOrder?         @relation(fields: [poId], references: [id])
-  outletId    String
-  outlet      Outlet                 @relation(fields: [outletId], references: [id])
-  subTotal    Float                  @default(0)
-  taxTotal    Float                  @default(0)
-  grandTotal  Float                  @default(0)
+  poId           String?
+  po             PurchaseOrder?         @relation(fields: [poId], references: [id])
+  outletId       String
+  outlet         Outlet                 @relation(fields: [outletId], references: [id])
+  subTotal       Float                  @default(0)
+  taxTotal       Float                  @default(0)
+  grandTotal     Float                  @default(0)
   /// UNPAID | PARTIAL | PAID — payment status, only meaningful once
   /// reviewStatus = CLEARED.
-  status      String                 @default("UNPAID")
-  amountPaid  Float                  @default(0)
+  status         String                 @default("UNPAID")
+  amountPaid     Float                  @default(0)
   /// Vendor's billed amount (≈ grandTotal once lines are entered). Stored
   /// separately so disputed invoices can show "vendor billed ₹X, we
   /// expected ₹Y, variance ₹Z" without back-deriving from the lines.
-  invoiceAmount   Float              @default(0)
+  invoiceAmount  Float                  @default(0)
   /// Sum of landedTotal across the GRNs this invoice references — the
   /// amount we'd expect the vendor to bill us based on what we received.
-  expectedAmount  Float              @default(0)
+  expectedAmount Float                  @default(0)
   /// invoiceAmount − expectedAmount. Positive = vendor billed more,
   /// triggers the variance-review queue for the CC.
-  variance        Float              @default(0)
+  variance       Float                  @default(0)
   /// Variance-review state machine (spec section 5):
   /// PENDING  (just created, waiting to be matched + verified)
   /// MATCHED  (amount equals expected — accountant verifies, then CLEARED)
   /// DISPUTED (amount > expected — CC must approve or reject)
   /// CLEARED  (verified by accountant OR variance approved by CC, ready for payment)
   /// REJECTED (CC rejected with VENDOR_MISTAKE — vendor must re-invoice)
-  reviewStatus    String             @default("PENDING")
+  reviewStatus   String                 @default("PENDING")
   /// CC action audit columns, set when the CC reviews a DISPUTED invoice.
   /// varianceReason: VENDOR_MISTAKE | PRICE_INCREASE_VALID
-  varianceReason  String?
-  varianceNotes   String?
-  ccReviewedById  String?
-  ccReviewedAt    DateTime?
+  varianceReason String?
+  varianceNotes  String?
+  ccReviewedById String?
+  ccReviewedAt   DateTime?
   /// Accountant action audit columns, set when MATCHED → CLEARED.
-  verifiedById    String?
-  verifiedAt      DateTime?
+  verifiedById   String?
+  verifiedAt     DateTime?
   /// Supabase Storage path to the uploaded invoice PDF / image. Optional.
-  fileUrl     String?
-  notes       String?
-  createdById String?
-  grnLinks    VendorInvoiceGrnLink[]
-  lines       VendorInvoiceLine[]
-  payments    VendorPayment[]
-  createdAt   DateTime               @default(now())
-  updatedAt   DateTime               @updatedAt
+  fileUrl        String?
+  notes          String?
+  createdById    String?
+  grnLinks       VendorInvoiceGrnLink[]
+  lines          VendorInvoiceLine[]
+  payments       VendorPayment[]
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
 
   @@unique([supplierId, invoiceNo])
   @@index([outletId, status, invoiceDate])
@@ -2061,4 +2087,242 @@ model VendorInvoiceGrnLink {
   amount    Float         @default(0)
 
   @@id([invoiceId, grnId])
+}
+
+// =========================================================================
+// Customer Value Engine — Phase 1
+// Wallet ledger (bucketed FIFO) + generic Campaign/Rule/Benefit registry.
+// Design goals from the PRD:
+//   • Wallet balance is derived from the transaction ledger — never trust
+//     `cachedBalance` for auth-critical checks.
+//   • Every credit / debit is idempotent (txIdempotencyKey unique).
+//   • Buckets consume FIFO with priority: EXPIRING → CAMPAIGN → CASHBACK →
+//     MEMBERSHIP → REFERRAL → REFUND (resolved in code, not schema).
+//   • Row-level locking via `SELECT … FOR UPDATE` on WalletAccount before
+//     any mutation (see Phase 3 lib/wallet.ts).
+//   • Campaigns, Memberships and manual credits share the same BenefitDef
+//     registry — adding a new benefit type is config, not code.
+// =========================================================================
+
+/// One wallet per customer, lazily created on first credit. `cachedBalance`
+/// is a fast-read denorm; DO NOT rely on it for enforcement — the ledger
+/// (sum of remaining across live buckets) is the source of truth.
+model WalletAccount {
+  id            String   @id @default(cuid())
+  customerId    String   @unique
+  customer      Customer @relation(fields: [customerId], references: [id])
+  outletId      String
+  outlet        Outlet   @relation(fields: [outletId], references: [id])
+  /// Denormalised total for the wallet chip in the CRM list view. Recomputed
+  /// after every credit / debit; NOT to be used for redemption limits.
+  cachedBalance Float    @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  transactions WalletTransaction[]
+
+  @@index([outletId])
+}
+
+/// Immutable append-only ledger entry. `remaining` on a CREDIT row is the
+/// unspent portion of that credit; a DEBIT decrements one or more CREDIT
+/// rows' `remaining` via `drawsFromJson` (an array of {creditTxId, amount}).
+/// `bucket` maps to the PRD's FIFO groups; `type` is CREDIT or DEBIT.
+model WalletTransaction {
+  id              String        @id @default(cuid())
+  walletAccountId String
+  walletAccount   WalletAccount @relation(fields: [walletAccountId], references: [id])
+  /// CREDIT | DEBIT
+  type            String
+  /// CAMPAIGN | CASHBACK | MEMBERSHIP | REFERRAL | REFUND | LOYALTY | MANUAL
+  bucket          String
+  amount          Float
+  /// For CREDIT rows: unspent balance still in this bucket (0…amount).
+  /// For DEBIT rows: always 0.
+  remaining       Float         @default(0)
+  expiresAt       DateTime?
+  /// Free-text source label ("Campaign X credit", "Refund #Y", …).
+  source          String
+
+  campaignId   String?
+  campaign     Campaign?       @relation(fields: [campaignId], references: [id])
+  membershipId String?
+  membership   MembershipPlan? @relation(fields: [membershipId], references: [id])
+  orderId      String?
+  order        Order?          @relation(fields: [orderId], references: [id])
+
+  /// JSON array of {creditTxId, amount} — populated on DEBIT rows so we can
+  /// trace which credit each spend came from without a join table.
+  drawsFromJson String?
+  /// User id or "system". Free text so system credits from cron / rule
+  /// engine don't need a User row.
+  actor         String  @default("system")
+
+  outletId String
+  outlet   Outlet @relation(fields: [outletId], references: [id])
+
+  remarks String?
+
+  /// Set on external-triggered credits/debits so retries can't double-post.
+  /// Null for manual admin adjustments (no natural key exists).
+  txIdempotencyKey String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([walletAccountId, txIdempotencyKey])
+  @@index([walletAccountId, createdAt])
+  @@index([walletAccountId, bucket, remaining, expiresAt])
+  @@index([outletId, createdAt])
+}
+
+/// A time-bound offer bundling rule(s) and benefit(s). Independent from
+/// MembershipPlan — a customer can benefit from either or both. Redemption
+/// is idempotency-tracked via RedemptionHistory.
+model Campaign {
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  outletId       String
+  outlet         Outlet   @relation(fields: [outletId], references: [id])
+  /// True = eligible for redemption. Draft campaigns stay hidden from POS.
+  active         Boolean  @default(true)
+  startsAt       DateTime
+  endsAt         DateTime
+  /// Max total redemptions across all customers; null = unlimited.
+  maxRedemptions Int?
+  /// Max per single customer; null = unlimited.
+  maxPerCustomer Int?
+  /// Priority when multiple campaigns are eligible; higher runs first.
+  priority       Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  rules       CampaignRule[]
+  benefits    CampaignBenefit[]
+  walletTxns  WalletTransaction[]
+  redemptions RedemptionHistory[]
+
+  @@index([outletId, active, startsAt, endsAt])
+}
+
+/// Generic IF condition. `conditionType` is a fixed vocabulary from the PRD
+/// (CUSTOMER_TAG, MEMBERSHIP, OUTLET, DATE_RANGE, TIME_RANGE, BILL_AMOUNT,
+/// VISIT_COUNT, GENDER, BIRTHDAY, CATEGORY_PURCHASED, PRODUCT_PURCHASED,
+/// PAYMENT_METHOD, FIRST_VISIT, CUSTOM_FIELD). `configJson` carries the
+/// per-type payload — operator (=, ≥, ≤, IN…) and value(s). Rules on the
+/// same campaign compose with `groupOp` (AND | OR) so admins can build
+/// (A AND B) OR (C).
+model CampaignRule {
+  id            String   @id @default(cuid())
+  campaignId    String
+  campaign      Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  conditionType String
+  configJson    String
+  groupOp       String   @default("AND") // AND | OR — how this rule joins the previous
+  order         Int      @default(0) // deterministic evaluation order
+
+  @@index([campaignId, order])
+}
+
+/// Registry of benefit templates. `type` is a fixed vocabulary from the PRD
+/// (WALLET_CREDIT, WALLET_CASHBACK, PERCENT_DISCOUNT, FLAT_DISCOUNT,
+/// FREE_ITEM, DAILY_ITEM, WEEKLY_ITEM, MONTHLY_ITEM, REWARD_POINTS,
+/// BIRTHDAY_BENEFIT, ANNIVERSARY_BENEFIT, PRIORITY_SEATING,
+/// EXCLUSIVE_PRICING, FREE_DELIVERY, ENTRY_WAIVER, CUSTOM). `configJson`
+/// holds per-type params (amount, percent, itemId, qty, cap, expiresInDays…).
+/// Reusable across MembershipBenefit and CampaignBenefit — the Phase 2
+/// benefit resolver dispatches on `type`.
+model BenefitDef {
+  id         String   @id @default(cuid())
+  outletId   String
+  outlet     Outlet   @relation(fields: [outletId], references: [id])
+  name       String
+  type       String
+  configJson String
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  campaignBenefits   CampaignBenefit[]
+  membershipBenefits MembershipBenefit[]
+
+  @@index([outletId, active, type])
+}
+
+/// Bridge — one campaign fires N benefits from the registry. Kept as a
+/// separate table (not a JSON array on Campaign) so we can index / trace
+/// per-benefit redemption stats.
+model CampaignBenefit {
+  id           String     @id @default(cuid())
+  campaignId   String
+  campaign     Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  benefitDefId String
+  benefitDef   BenefitDef @relation(fields: [benefitDefId], references: [id])
+  /// Per-instance override JSON — merged over BenefitDef.configJson at
+  /// evaluation time. Null = use registry defaults.
+  overrideJson String?
+  order        Int        @default(0)
+
+  @@unique([campaignId, benefitDefId])
+  @@index([campaignId, order])
+}
+
+/// Single canonical trace of every campaign/membership benefit fired against
+/// a customer. Used for (a) enforcing maxPerCustomer / maxRedemptions,
+/// (b) the "recent claims" panel in the Admin dashboard, (c) preventing
+/// duplicate claims on the same order. NOT the wallet ledger — money moves
+/// through WalletTransaction; this is the offer-level ledger.
+model RedemptionHistory {
+  id             String    @id @default(cuid())
+  customerId     String
+  customer       Customer  @relation(fields: [customerId], references: [id])
+  campaignId     String?
+  campaign       Campaign? @relation(fields: [campaignId], references: [id])
+  /// The BenefitDef fired (via CampaignBenefit or MembershipBenefit).
+  /// Free string so historic rows without a def still land here.
+  benefitLabel   String
+  orderId        String?
+  order          Order?    @relation(fields: [orderId], references: [id])
+  outletId       String
+  outlet         Outlet    @relation(fields: [outletId], references: [id])
+  amount         Float     @default(0) // rupee value delivered
+  metaJson       String? // free-form payload (item ids, percent, cap, etc.)
+  /// External idempotency key — e.g. `campaign:{id}:order:{orderId}` — so
+  /// the rule engine can't double-credit on retry.
+  idempotencyKey String?
+  createdAt      DateTime  @default(now())
+
+  @@unique([idempotencyKey])
+  @@index([customerId, createdAt])
+  @@index([campaignId, createdAt])
+  @@index([outletId, createdAt])
+}
+
+/// Short-lived OTP challenge for wallet redemption + Aadhaar-verification-
+/// gated actions. bcrypt hash stored, not the raw 6-digit code. 5-minute
+/// TTL and 3-attempt cap are enforced at the service layer, not the DB.
+model OtpChallenge {
+  id          String    @id @default(cuid())
+  /// Purpose the OTP unlocks — WALLET_REDEEM | AADHAAR_VERIFY | CUSTOM.
+  purpose     String
+  /// Free key so this table serves multiple flows: for WALLET_REDEEM this
+  /// is the customerId; for other purposes it can be a session id / phone.
+  subjectId   String
+  outletId    String
+  outlet      Outlet    @relation(fields: [outletId], references: [id])
+  /// bcrypt hash of the 6-digit code.
+  codeHash    String
+  /// Masked phone/email the OTP was sent to (for audit trail — never the
+  /// full value).
+  channel     String? // "sms" | "email"
+  channelHint String? // "•••• 4321"
+  attempts    Int       @default(0)
+  usedAt      DateTime?
+  expiresAt   DateTime
+  metaJson    String? // {amount, buckets} for wallet OTPs
+  createdAt   DateTime  @default(now())
+
+  @@index([subjectId, purpose, createdAt])
+  @@index([outletId, createdAt])
+  @@index([expiresAt])
 }
