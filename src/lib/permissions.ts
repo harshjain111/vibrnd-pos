@@ -66,6 +66,7 @@ export type PageId =
   | "feedback"
   | "memberships"
   | "gift-cards"
+  | "wallets"
   | "admin.cve"
   | "customers.campaigns"
   // Accounting
@@ -176,6 +177,7 @@ export const PAGES: PageDef[] = [
   { id: "feedback", label: "Feedback", category: "CRM", defaultRoles: ["MANAGER", "OWNER"] },
   { id: "memberships", label: "Memberships", category: "CRM", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
   { id: "gift-cards", label: "Gift cards", category: "CRM", defaultRoles: ["MANAGER", "OWNER"] },
+  { id: "wallets", label: "Virtual wallets", category: "CRM", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
   { id: "admin.cve", label: "Wallet & Offers admin", category: "CRM", defaultRoles: ["MANAGER", "OWNER"] },
   { id: "customers.campaigns", label: "Campaigns", category: "CRM", defaultRoles: ["MANAGER", "OWNER"] },
 
