@@ -93,6 +93,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Feedback", href: "/feedback", icon: "Star", pageId: "feedback" },
       { label: "Memberships", href: "/memberships", icon: "Star", pageId: "memberships" },
       { label: "Gift cards", href: "/gift-cards", icon: "CreditCard", pageId: "gift-cards" },
+      { label: "Wallet & Offers", href: "/admin/cve", icon: "Wallet", pageId: "admin.cve" },
       { label: "Campaigns", href: "/customers/campaigns", icon: "Megaphone", soon: true, pageId: "customers.campaigns" },
     ],
   },
