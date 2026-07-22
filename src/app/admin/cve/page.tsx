@@ -78,19 +78,20 @@ export default async function CveHubPage() {
           </CardContent>
         </Card>
 
-        <Card className="opacity-70">
+        <Card className="hover:border-primary/50 transition-colors">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base">
               <Megaphone className="h-4 w-4" /> Campaigns
-              <Badge variant="secondary" className="text-[10px]">Phase 6</Badge>
             </CardTitle>
             <CardDescription>
               Bundle rules + benefits into a time-bound offer.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <Button size="sm" variant="outline" disabled>
-              Coming next
+            <Button asChild size="sm" variant="outline">
+              <Link href="/admin/cve/campaigns">
+                Manage campaigns <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
             </Button>
           </CardContent>
         </Card>
