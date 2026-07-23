@@ -54,6 +54,7 @@ import {
 } from "./actions";
 import Link from "next/link";
 import { lookupDiscount } from "@/app/menu/discounts/actions";
+import { TopupDialog } from "@/app/wallets/topup-dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { DietaryDot } from "@/components/ui/dietary-dot";
 import { UpiQr } from "@/components/ui/upi-qr";
@@ -225,6 +226,14 @@ export function BillingScreen({
   // ─── Stage 1: customer + order setup ──────────────────────────────────────
   const [customerPhone, setCustomerPhone] = React.useState(resumed?.customerPhone ?? "");
   const [customerName, setCustomerName] = React.useState(resumed?.customerName ?? "");
+  /** Set once we have a customer phone that maps to a known customer.
+   * Enables the wallet top-up and redeem quick actions on the billing
+   * screen. Derived from the phone by convention (Customer.id =
+   * `cust-<phone>`) so a resumed bill lights up the wallet chip
+   * immediately, without waiting for the manual "lookup" click. */
+  const [customerId, setCustomerId] = React.useState<string | null>(
+    resumed?.customerPhone ? `cust-${resumed.customerPhone}` : null,
+  );
   const [allergies, setAllergies] = React.useState(resumed?.allergies ?? "");
   const [birthday, setBirthday] = React.useState(resumed?.birthday ?? "");
   const [anniversary, setAnniversary] = React.useState(resumed?.anniversary ?? "");
@@ -407,6 +416,7 @@ export function BillingScreen({
         getBillMemberships(customerPhone),
       ]);
       if (c) {
+        setCustomerId(c.id);
         setCustomerBalance(c.loyaltyPoints);
         setCustomerTier(c.tier as any);
         setEarnMult(c.earnMultiplier);
@@ -414,6 +424,8 @@ export function BillingScreen({
         if (!allergies && c.allergies) setAllergies(c.allergies);
         if (!birthday && c.birthday) setBirthday(c.birthday.slice(0, 10));
         if (!anniversary && c.anniversary) setAnniversary(c.anniversary.slice(0, 10));
+      } else {
+        setCustomerId(null);
       }
       setInsights(ins);
       setMemberships(ms);
@@ -757,6 +769,7 @@ export function BillingScreen({
           setCustomerPhone={setCustomerPhone}
           customerName={customerName}
           setCustomerName={setCustomerName}
+          customerId={customerId}
           allergies={allergies}
           setAllergies={setAllergies}
           birthday={birthday}
@@ -804,6 +817,7 @@ export function BillingScreen({
           eligibleBenefitForLine={eligibleBenefitForLine}
           setMembershipClaim={setMembershipClaim}
           customerName={customerName || (customerPhone ? "Walk-in" : "Walk-in")}
+          customerId={customerId}
           orderType={orderType}
           subType={subType}
           tableName={tables.find((t) => t.id === tableId)?.name}
@@ -1050,6 +1064,7 @@ function CustomerStep(props: {
   setCustomerPhone: (s: string) => void;
   customerName: string;
   setCustomerName: (s: string) => void;
+  customerId: string | null;
   allergies: string;
   setAllergies: (s: string) => void;
   birthday: string;
@@ -1080,6 +1095,7 @@ function CustomerStep(props: {
     setCustomerPhone,
     customerName,
     setCustomerName,
+    customerId,
     allergies,
     setAllergies,
     birthday,
@@ -1192,6 +1208,23 @@ function CustomerStep(props: {
               ))}
             </div>
           )}
+
+          {customerId ? (
+            <div className="rounded-md border p-3 flex items-center justify-between gap-2 flex-wrap bg-muted/30">
+              <div className="text-xs">
+                <div className="font-semibold">Wallet actions</div>
+                <div className="text-muted-foreground">
+                  Top up now or continue to the menu — you can also top up from the
+                  &quot;Billing for&quot; header once you&apos;re in.
+                </div>
+              </div>
+              <TopupDialog
+                customerId={customerId}
+                customerLabel={customerName || "customer"}
+                variant="outline"
+              />
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -1347,6 +1380,7 @@ function MenuStep(props: {
   eligibleBenefitForLine: (l: CartLine) => { membershipId: string; benefit: MembershipBenefit; planName: string } | null;
   setMembershipClaim: (key: string, claim: CartLine["membershipClaim"]) => void;
   customerName: string;
+  customerId: string | null;
   orderType: string;
   subType: string;
   tableName?: string;
@@ -1386,6 +1420,7 @@ function MenuStep(props: {
     eligibleBenefitForLine,
     setMembershipClaim,
     customerName,
+    customerId,
     orderType,
     subType,
     tableName,
@@ -1428,12 +1463,21 @@ function MenuStep(props: {
       <div className="space-y-3">
         <Card>
           <CardContent className="p-3 space-y-2">
-            <div className="text-xs text-muted-foreground">
-              Billing for <span className="font-semibold text-foreground">{customerName}</span>
-              {tableName && <> · table <span className="font-semibold text-foreground">{tableName}</span></>}
-              {" · "}
-              {orderType.replace("_", " ")}
-              {subType && <> · {subType}</>}
+            <div className="text-xs text-muted-foreground flex items-center justify-between gap-2 flex-wrap">
+              <div>
+                Billing for <span className="font-semibold text-foreground">{customerName}</span>
+                {tableName && <> · table <span className="font-semibold text-foreground">{tableName}</span></>}
+                {" · "}
+                {orderType.replace("_", " ")}
+                {subType && <> · {subType}</>}
+              </div>
+              {customerId ? (
+                <TopupDialog
+                  customerId={customerId}
+                  customerLabel={customerName}
+                  variant="outline"
+                />
+              ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative flex-1 min-w-[200px]">
