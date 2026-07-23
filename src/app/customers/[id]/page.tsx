@@ -516,6 +516,7 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
         <div className="space-y-4">
           <WalletPanel
             customerId={customer.id}
+            customerName={customer.name}
             cachedBalance={cachedWalletBalance}
             liveBalance={liveWalletBalance}
             breakdown={walletBucketBreakdown}

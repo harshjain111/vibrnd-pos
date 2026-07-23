@@ -14,6 +14,7 @@ import {
   redeemWalletAction,
   requestWalletRedeemOtpAction,
 } from "./wallet-actions";
+import { TopupDialog } from "@/app/wallets/topup-dialog";
 import { inr } from "@/lib/utils";
 import { BUCKET_PRIORITY, WALLET_BUCKETS, type WalletBucket } from "@/lib/cve/types";
 
@@ -31,6 +32,7 @@ export type WalletHistoryRow = {
 
 export function WalletPanel({
   customerId,
+  customerName,
   cachedBalance,
   liveBalance,
   breakdown,
@@ -39,6 +41,7 @@ export function WalletPanel({
   canRedeem,
 }: {
   customerId: string;
+  customerName: string;
   cachedBalance: number;
   liveBalance: number;
   breakdown: Record<WalletBucket, number>;
@@ -73,7 +76,12 @@ export function WalletPanel({
               </div>
             ) : null}
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            <TopupDialog
+              customerId={customerId}
+              customerLabel={customerName}
+              variant="default"
+            />
             {canCredit ? <CreditDialog customerId={customerId} /> : null}
             {canRedeem ? (
               <RedeemDialog customerId={customerId} maxAmount={liveBalance} />

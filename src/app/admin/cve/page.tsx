@@ -10,7 +10,7 @@ import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
 import { inr } from "@/lib/utils";
-import { Gift, Megaphone, Wallet, ArrowRight, AlarmClock, Clock, PlayCircle } from "lucide-react";
+import { Gift, Megaphone, Wallet, ArrowRight, AlarmClock, Clock, PlayCircle, HelpCircle } from "lucide-react";
 import { BUCKET_PRIORITY } from "@/lib/cve/types";
 import { runExpirySweepAction } from "./actions";
 import { getSessionUser } from "@/lib/session";
@@ -138,14 +138,22 @@ export default async function CveHubPage() {
         title="Wallet & Offers"
         description="Configuration-driven Customer Value Engine — benefits, campaigns, memberships, wallet."
         actions={
-          canRunSweep ? (
-            <form action={runExpirySweepAction}>
-              <Button variant="ghost" size="sm" type="submit">
-                <PlayCircle className="h-4 w-4" />
-                Run expiry sweep
-              </Button>
-            </form>
-          ) : null
+          <>
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/wallets/guide">
+                <HelpCircle className="h-4 w-4" />
+                Help & guide
+              </Link>
+            </Button>
+            {canRunSweep ? (
+              <form action={runExpirySweepAction}>
+                <Button variant="ghost" size="sm" type="submit">
+                  <PlayCircle className="h-4 w-4" />
+                  Run expiry sweep
+                </Button>
+              </form>
+            ) : null}
+          </>
         }
       />
 

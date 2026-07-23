@@ -49,11 +49,13 @@ export const WALLET_BUCKETS = [
   "REFUND",
   "LOYALTY",
   "MANUAL",
+  "PREPAID",
 ] as const;
 export type WalletBucket = (typeof WALLET_BUCKETS)[number];
 
-// PRD FIFO order: expiring first (handled in wallet FIFO code), then this
-// bucket priority. LOYALTY / MANUAL sit at the end — they're carve-outs.
+// FIFO order at redemption: within same-day expiry, this is the bucket
+// priority. Promo credits burn first (they're often time-limited and
+// cost us the least); PREPAID last since it's the customer's real money.
 export const BUCKET_PRIORITY: WalletBucket[] = [
   "CAMPAIGN",
   "CASHBACK",
@@ -62,7 +64,24 @@ export const BUCKET_PRIORITY: WalletBucket[] = [
   "REFUND",
   "LOYALTY",
   "MANUAL",
+  "PREPAID",
 ];
+
+/** Plain-English label + one-line explanation. Consumed by the help
+ * page and the wallet UI so labels stay in sync. */
+export const BUCKET_META: Record<
+  WalletBucket,
+  { label: string; hint: string }
+> = {
+  PREPAID:    { label: "Prepaid",    hint: "Customer paid real money to top this up." },
+  CAMPAIGN:   { label: "Campaign",   hint: "Bonus from a promotion or top-up incentive." },
+  CASHBACK:   { label: "Cashback",   hint: "% of a bill returned after settle." },
+  MEMBERSHIP: { label: "Membership", hint: "Credit from a membership plan." },
+  REFERRAL:   { label: "Referral",   hint: "Reward for a successful referral." },
+  REFUND:     { label: "Refund",     hint: "Refunded to wallet instead of cash." },
+  LOYALTY:    { label: "Loyalty",    hint: "Converted from loyalty points." },
+  MANUAL:     { label: "Manual",     hint: "Admin adjustment (goodwill, correction)." },
+};
 
 /** Input to condition evaluators + benefit resolvers. Snapshot-shaped so
  * the engine is deterministic — callers hydrate this from the DB once. */

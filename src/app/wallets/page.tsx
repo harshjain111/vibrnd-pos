@@ -12,8 +12,9 @@ import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
 import { inr } from "@/lib/utils";
-import { Wallet, AlarmClock, ArrowRight, Phone } from "lucide-react";
+import { Wallet, AlarmClock, ArrowRight, Phone, HelpCircle } from "lucide-react";
 import { BUCKET_PRIORITY, type WalletBucket } from "@/lib/cve/types";
+import { TopupDialog } from "./topup-dialog";
 
 export const dynamic = "force-dynamic";
 
@@ -141,11 +142,19 @@ export default async function WalletsPage({
         title="Virtual wallets"
         description="Every customer's ledger-backed wallet at this outlet. Click a row for the full transaction history."
         actions={
-          <Button variant="ghost" size="sm" asChild>
-            <Link href="/admin/cve">
-              Wallet & Offers <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          </Button>
+          <>
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/wallets/guide">
+                <HelpCircle className="h-4 w-4" />
+                Help & guide
+              </Link>
+            </Button>
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/admin/cve">
+                Wallet & Offers <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </Button>
+          </>
         }
       />
 
@@ -310,9 +319,16 @@ export default async function WalletsPage({
                           : "—"}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" asChild>
-                          <Link href={`/customers/${r.customerId}`}>Open</Link>
-                        </Button>
+                        <div className="inline-flex items-center gap-1">
+                          <TopupDialog
+                            customerId={r.customerId}
+                            customerLabel={r.customerName}
+                            variant="ghost"
+                          />
+                          <Button variant="ghost" size="sm" asChild>
+                            <Link href={`/customers/${r.customerId}`}>Open</Link>
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
