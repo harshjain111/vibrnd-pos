@@ -11,7 +11,14 @@ import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
 import { inr } from "@/lib/utils";
 import { Gift, Megaphone, Wallet, ArrowRight, AlarmClock, Clock, PlayCircle, HelpCircle } from "lucide-react";
-import { BUCKET_PRIORITY, normalizeBucket, type WalletBucket } from "@/lib/cve/types";
+import {
+  BUCKET_PRIORITY,
+  SOURCE_KIND_META,
+  normalizeBucket,
+  normalizeSourceKind,
+  type SourceKind,
+  type WalletBucket,
+} from "@/lib/cve/types";
 import { runExpirySweepAction } from "./actions";
 import { getSessionUser } from "@/lib/session";
 
@@ -26,6 +33,7 @@ export default async function CveHubPage() {
   const now = new Date();
   const in7 = new Date(now.getTime() + 7 * 86400_000);
   const in30 = new Date(now.getTime() + 30 * 86400_000);
+  const last30 = new Date(now.getTime() - 30 * 86400_000);
 
   const [
     benefitTotal,
@@ -38,6 +46,7 @@ export default async function CveHubPage() {
     campaignRoi,
     recentRedemptions,
     recentTxns,
+    sourceFlowRows,
   ] = await Promise.all([
     db.benefitDef.count({ where: { outletId: outlet.id } }),
     db.benefitDef.count({ where: { outletId: outlet.id, active: true } }),
@@ -99,6 +108,17 @@ export default async function CveHubPage() {
         walletAccount: { include: { customer: { select: { id: true, name: true } } } },
       },
     }),
+    // v2 — sourceKind flow: credits over last 30 days grouped by
+    // where the money came from. Answers "how much cashback did we
+    // hand out this month?" without pinning the answer to buckets.
+    db.walletTransaction.findMany({
+      where: {
+        outletId: outlet.id,
+        type: "CREDIT",
+        createdAt: { gte: last30 },
+      },
+      select: { sourceKind: true, bucket: true, amount: true },
+    }),
   ]);
 
   const liveBalance = liveBalanceRows.reduce((s, r) => s + r.remaining, 0);
@@ -109,14 +129,27 @@ export default async function CveHubPage() {
     const b = normalizeBucket(r.bucket);
     bucketTotals.set(b, (bucketTotals.get(b) ?? 0) + r.remaining);
   }
-  const bucketBreakdown = BUCKET_PRIORITY.map((b) => ({
-    bucket: b,
-    amount: bucketTotals.get(b) ?? 0,
-  }));
+  // (v1 bucket-granular breakdown removed — the KPI strip surfaces
+  // Cash + Promo liability separately, and the sourceKind flow panel
+  // below answers "where did the money come from?" more clearly.)
 
   const expiring7 = expiringIn7Rows._sum.remaining ?? 0;
   const expiring7Count = expiringIn7Rows._count._all ?? 0;
   const expiring30 = expiringIn30Rows._sum.remaining ?? 0;
+
+  // Group credits by sourceKind for the "Where did the money come from"
+  // panel. Legacy rows without a sourceKind (pre-R2 backfill) get
+  // normalised via normalizeSourceKind so they still contribute.
+  const sourceFlow = new Map<SourceKind, number>();
+  let sourceFlowTotal = 0;
+  for (const r of sourceFlowRows) {
+    const sk = normalizeSourceKind(r.sourceKind);
+    sourceFlow.set(sk, (sourceFlow.get(sk) ?? 0) + r.amount);
+    sourceFlowTotal += r.amount;
+  }
+  const sourceFlowSorted = Array.from(sourceFlow.entries())
+    .sort((a, b) => b[1] - a[1])
+    .filter(([, amt]) => amt > 0);
 
   const roi = campaignRoi
     .map((c) => {
@@ -164,11 +197,18 @@ export default async function CveHubPage() {
 
       <StatGrid cols={4} className="mb-4">
         <StatCard
-          label="Wallet liability (live)"
-          value={inr(Math.round(liveBalance))}
-          subline="from ledger"
+          label="Cash Wallet liability"
+          value={inr(Math.round(bucketTotals.get("CASH") ?? 0))}
+          subline="fully redeemable"
           icon={<Wallet className="h-4 w-4" />}
-          tone={liveBalance > 0 ? "warn" : "neutral"}
+          tone={(bucketTotals.get("CASH") ?? 0) > 0 ? "warn" : "neutral"}
+        />
+        <StatCard
+          label="Promotional liability"
+          value={inr(Math.round(bucketTotals.get("PROMO") ?? 0))}
+          subline="caps + expiry apply"
+          icon={<Wallet className="h-4 w-4" />}
+          tone={(bucketTotals.get("PROMO") ?? 0) > 0 ? "info" : "neutral"}
         />
         <StatCard
           label="Expiring in 7 days"
@@ -180,15 +220,9 @@ export default async function CveHubPage() {
         <StatCard
           label="Live campaigns"
           value={campaignActive}
-          subline={`${campaignTotal} total`}
+          subline={`${campaignTotal} total · ${benefitActive} active benefits`}
           icon={<Megaphone className="h-4 w-4" />}
           tone="info"
-        />
-        <StatCard
-          label="Benefit registry"
-          value={benefitActive}
-          subline={`${benefitTotal} total`}
-          icon={<Gift className="h-4 w-4" />}
         />
       </StatGrid>
 
@@ -249,49 +283,49 @@ export default async function CveHubPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        {/* Wallet liability by bucket ────────────────────────────────── */}
+        {/* Where the money came from — sourceKind flow (last 30d) */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Wallet liability by bucket</CardTitle>
+            <CardTitle className="text-base">Where credit came from (30 days)</CardTitle>
             <CardDescription>
-              Live totals of unspent, unexpired credit. Expiring balance leaves first at redemption.
+              Every wallet credit written in the last 30 days, grouped by origin. Replaces the
+              bucket-granular breakdown from v1 — sourceKind is a reporting label, not a
+              wallet.
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {bucketBreakdown.filter((b) => b.amount > 0).length === 0 ? (
-                <div className="text-xs text-muted-foreground">No live credit at this outlet.</div>
+              {sourceFlowSorted.length === 0 ? (
+                <div className="text-xs text-muted-foreground">
+                  No credits landed in the last 30 days.
+                </div>
               ) : (
-                bucketBreakdown
-                  .filter((b) => b.amount > 0)
-                  .map((b) => {
-                    const pct = liveBalance === 0 ? 0 : (b.amount / liveBalance) * 100;
-                    return (
-                      <div key={b.bucket} className="space-y-1">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-mono text-muted-foreground">{b.bucket}</span>
-                          <span className="tabular-nums font-medium">
-                            {inr(Math.round(b.amount))}
-                            <span className="text-muted-foreground ml-1">
-                              ({pct.toFixed(0)}%)
-                            </span>
+                sourceFlowSorted.map(([sk, amt]) => {
+                  const pct = sourceFlowTotal === 0 ? 0 : (amt / sourceFlowTotal) * 100;
+                  const meta = SOURCE_KIND_META[sk];
+                  return (
+                    <div key={sk} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span title={meta.hint}>{meta.label}</span>
+                        <span className="tabular-nums font-medium">
+                          {inr(Math.round(amt))}
+                          <span className="text-muted-foreground ml-1">
+                            ({pct.toFixed(0)}%)
                           </span>
-                        </div>
-                        <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                          <div
-                            className="h-full bg-primary"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
+                        </span>
                       </div>
-                    );
-                  })
+                      <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                        <div className="h-full bg-primary" style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })
               )}
             </div>
             {expiring30 > 0 ? (
               <div className="mt-3 rounded-md border border-amber-300 bg-amber-50/50 p-2 text-xs text-amber-900 inline-flex items-center gap-1.5">
                 <Clock className="h-3.5 w-3.5" />
-                {inr(Math.round(expiring30))} expires within 30 days
+                {inr(Math.round(expiring30))} expires within 30 days (Promotional Balance)
               </div>
             ) : null}
           </CardContent>
