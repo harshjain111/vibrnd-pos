@@ -9,6 +9,10 @@ import { logActivity } from "@/lib/audit";
 import { moveStock, applyRecipeStock } from "@/lib/stock";
 import { recordLoyalty, pointsEarned, redeemValue, tierFor, earnMultiplier } from "@/lib/loyalty";
 import { requireUser } from "@/lib/rbac";
+import {
+  applyBenefits,
+  evaluateCustomerOffersForTrigger,
+} from "@/lib/cve/offers";
 
 const AddonShape = z.object({
   name: z.string(),
@@ -407,11 +411,39 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
     });
   }
 
+  // v2 — fire the BILL_PAID trigger so cashback / post-settle wallet
+  // campaigns run automatically. Idempotent per order id so retries
+  // of placeOrder never double-credit. Only wallet destinations are
+  // applied here; DISCOUNT / COUPON / FREE_PRODUCT destinations from
+  // BILL_PAID campaigns become pending work the billing UI can surface
+  // (out of scope for R6 — the post-settle path is the primary use
+  // case).
+  let campaignCredits = 0;
+  if (customerId && data.paymentMode !== "DUE") {
+    try {
+      const results = await evaluateCustomerOffersForTrigger(
+        customerId,
+        outlet.id,
+        "BILL_PAID",
+      );
+      const applied = await applyBenefits(results, {
+        customerId,
+        outletId: outlet.id,
+        actor: "system",
+        applyScope: `order:${order.id}`,
+        orderId: order.id,
+      });
+      campaignCredits = applied.walletCreditTotal;
+    } catch (err) {
+      console.error("[billing] BILL_PAID trigger failed", err);
+    }
+  }
+
   await logActivity({
     action: "SETTLE",
     entity: "Order",
     entityId: order.id,
-    summary: `Settled ${invoiceNo} for ${inr(grand)} via ${data.paymentMode}${data.discountCode ? ` (coupon ${data.discountCode})` : ""}${redeemPts > 0 ? ` · redeemed ${redeemPts} pts` : ""}${earned > 0 ? ` · earned ${earned} pts` : ""}${giftCard ? ` · gift card ${giftCard.code} −${inr(giftCardPay)}` : ""}`,
+    summary: `Settled ${invoiceNo} for ${inr(grand)} via ${data.paymentMode}${data.discountCode ? ` (coupon ${data.discountCode})` : ""}${redeemPts > 0 ? ` · redeemed ${redeemPts} pts` : ""}${earned > 0 ? ` · earned ${earned} pts` : ""}${giftCard ? ` · gift card ${giftCard.code} −${inr(giftCardPay)}` : ""}${campaignCredits > 0 ? ` · campaign credit ₹${campaignCredits.toFixed(0)}` : ""}`,
     outletId: outlet.id,
   });
 
