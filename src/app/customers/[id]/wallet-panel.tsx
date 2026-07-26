@@ -16,12 +16,21 @@ import {
 } from "./wallet-actions";
 import { TopupDialog } from "@/app/wallets/topup-dialog";
 import { inr } from "@/lib/utils";
-import { BUCKET_PRIORITY, WALLET_BUCKETS, type WalletBucket } from "@/lib/cve/types";
+import {
+  BUCKET_META,
+  SOURCE_KIND_META,
+  WALLET_BUCKETS,
+  normalizeBucket,
+  normalizeSourceKind,
+  type SourceKind,
+  type WalletBucket,
+} from "@/lib/cve/types";
 
 export type WalletHistoryRow = {
   id: string;
   type: "CREDIT" | "DEBIT";
   bucket: WalletBucket;
+  sourceKind: SourceKind | null;
   amount: number;
   remaining: number;
   source: string;
@@ -49,7 +58,8 @@ export function WalletPanel({
   canCredit: boolean;
   canRedeem: boolean;
 }) {
-  const activeBuckets = BUCKET_PRIORITY.filter((b) => (breakdown[b] ?? 0) > 0);
+  const cash = breakdown.CASH ?? 0;
+  const promo = breakdown.PROMO ?? 0;
   const outOfSync = Math.abs(cachedBalance - liveBalance) > 0.01;
 
   return (
@@ -58,17 +68,16 @@ export function WalletPanel({
         <CardTitle className="flex items-center gap-2 text-base">
           <Wallet className="h-4 w-4" />
           Wallet
-          <Badge variant="secondary" className="text-[10px]">CVE</Badge>
         </CardTitle>
         <CardDescription>
-          Cashback, campaign credits and manual adjustments. Balance is derived from the
-          transaction ledger, not the cached column.
+          Two-bucket wallet. Cash is fully redeemable; Promotional Balance carries per-credit
+          caps and expiry. Balance is derived from the ledger, never from the cached column.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Available</div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Total wallet value</div>
             <div className="text-2xl font-semibold tabular-nums">{inr(Math.round(liveBalance))}</div>
             {outOfSync ? (
               <div className="text-[10px] text-amber-700">
@@ -89,23 +98,28 @@ export function WalletPanel({
           </div>
         </div>
 
-        {activeBuckets.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5">
-            {activeBuckets.map((b) => (
-              <span
-                key={b}
-                className="inline-flex items-center gap-1.5 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px]"
-              >
-                <span className="font-mono text-muted-foreground">{b}</span>
-                <span className="font-semibold tabular-nums">{inr(Math.round(breakdown[b]))}</span>
-              </span>
-            ))}
+        {/* v2 two-line breakdown per PRD §9.1 */}
+        <div className="rounded-md border divide-y">
+          <div className="p-2.5 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold">{BUCKET_META.CASH.label}</div>
+              <div className="text-[10px] text-muted-foreground">{BUCKET_META.CASH.hint}</div>
+            </div>
+            <div className="tabular-nums font-semibold">{inr(Math.round(cash))}</div>
           </div>
-        ) : (
+          <div className="p-2.5 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-xs font-semibold">{BUCKET_META.PROMO.label}</div>
+              <div className="text-[10px] text-muted-foreground">{BUCKET_META.PROMO.hint}</div>
+            </div>
+            <div className="tabular-nums font-semibold">{inr(Math.round(promo))}</div>
+          </div>
+        </div>
+        {liveBalance === 0 ? (
           <div className="text-[11px] text-muted-foreground">
-            Empty. Credit will show up once a campaign fires or an admin tops it up.
+            Empty. Balance appears here once a top-up, campaign or membership credits the wallet.
           </div>
-        )}
+        ) : null}
 
         {history.length > 0 ? (
           <div className="mt-2">
@@ -113,17 +127,23 @@ export function WalletPanel({
               Recent activity
             </div>
             <div className="border rounded-md divide-y max-h-64 overflow-y-auto">
-              {history.map((h) => (
+              {history.map((h) => {
+                const sk = normalizeSourceKind(h.sourceKind);
+                const bkt = normalizeBucket(h.bucket);
+                return (
                 <div key={h.id} className="p-2 text-xs flex items-center justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       {h.type === "CREDIT" ? (
                         <Plus className="h-3 w-3 text-emerald-600" />
                       ) : (
                         <ArrowDown className="h-3 w-3 text-rose-600" />
                       )}
                       <span className="font-medium">{h.source}</span>
-                      <Badge variant="secondary" className="font-mono text-[9px]">{h.bucket}</Badge>
+                      <Badge variant="outline" className="text-[9px]" title={SOURCE_KIND_META[sk]?.hint}>
+                        {SOURCE_KIND_META[sk]?.label ?? sk}
+                      </Badge>
+                      <Badge variant="secondary" className="font-mono text-[9px]">{bkt}</Badge>
                     </div>
                     <div className="text-[10px] text-muted-foreground truncate">
                       {new Date(h.createdAt).toLocaleString("en-IN", {
@@ -150,7 +170,8 @@ export function WalletPanel({
                     ) : null}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         ) : null}
@@ -176,8 +197,8 @@ function CreditDialog({ customerId }: { customerId: string }) {
         <DialogHeader>
           <DialogTitle>Manual wallet credit</DialogTitle>
           <DialogDescription>
-            Adds to the MANUAL bucket by default. Use a specific bucket for reversals or
-            goodwill you want tracked separately.
+            Adds to Cash Wallet by default. Use Promotional if you want caps or expiry to
+            apply to this credit.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -210,7 +231,9 @@ function CreditDialog({ customerId }: { customerId: string }) {
               className="flex h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm"
             >
               {WALLET_BUCKETS.map((b) => (
-                <option key={b} value={b}>{b}</option>
+                <option key={b} value={b}>
+                  {BUCKET_META[b].label}
+                </option>
               ))}
             </select>
           </div>

@@ -144,6 +144,7 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
     id: r.id,
     type: r.type as "CREDIT" | "DEBIT",
     bucket: r.bucket as WalletBucket,
+    sourceKind: (r.sourceKind as WalletHistoryRow["sourceKind"]) ?? null,
     amount: r.amount,
     remaining: r.remaining,
     source: r.source,

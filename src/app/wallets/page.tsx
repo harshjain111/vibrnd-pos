@@ -242,8 +242,9 @@ export default async function WalletsPage({
               <TableHeader>
                 <TableRow>
                   <TableHead>Customer</TableHead>
-                  <TableHead className="text-right">Available</TableHead>
-                  <TableHead>Bucket breakdown</TableHead>
+                  <TableHead className="text-right">Cash Wallet</TableHead>
+                  <TableHead className="text-right">Promotional</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
                   <TableHead className="text-right">Expiring ≤ 7d</TableHead>
                   <TableHead>Last activity</TableHead>
                   <TableHead />
@@ -251,8 +252,9 @@ export default async function WalletsPage({
               </TableHeader>
               <TableBody>
                 {filtered.map((r) => {
-                  const activeBuckets = BUCKET_PRIORITY.filter((b) => r.breakdown[b] > 0);
                   const drift = Math.abs(r.cachedBalance - r.liveBalance) > 0.01;
+                  const cash = r.breakdown.CASH ?? 0;
+                  const promo = r.breakdown.PROMO ?? 0;
                   return (
                     <TableRow key={r.id} className="hover:bg-accent/30">
                       <TableCell>
@@ -269,6 +271,16 @@ export default async function WalletsPage({
                           </div>
                         ) : null}
                       </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {cash > 0 ? inr(Math.round(cash)) : (
+                          <span className="text-[11px] text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {promo > 0 ? inr(Math.round(promo)) : (
+                          <span className="text-[11px] text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right">
                         <div className="font-semibold tabular-nums">
                           {inr(Math.round(r.liveBalance))}
@@ -278,26 +290,6 @@ export default async function WalletsPage({
                             cache drifted
                           </div>
                         ) : null}
-                      </TableCell>
-                      <TableCell>
-                        {activeBuckets.length === 0 ? (
-                          <span className="text-[11px] text-muted-foreground">Empty</span>
-                        ) : (
-                          <div className="flex flex-wrap gap-1">
-                            {activeBuckets.map((b) => (
-                              <span
-                                key={b}
-                                className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-1.5 py-0.5 text-[10px]"
-                                title={`${b}: ${inr(r.breakdown[b])}`}
-                              >
-                                <span className="font-mono text-muted-foreground">{b}</span>
-                                <span className="tabular-nums font-medium">
-                                  {inr(Math.round(r.breakdown[b]))}
-                                </span>
-                              </span>
-                            ))}
-                          </div>
-                        )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {r.expiringSoon > 0 ? (
