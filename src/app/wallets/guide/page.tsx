@@ -4,8 +4,22 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { requireUser } from "@/lib/rbac";
-import { ArrowLeft, ArrowRight, Wallet, Sparkles, Users, ShieldCheck, Clock } from "lucide-react";
-import { BUCKET_META, BUCKET_PRIORITY } from "@/lib/cve/types";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Wallet,
+  Sparkles,
+  Users,
+  ShieldCheck,
+  Clock,
+  Info,
+} from "lucide-react";
+import {
+  BUCKET_META,
+  DESTINATION_META,
+  SOURCE_KIND_META,
+  TRIGGER_META,
+} from "@/lib/cve/types";
 
 export const dynamic = "force-dynamic";
 
@@ -54,286 +68,306 @@ export default async function WalletGuidePage() {
         </CardContent>
       </Card>
 
-      {/* ── Buckets ─────────────────────────────────────────────────── */}
+      {/* ── Two buckets ─────────────────────────────────────────────── */}
       <Card className="mb-4">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Buckets — why the wallet is split</CardTitle>
+          <CardTitle className="text-base">
+            The wallet has two buckets — and only two
+          </CardTitle>
           <CardDescription>
-            Every credit lands in a bucket telling us where it came from. Lets us expire promo
-            credit without touching real money, and lets us report ROI per source.
+            Everything else you might see on a transaction (Cashback / Recharge / Referral …)
+            is just a <i>source label</i>, not a separate wallet.
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="border rounded-md divide-y text-sm">
-            {BUCKET_PRIORITY.map((b, i) => (
-              <div key={b} className="p-2.5 flex items-center gap-3">
-                <div className="flex items-center gap-2 min-w-[180px]">
-                  <Badge variant="secondary" className="font-mono text-[10px]">{b}</Badge>
-                  <span className="text-[10px] text-muted-foreground">#{i + 1}</span>
+        <CardContent className="space-y-3">
+          <div className="border rounded-md divide-y">
+            <div className="p-3 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="font-mono text-[10px]">CASH</Badge>
+                  <span className="font-semibold text-sm">{BUCKET_META.CASH.label}</span>
                 </div>
-                <div className="flex-1">
-                  <div className="font-medium">{BUCKET_META[b].label}</div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {BUCKET_META[b].hint}
-                  </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {BUCKET_META.CASH.hint} <b>No caps, no restrictions.</b> Whatever&apos;s in
+                  here is spent freely.
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  Fed by: recharges, recharge bonuses, cashback, referral rewards, refunds,
+                  loyalty conversions, manual admin credits.
                 </div>
               </div>
-            ))}
-          </div>
-          <div className="mt-3 rounded-md border border-sky-300 bg-sky-50/40 p-3 text-xs text-sky-900">
-            <div className="font-semibold mb-1 inline-flex items-center gap-1.5">
-              <Clock className="h-3.5 w-3.5" />
-              Order of consumption at redemption (FIFO)
             </div>
-            <ol className="list-decimal ml-4 space-y-0.5">
-              <li>Credits with the <b>soonest expiry</b> leave first — otherwise they&apos;d burn.</li>
-              <li>Then bucket priority in the order above — CAMPAIGN → CASHBACK → … → PREPAID.</li>
-              <li>Within the same bucket, the <b>oldest</b> credit goes first.</li>
-            </ol>
-            <div className="mt-2 opacity-90">
-              Why? Burn the <b>cheapest</b> and <b>most time-limited</b> money first, save the
-              customer&apos;s real money for last.
+            <div className="p-3 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="font-mono text-[10px]">PROMO</Badge>
+                  <span className="font-semibold text-sm">{BUCKET_META.PROMO.label}</span>
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {BUCKET_META.PROMO.hint} Common caps: max % of bill, min bill, expiry,
+                  outlet / product / category restrictions.
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-1">
+                  Fed by: welcome credits, first-visit bonuses, festival offers, any campaign
+                  targeting Promotional Wallet destination.
+                </div>
+              </div>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* ── Scenario: 1200 for 1000 ──────────────────────────────────── */}
+      {/* ── Redemption order ─────────────────────────────────────────── */}
+      <Card className="mb-4">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Clock className="h-4 w-4" />
+            How redemption works at billing
+          </CardTitle>
+          <CardDescription>
+            When a customer redeems ₹X, this is the order money leaves the wallet.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="text-sm space-y-2">
+          <ol className="list-decimal ml-5 space-y-1">
+            <li><b>Membership benefits</b> — daily free tea, exclusive items etc.</li>
+            <li><b>Promotional Wallet</b> — restricted credit burns first (soonest expiry
+              wins). Each credit respects its own caps.</li>
+            <li><b>Cash Wallet</b> — the customer&apos;s "real money" wallet, drained last.</li>
+            <li><b>Coupons</b> — a single coupon can be applied per bill.</li>
+            <li><b>Manual discounts</b> — cashier / manager override, mandatory reason
+              captured, audit-logged.</li>
+          </ol>
+          <div className="rounded-md border bg-muted/40 p-3 text-xs mt-3">
+            <div className="font-semibold mb-1">Example — a ₹2000 bill</div>
+            <div className="font-mono text-[11px] whitespace-pre">
+{`Bill                           ₹2000
+Membership (free tea)         − ₹200 → ₹1800
+Promotional Wallet (20% cap)  − ₹360 → ₹1440    (₹240 stays)
+Cash Wallet                   − ₹500 → ₹940
+Remaining payable              ₹940`}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Scenario: pay ₹1000, get ₹1200 ──────────────────────────── */}
       <Card className="mb-4">
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2">
             <Sparkles className="h-4 w-4" />
-            Scenario — &quot;Pay ₹1000, get ₹1200 wallet balance&quot;
+            Scenario: "Pay ₹1000, get ₹1200 in wallet"
           </CardTitle>
-          <CardDescription>Cashier flow, step by step.</CardDescription>
         </CardHeader>
         <CardContent className="text-sm space-y-2">
           <ol className="list-decimal ml-5 space-y-1">
-            <li>Open <Link href="/wallets" className="text-primary underline">CRM → Wallets</Link> or the customer&apos;s profile</li>
-            <li>Click <b>Top up</b> on their row (or in the wallet panel on their profile)</li>
             <li>
-              Enter <b>Amount paid: ₹1000</b>, <b>Bonus: ₹200</b>, <b>Payment mode: UPI</b> (or
-              cash / card)
+              Cashier opens the customer on{" "}
+              <Link href="/wallets" className="text-primary underline underline-offset-2">
+                /wallets
+              </Link>{" "}
+              (or from the billing screen customer chip).
             </li>
-            <li>Confirm — the customer&apos;s wallet now shows ₹1200 available</li>
+            <li>Clicks <b>Top up wallet</b>.</li>
+            <li>
+              Enters <b>Amount paid ₹1000</b>, <b>Bonus ₹200</b>, <b>Payment mode UPI</b>.
+              Confirms.
+            </li>
           </ol>
-          <div className="rounded-md border p-2.5 mt-2 text-xs bg-muted/30">
-            <div className="font-semibold mb-1">What&apos;s in the ledger after this</div>
-            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-              <span className="text-muted-foreground">Row 1</span>
-              <span className="font-mono">+₹1000 PREPAID — never expires</span>
-              <span className="text-muted-foreground">Row 2</span>
-              <span className="font-mono">+₹200 CAMPAIGN — expires in 30 days</span>
-              <span className="text-muted-foreground">Available</span>
-              <span className="font-semibold">₹1200</span>
+          <div className="rounded-md border bg-muted/40 p-3 text-xs">
+            <div className="font-semibold mb-1">What lands on the ledger</div>
+            <div className="font-mono text-[11px] whitespace-pre">
+{`+ ₹1000  bucket=CASH  sourceKind=RECHARGE       (never expires)
++ ₹200   bucket=CASH  sourceKind=RECHARGE_BONUS  (expires in 30d)
+
+Cash Wallet:          ₹1200 available
+Promotional Balance:  ₹0`}
             </div>
           </div>
-          <div className="text-[11px] text-muted-foreground">
-            When the customer redeems, the ₹200 bonus drains first (highest bucket priority),
-            so the customer doesn&apos;t lose the promo if they take a while to come back.
-          </div>
+          <p className="text-xs text-muted-foreground">
+            Both parts land in Cash Wallet — the bonus behaves exactly like ordinary
+            balance. If admin has a <i>WALLET_RECHARGE</i>-triggered campaign
+            configured, that campaign also fires automatically and stacks its bonus on
+            top.
+          </p>
         </CardContent>
       </Card>
 
-      {/* ── Where money enters ───────────────────────────────────────── */}
-      <Card className="mb-4">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Where money enters the wallet</CardTitle>
-          <CardDescription>Six paths — the cashier only actively drives one of them (Top-up).</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="text-sm space-y-3">
-            <Row label="1. Top-up" bucket="PREPAID + CAMPAIGN">
-              Cashier click at the counter — customer paid real money. Bonus goes to CAMPAIGN
-              so it can expire; paid part goes to PREPAID and never expires.
-            </Row>
-            <Row label="2. Cashback" bucket="CASHBACK">
-              Configured as a <b>Benefit</b> in <Link href="/admin/cve/benefits" className="text-primary underline">the registry</Link>{" "}
-              (e.g. <span className="font-mono">10% of bill, capped ₹100, expires 30 days</span>).
-              Attached to a Campaign that fires after settle, or to a membership plan.
-            </Row>
-            <Row label="3. Campaign bonus" bucket="CAMPAIGN">
-              A <Link href="/admin/cve/campaigns" className="text-primary underline">Campaign</Link>{" "}
-              with a <span className="font-mono">WALLET_CREDIT</span> benefit — e.g. &quot;₹200
-              welcome bonus for first visit&quot;.
-            </Row>
-            <Row label="4. Membership credit" bucket="MEMBERSHIP">
-              A membership plan can grant a wallet credit as one of its benefits — e.g. Gold
-              members get ₹500/quarter.
-            </Row>
-            <Row label="5. Referral / Refund" bucket="REFERRAL / REFUND">
-              Wire these later via manual credit for now, or build a campaign that credits on
-              referral.
-            </Row>
-            <Row label="6. Manual adjustment" bucket="MANUAL">
-              Manager-only <b>Add credit</b> button — for goodwill (spilled drink), corrections,
-              anything outside the normal flows.
-            </Row>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ── Rules / Memberships / Campaigns ────────────────────────── */}
+      {/* ── Rules & Memberships & Campaigns ─────────────────────────── */}
       <Card className="mb-4">
         <CardHeader className="pb-2">
           <CardTitle className="text-base flex items-center gap-2">
             <Users className="h-4 w-4" />
-            Rules, Benefits, Campaigns, Memberships — the 4 concepts
+            Rules · Memberships · Campaigns
           </CardTitle>
         </CardHeader>
         <CardContent className="text-sm space-y-3">
-          <Concept
-            title="Benefit"
-            what="A reward. One row in the Benefit Registry."
-            example={`"10% cashback on bill, capped ₹100, into CASHBACK bucket, expires 30d"`}
-            where={<Link href="/admin/cve/benefits" className="text-primary underline">/admin/cve/benefits</Link>}
-          />
-          <Concept
-            title="Rule"
-            what="A single IF condition — combined with AND / OR to gate a campaign."
-            example={`"Membership is GOLD"  AND  "Bill amount ≥ ₹1000"  AND  "Day of week = Wednesday"`}
-          />
-          <Concept
-            title="Campaign"
-            what="A time-bound offer. One or more rules + one or more benefits."
-            example={`"Weekend flat 20% for members" (rules: MEMBERSHIP + BILL_AMOUNT + DATE_RANGE, benefit: PERCENT_DISCOUNT capped ₹300)`}
-            where={<Link href="/admin/cve/campaigns" className="text-primary underline">/admin/cve/campaigns</Link>}
-          />
-          <Concept
-            title="Membership"
-            what="A recurring paid plan the customer buys, granting benefits automatically."
-            example={`"Tea Club — ₹1000/year — 1 free tea/day"  or  "Gold — ₹5000/year — ₹500 quarterly wallet credit + 10% cashback"`}
-            where={<Link href="/memberships" className="text-primary underline">/memberships</Link>}
-          />
-        </CardContent>
-      </Card>
-
-      {/* ── Caps ─────────────────────────────────────────────────────── */}
-      <Card className="mb-4">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4" />
-            Where do caps live?
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm space-y-2">
-          <CapRow scope="Per-benefit cap" example="10% cashback, capped ₹100 per bill" where="In the Benefit config" />
-          <CapRow scope="Per-customer redemption cap" example="Max 3 uses per customer" where="On the Campaign — Basics tab" />
-          <CapRow scope="Total redemption cap" example="Max 1000 uses total" where="On the Campaign — Basics tab" />
-          <CapRow scope="Membership daily cap" example="1 free tea per day, across outlets" where="On the legacy per-day benefit — DB-enforced" />
-          <CapRow scope="Wallet expiry" example="Campaign credit expires in 30 days" where="In the Benefit / Top-up config" />
-          <CapRow scope="OTP throttle" example="3 codes per 10 min · 5-min TTL · 3 attempts" where="Hard-coded — not admin-configurable" />
-        </CardContent>
-      </Card>
-
-      {/* ── Redeem at POS ───────────────────────────────────────────── */}
-      <Card className="mb-4">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">How wallet redemption works at the POS</CardTitle>
-        </CardHeader>
-        <CardContent className="text-sm space-y-2">
-          <ol className="list-decimal ml-5 space-y-1">
-            <li>Attach the customer to the bill (existing flow — no change).</li>
-            <li>Open the customer&apos;s profile or the wallet panel; click <b>Redeem</b>.</li>
-            <li>Enter the amount to redeem (max = live balance).</li>
-            <li>System sends a 6-digit OTP to the customer&apos;s phone.</li>
-            <li>Customer reads it out. Cashier types it into the dialog.</li>
-            <li>Wallet debits FIFO. The debit gets a <b>drawsFromJson</b> audit trail
-              showing exactly which credit rows funded it.</li>
-          </ol>
-          <div className="rounded-md border border-amber-300 bg-amber-50/40 p-2.5 text-xs text-amber-900 mt-2">
-            Auto-application of the redeemed amount as a discount on the bill total is a
-            separate wiring — for now the cashier applies it manually. Everything else in
-            the loop (OTP → ledger → history) is already live.
+          <div>
+            <div className="font-semibold">What&apos;s a rule?</div>
+            <p className="text-xs text-muted-foreground">
+              A rule is one line of an <b>IF</b> condition. Rules combine with AND / OR to
+              build things like: "Gold member <b>AND</b> Wednesday <b>AND</b> bill ≥ ₹1000".
+              Vocabulary: customer tag, membership, outlet, date/time, bill amount, visit
+              count, gender, birthday, anniversary, category / product purchased, payment
+              method, first visit, custom field.
+            </p>
+          </div>
+          <div>
+            <div className="font-semibold">What&apos;s a membership?</div>
+            <p className="text-xs text-muted-foreground">
+              A paid plan the customer buys (e.g. "Tea Club — ₹1000/year, one free tea per
+              day"). A plan carries <b>benefits</b>: item + qty/day (legacy), or any
+              BenefitDef from the registry (wallet credit, % off, free delivery, etc). Manage
+              at{" "}
+              <Link href="/memberships" className="text-primary underline">/memberships</Link>.
+            </p>
+          </div>
+          <div>
+            <div className="font-semibold">What&apos;s a campaign?</div>
+            <p className="text-xs text-muted-foreground">
+              A time-bound offer built from four things: <b>Trigger</b> (what fires it) →
+              <b> Eligibility</b> (which customers qualify) → <b>Benefit</b> (what value they
+              get) → <b>Destination</b> (where the value lands). Manage at{" "}
+              <Link href="/admin/cve/campaigns" className="text-primary underline">
+                /admin/cve/campaigns
+              </Link>.
+            </p>
           </div>
         </CardContent>
       </Card>
 
-      {/* ── Where to click ───────────────────────────────────────────── */}
-      <Card>
+      {/* ── Trigger + Destination reference ─────────────────────────── */}
+      <Card className="mb-4">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Where to click</CardTitle>
+          <CardTitle className="text-base">Trigger + Destination — the two dropdowns</CardTitle>
+          <CardDescription>
+            Every campaign picks one Trigger and one Destination. These are the two decisions
+            that shape a campaign&apos;s identity.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-          <Where title="See every wallet"    to="/wallets"                icon={<Wallet className="h-4 w-4" />} />
-          <Where title="Top up a customer"   to="/wallets"                icon={<Sparkles className="h-4 w-4" />} />
-          <Where title="Redeem at billing"   to="/customers"              icon={<ArrowRight className="h-4 w-4" />} />
-          <Where title="Manage benefits"     to="/admin/cve/benefits"     icon={<Sparkles className="h-4 w-4" />} />
-          <Where title="Manage campaigns"    to="/admin/cve/campaigns"    icon={<Sparkles className="h-4 w-4" />} />
-          <Where title="Manage memberships"  to="/memberships"            icon={<Users className="h-4 w-4" />} />
-          <Where title="Liability + ROI"     to="/admin/cve"              icon={<ShieldCheck className="h-4 w-4" />} />
+        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+              Triggers
+            </div>
+            <div className="border rounded-md divide-y">
+              {Object.entries(TRIGGER_META).map(([k, m]) => (
+                <div key={k} className="p-2">
+                  <div className="font-medium">{m.label}</div>
+                  <div className="text-[10px] text-muted-foreground">{m.hint}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+              Destinations
+            </div>
+            <div className="border rounded-md divide-y">
+              {Object.entries(DESTINATION_META).map(([k, m]) => (
+                <div key={k} className="p-2">
+                  <div className="font-medium">{m.label}</div>
+                  <div className="text-[10px] text-muted-foreground">{m.hint}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </CardContent>
       </Card>
-    </div>
-  );
-}
 
-// ─── little presentational helpers ─────────────────────────────────────
+      {/* ── Caps ────────────────────────────────────────────────────── */}
+      <Card className="mb-4">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Where do caps live?</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm space-y-2">
+          <ul className="list-disc ml-5 space-y-1 text-xs">
+            <li>
+              <b>Per-benefit cap</b> — set inside the BenefitDef ("10% cashback, capped at
+              ₹100 per bill"). Manage at{" "}
+              <Link href="/admin/cve/benefits" className="text-primary underline">
+                /admin/cve/benefits
+              </Link>.
+            </li>
+            <li>
+              <b>Per-customer redemption cap</b> — set on the Campaign ("Max 3 redemptions
+              per customer").
+            </li>
+            <li>
+              <b>Total redemption cap</b> — set on the Campaign ("Max 1000 redemptions
+              across all customers").
+            </li>
+            <li>
+              <b>Wallet balance cap</b> — none by default; PROMO credits carry their own
+              per-credit restrictions.
+            </li>
+            <li>
+              <b>OTP</b> — 3 attempts, 5-minute TTL. Hard-coded, can&apos;t be bypassed.
+            </li>
+          </ul>
+        </CardContent>
+      </Card>
 
-function Row({ label, bucket, children }: { label: string; bucket: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-md border p-2.5">
-      <div className="flex items-center justify-between mb-1">
-        <div className="font-medium text-sm">{label}</div>
-        <Badge variant="secondary" className="font-mono text-[9px]">→ {bucket}</Badge>
+      {/* ── sourceKind reference ─────────────────────────────────────── */}
+      <Card className="mb-4">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Info className="h-4 w-4" />
+            Source labels on transaction rows
+          </CardTitle>
+          <CardDescription>
+            Every wallet transaction carries a sourceKind so the ledger tells you exactly
+            where the money came from. Reporting only — doesn&apos;t affect redemption.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="border rounded-md divide-y text-xs">
+            {Object.entries(SOURCE_KIND_META).map(([k, m]) => (
+              <div key={k} className="p-2 flex items-start gap-3">
+                <Badge variant="outline" className="font-mono text-[9px] min-w-[110px] justify-center">
+                  {k}
+                </Badge>
+                <div>
+                  <div className="font-medium">{m.label}</div>
+                  <div className="text-[10px] text-muted-foreground">{m.hint}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Security ────────────────────────────────────────────────── */}
+      <Card className="mb-4">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4" />
+            Security guarantees
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm">
+          <ul className="list-disc ml-5 space-y-1 text-xs">
+            <li>Wallet balance is always derived from the ledger — cached column is a UI
+              hint only.</li>
+            <li>Every credit / debit is idempotent (unique txIdempotencyKey per account).</li>
+            <li>Row-level locking (pg_advisory_xact_lock) on every wallet mutation.</li>
+            <li>OTP: bcrypt-hashed 6-digit codes, 5-min TTL, 3-attempt cap, throttled to
+              3 challenges per customer per 10 minutes.</li>
+            <li>Every admin action written to the ActivityLog.</li>
+            <li>Aadhaar (where used): masked display + irreversible hash only. Never the
+              raw number.</li>
+            <li>RBAC on every admin surface — cashiers can top up + redeem; managers manage
+              benefits + campaigns; owners run the expiry sweep.</li>
+          </ul>
+        </CardContent>
+      </Card>
+
+      <div className="text-xs text-muted-foreground flex items-center gap-1">
+        Full architectural spec:{" "}
+        <Link href="/wallets" className="text-primary underline">back to Wallets</Link>{" "}
+        · Contribute changes to <code>docs/cve-prd.md</code>.
+        <ArrowRight className="h-3 w-3" />
       </div>
-      <div className="text-[12px] text-muted-foreground">{children}</div>
     </div>
-  );
-}
-
-function Concept({
-  title,
-  what,
-  example,
-  where,
-}: {
-  title: string;
-  what: string;
-  example: string;
-  where?: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-md border p-2.5">
-      <div className="font-semibold text-sm">{title}</div>
-      <div className="text-[12px] text-muted-foreground mt-0.5">{what}</div>
-      <div className="mt-1.5 text-[12px]">
-        <span className="text-muted-foreground">Example: </span>
-        <span className="font-mono">{example}</span>
-      </div>
-      {where ? (
-        <div className="mt-1 text-[11px]">
-          <span className="text-muted-foreground">Configure here: </span>
-          {where}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function CapRow({ scope, example, where }: { scope: string; example: string; where: string }) {
-  return (
-    <div className="grid grid-cols-[160px_1fr] gap-2 items-start rounded-md border p-2">
-      <div className="text-xs font-semibold">{scope}</div>
-      <div className="text-xs">
-        <div className="text-muted-foreground">e.g. {example}</div>
-        <div className="text-[11px] text-primary/80 mt-0.5">{where}</div>
-      </div>
-    </div>
-  );
-}
-
-function Where({ title, to, icon }: { title: string; to: string; icon: React.ReactNode }) {
-  return (
-    <Link
-      href={to}
-      className="rounded-md border p-2.5 hover:border-primary/50 hover:bg-accent/30 transition-colors flex items-center justify-between"
-    >
-      <div className="flex items-center gap-2">
-        {icon}
-        <span className="text-sm font-medium">{title}</span>
-      </div>
-      <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-    </Link>
   );
 }
