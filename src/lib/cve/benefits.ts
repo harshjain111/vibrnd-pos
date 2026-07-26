@@ -17,6 +17,7 @@ import type {
   RuleContext,
   WalletBucket,
 } from "./types";
+import { normalizeBucket } from "./types";
 
 type Ok = { ok: true };
 type Err = { ok: false; reason: string };
@@ -76,7 +77,11 @@ function idempotencyKey(campaignId: string | undefined, benefitDefId: string, ct
 
 function resolveWalletCredit(cfg: any): { amount: number; detail: BenefitDetail } {
   const amount = Math.max(0, Number(cfg?.amount ?? 0));
-  const bucket = (cfg?.bucket ?? "CAMPAIGN") as WalletBucket;
+  // v2 default — campaign-fired wallet credits land in Promotional Wallet
+  // by default so the caps/expiry configured on the benefit apply. Admin
+  // can override to CASH via cfg.bucket = "CASH" when the intent is a
+  // fully-redeemable credit (e.g. loyalty reward).
+  const bucket = normalizeBucket(cfg?.bucket ?? "PROMO");
   const expiresInDays = cfg?.expiresInDays != null ? Number(cfg.expiresInDays) : undefined;
   return {
     amount,
@@ -90,7 +95,8 @@ function resolveWalletCashback(cfg: any, ctx: RuleContext): { amount: number; de
   const raw = Math.floor((base * percent) / 100);
   const cap = cfg?.cap != null ? Number(cfg.cap) : Infinity;
   const amount = Math.min(raw, cap);
-  const bucket = (cfg?.bucket ?? "CASHBACK") as WalletBucket;
+  // Cashback → Cash Wallet per PRD §4.2 (fully redeemable).
+  const bucket = normalizeBucket(cfg?.bucket ?? "CASH");
   const expiresInDays = cfg?.expiresInDays != null ? Number(cfg.expiresInDays) : undefined;
   return { amount, detail: { kind: "WALLET_CREDIT", amount, bucket, expiresInDays } };
 }
@@ -168,7 +174,7 @@ function resolveBirthdayOrAnniversary(
 ): { amount: number; detail: BenefitDetail } {
   const walletCredit = Math.max(0, Number(cfg?.walletCredit ?? 0));
   if (walletCredit > 0) {
-    const bucket = (cfg?.bucket ?? "CAMPAIGN") as WalletBucket;
+    const bucket = normalizeBucket(cfg?.bucket ?? "PROMO");
     return {
       amount: walletCredit,
       detail: { kind: "WALLET_CREDIT", amount: walletCredit, bucket, expiresInDays: cfg?.expiresInDays },

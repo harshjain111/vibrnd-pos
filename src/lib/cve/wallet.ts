@@ -20,7 +20,12 @@
 import "server-only";
 import { db } from "@/lib/db";
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { BUCKET_PRIORITY, type WalletBucket } from "./types";
+import {
+  BUCKET_PRIORITY,
+  normalizeBucket,
+  type SourceKind,
+  type WalletBucket,
+} from "./types";
 import {
   type Candidate,
   liveOnly,
@@ -108,8 +113,7 @@ export async function bucketBreakdown(
     select: { bucket: true, remaining: true },
   });
   for (const r of rows) {
-    const b = (r.bucket as WalletBucket) ?? "MANUAL";
-    if (out[b] == null) continue; // ignore unknown buckets (forward-compat)
+    const b = normalizeBucket(r.bucket);
     out[b] = round2(out[b] + r.remaining);
   }
   return out;
@@ -131,9 +135,16 @@ export type CreditInput = {
   customerId: string;
   outletId: string;
   bucket: WalletBucket;
+  /** Reporting label — where did this money actually come from? Optional
+   * on the type signature so legacy callers still compile; new callers
+   * should always set it. */
+  sourceKind?: SourceKind;
   amount: number;
   source: string;
   expiresInDays?: number;
+  /** For PROMO-bucket credits: caps + restrictions carried on the credit
+   * so redemption honours them without a Campaign join. JSON blob. */
+  restrictionsJson?: string;
   campaignId?: string;
   membershipId?: string;
   orderId?: string;
@@ -184,7 +195,8 @@ export async function credit(input: CreditInput): Promise<CreditResult> {
       data: {
         walletAccountId: account.id,
         type: "CREDIT",
-        bucket: input.bucket,
+        bucket: normalizeBucket(input.bucket),
+        sourceKind: input.sourceKind,
         amount: amt,
         remaining: amt,
         expiresAt,
@@ -194,6 +206,7 @@ export async function credit(input: CreditInput): Promise<CreditResult> {
         orderId: input.orderId,
         actor: input.actor ?? "system",
         outletId: input.outletId,
+        restrictionsJson: input.restrictionsJson,
         remarks: input.remarks,
         txIdempotencyKey: input.txIdempotencyKey,
       },
@@ -278,7 +291,7 @@ export async function debit(input: DebitInput): Promise<DebitResult> {
     });
     const candidates: Candidate[] = rows.map((r) => ({
       id: r.id,
-      bucket: (r.bucket as WalletBucket) ?? "MANUAL",
+      bucket: normalizeBucket(r.bucket),
       remaining: r.remaining,
       expiresAt: r.expiresAt,
       createdAt: r.createdAt,
@@ -453,7 +466,7 @@ async function recomputeCachedBalance(tx: Tx, accountId: string): Promise<number
 }
 
 function pickPrimaryBucket(draws: { bucket: WalletBucket; take: number }[]): WalletBucket {
-  if (draws.length === 0) return "MANUAL";
+  if (draws.length === 0) return "CASH";
   const totals = new Map<WalletBucket, number>();
   for (const d of draws) totals.set(d.bucket, (totals.get(d.bucket) ?? 0) + d.take);
   let best: WalletBucket = draws[0].bucket;

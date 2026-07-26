@@ -206,7 +206,7 @@ function CreditDialog({ customerId }: { customerId: string }) {
             <select
               id="bucket"
               name="bucket"
-              defaultValue="MANUAL"
+              defaultValue="CASH"
               className="flex h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm"
             >
               {WALLET_BUCKETS.map((b) => (

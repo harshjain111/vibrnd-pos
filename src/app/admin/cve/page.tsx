@@ -11,7 +11,7 @@ import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
 import { inr } from "@/lib/utils";
 import { Gift, Megaphone, Wallet, ArrowRight, AlarmClock, Clock, PlayCircle, HelpCircle } from "lucide-react";
-import { BUCKET_PRIORITY } from "@/lib/cve/types";
+import { BUCKET_PRIORITY, normalizeBucket, type WalletBucket } from "@/lib/cve/types";
 import { runExpirySweepAction } from "./actions";
 import { getSessionUser } from "@/lib/session";
 
@@ -102,11 +102,16 @@ export default async function CveHubPage() {
   ]);
 
   const liveBalance = liveBalanceRows.reduce((s, r) => s + r.remaining, 0);
+  // v2 — normalise every row's bucket string so legacy values (before
+  // the backfill lands) still contribute to the right column.
+  const bucketTotals = new Map<WalletBucket, number>(BUCKET_PRIORITY.map((b) => [b, 0]));
+  for (const r of liveBalanceRows) {
+    const b = normalizeBucket(r.bucket);
+    bucketTotals.set(b, (bucketTotals.get(b) ?? 0) + r.remaining);
+  }
   const bucketBreakdown = BUCKET_PRIORITY.map((b) => ({
     bucket: b,
-    amount: liveBalanceRows
-      .filter((r) => r.bucket === b)
-      .reduce((s, r) => s + r.remaining, 0),
+    amount: bucketTotals.get(b) ?? 0,
   }));
 
   const expiring7 = expiringIn7Rows._sum.remaining ?? 0;

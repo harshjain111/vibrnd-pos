@@ -48,7 +48,15 @@ const TYPE_LABELS: Record<BenefitType, string> = {
   CUSTOM: "Custom (info only)",
 };
 
-const BUCKET_OPTIONS = WALLET_BUCKETS.map((b) => ({ value: b, label: b }));
+// v2 — only two buckets. Label uses the friendly name so the SM sees
+// "Cash Wallet" not "CASH".
+const BUCKET_OPTIONS = [
+  { value: "CASH", label: "Cash Wallet (fully redeemable)" },
+  { value: "PROMO", label: "Promotional Wallet (caps / expiry apply)" },
+];
+// Silence unused-import warning when WALLET_BUCKETS is still needed for
+// the validator import path — this is intentionally kept for clarity.
+void WALLET_BUCKETS;
 const APPLIES_OPTIONS = [
   { value: "BILL", label: "Whole bill" },
   { value: "CATEGORY", label: "Categories" },

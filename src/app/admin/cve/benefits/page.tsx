@@ -204,7 +204,7 @@ function cfgSummary(type: BenefitType, cfg: Record<string, unknown>): string | n
   const n = (k: string) => (cfg[k] != null ? Number(cfg[k]) : null);
   switch (type) {
     case "WALLET_CREDIT":
-      return `₹${n("amount") ?? "?"} → ${cfg.bucket ?? "CAMPAIGN"}${cfg.expiresInDays ? ` · exp ${cfg.expiresInDays}d` : ""}`;
+      return `₹${n("amount") ?? "?"} → ${cfg.bucket ?? "PROMO"}${cfg.expiresInDays ? ` · exp ${cfg.expiresInDays}d` : ""}`;
     case "WALLET_CASHBACK":
       return `${n("percent") ?? "?"}%${cfg.cap ? ` cap ₹${cfg.cap}` : ""}`;
     case "PERCENT_DISCOUNT":

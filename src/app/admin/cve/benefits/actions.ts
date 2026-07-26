@@ -48,9 +48,9 @@ export async function saveBenefitAction(
   const v = validateBenefitConfig(parsed.type, cfg);
   if (!v.ok) return { error: v.reason };
   if (parsed.type === "WALLET_CREDIT" || parsed.type === "WALLET_CASHBACK") {
-    const bucket = cfg?.bucket ?? (parsed.type === "WALLET_CASHBACK" ? "CASHBACK" : "CAMPAIGN");
-    if (!WALLET_BUCKETS.includes(bucket)) {
-      return { error: `Invalid wallet bucket ${bucket}` };
+    const bucket = cfg?.bucket ?? (parsed.type === "WALLET_CASHBACK" ? "CASH" : "PROMO");
+    if (!(WALLET_BUCKETS as readonly string[]).includes(bucket)) {
+      return { error: `Invalid wallet bucket "${bucket}" — must be CASH or PROMO` };
     }
   }
 

@@ -64,10 +64,15 @@ export async function topUpWalletAction(fd: FormData): Promise<TopupResult> {
   const idemBonus = `topup:bonus:${customer.id}:${stamp}`;
 
   try {
+    // v2 — both paid amount AND recharge bonus land in Cash Wallet.
+    // PRD §14 explicitly: "Once credited, the ₹1200 behaves exactly like
+    // ordinary wallet balance." Bonus's origin is tracked via sourceKind
+    // (RECHARGE_BONUS) so reporting can still split them.
     const paid = await credit({
       customerId: customer.id,
       outletId: outlet.id,
-      bucket: "PREPAID",
+      bucket: "CASH",
+      sourceKind: "RECHARGE",
       amount: parsed.amountPaid,
       source: `Top-up ${parsed.paymentMode}`,
       actor: user?.id ?? "system",
@@ -81,10 +86,13 @@ export async function topUpWalletAction(fd: FormData): Promise<TopupResult> {
       const bonus = await credit({
         customerId: customer.id,
         outletId: outlet.id,
-        bucket: "CAMPAIGN",
+        bucket: "CASH",
+        sourceKind: "RECHARGE_BONUS",
         amount: parsed.bonusAmount,
-        source: "Top-up bonus",
+        // Bonus keeps its expiry if the admin set one — the ledger row's
+        // expiresAt is honoured regardless of bucket.
         expiresInDays: parsed.bonusExpiresInDays,
+        source: "Top-up bonus",
         actor: user?.id ?? "system",
         txIdempotencyKey: idemBonus,
         remarks: `Bonus on ₹${parsed.amountPaid} top-up`,

@@ -14,7 +14,7 @@ import { WALLET_BUCKETS, type WalletBucket } from "@/lib/cve/types";
 const CreditInput = z.object({
   customerId: z.string(),
   amount: z.coerce.number().positive(),
-  bucket: z.enum(WALLET_BUCKETS).default("MANUAL"),
+  bucket: z.enum(WALLET_BUCKETS).default("CASH"),
   remarks: z.string().max(200).optional(),
   expiresInDays: z.coerce.number().int().positive().optional(),
 });
@@ -32,7 +32,7 @@ export async function creditWalletAction(fd: FormData): Promise<WalletCreditResu
     parsed = CreditInput.parse({
       customerId: fd.get("customerId"),
       amount: fd.get("amount"),
-      bucket: fd.get("bucket") ?? "MANUAL",
+      bucket: fd.get("bucket") ?? "CASH",
       remarks: (fd.get("remarks") as string) || undefined,
       expiresInDays: (fd.get("expiresInDays") as string) || undefined,
     });
@@ -50,8 +50,9 @@ export async function creditWalletAction(fd: FormData): Promise<WalletCreditResu
       customerId: customer.id,
       outletId: outlet.id,
       bucket: parsed.bucket as WalletBucket,
+      sourceKind: "MANUAL",
       amount: parsed.amount,
-      source: "MANUAL",
+      source: "Manual credit",
       expiresInDays: parsed.expiresInDays,
       actor: user?.id ?? "system",
       txIdempotencyKey: idem,

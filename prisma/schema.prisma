@@ -2129,20 +2129,30 @@ model WalletAccount {
 /// rows' `remaining` via `drawsFromJson` (an array of {creditTxId, amount}).
 /// `bucket` maps to the PRD's FIFO groups; `type` is CREDIT or DEBIT.
 model WalletTransaction {
-  id              String        @id @default(cuid())
-  walletAccountId String
-  walletAccount   WalletAccount @relation(fields: [walletAccountId], references: [id])
+  id               String        @id @default(cuid())
+  walletAccountId  String
+  walletAccount    WalletAccount @relation(fields: [walletAccountId], references: [id])
   /// CREDIT | DEBIT
-  type            String
-  /// CAMPAIGN | CASHBACK | MEMBERSHIP | REFERRAL | REFUND | LOYALTY | MANUAL
-  bucket          String
-  amount          Float
+  type             String
+  /// v2: CASH | PROMO. Legacy rows keep their v1 value until the backfill
+  /// rewrites them (see migration 20260726_cve_v2_bucket_collapse).
+  bucket           String
+  /// v2 — granular origin label used for reporting: RECHARGE |
+  /// RECHARGE_BONUS | CASHBACK | REFERRAL | REFUND | MANUAL | CAMPAIGN |
+  /// MEMBERSHIP | LOYALTY_CONVERT | EXPIRY. Nullable so legacy rows load
+  /// clean; backfill sets it from the old bucket value.
+  sourceKind       String?
+  /// v2 — restrictions payload for PROMO-bucket credits: JSON with
+  /// {maxPct, minBill, outletIds, itemIds, categoryIds, priority,
+  /// usageLimit}. Null for CASH credits.
+  restrictionsJson String?
+  amount           Float
   /// For CREDIT rows: unspent balance still in this bucket (0…amount).
   /// For DEBIT rows: always 0.
-  remaining       Float         @default(0)
-  expiresAt       DateTime?
+  remaining        Float         @default(0)
+  expiresAt        DateTime?
   /// Free-text source label ("Campaign X credit", "Refund #Y", …).
-  source          String
+  source           String
 
   campaignId   String?
   campaign     Campaign?       @relation(fields: [campaignId], references: [id])
@@ -2179,23 +2189,34 @@ model WalletTransaction {
 /// MembershipPlan — a customer can benefit from either or both. Redemption
 /// is idempotency-tracked via RedemptionHistory.
 model Campaign {
-  id             String   @id @default(cuid())
-  name           String
-  description    String?
-  outletId       String
-  outlet         Outlet   @relation(fields: [outletId], references: [id])
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  outletId        String
+  outlet          Outlet   @relation(fields: [outletId], references: [id])
   /// True = eligible for redemption. Draft campaigns stay hidden from POS.
-  active         Boolean  @default(true)
-  startsAt       DateTime
-  endsAt         DateTime
+  active          Boolean  @default(true)
+  startsAt        DateTime
+  endsAt          DateTime
   /// Max total redemptions across all customers; null = unlimited.
-  maxRedemptions Int?
+  maxRedemptions  Int?
   /// Max per single customer; null = unlimited.
-  maxPerCustomer Int?
+  maxPerCustomer  Int?
   /// Priority when multiple campaigns are eligible; higher runs first.
-  priority       Int      @default(0)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  priority        Int      @default(0)
+  /// v2 — the event that fires this campaign: REGISTRATION |
+  /// WALLET_RECHARGE | BILL_GENERATED | BILL_PAID | FIRST_VISIT |
+  /// BIRTHDAY | ANNIVERSARY | REFERRAL | MANUAL_TRIGGER. Nullable so
+  /// legacy campaigns keep working — the promotion builder mandates it
+  /// on new saves.
+  trigger         String?
+  /// v2 — where the resolved benefit(s) land: CASH_WALLET | PROMO_WALLET
+  /// | MEMBERSHIP | DISCOUNT | COUPON | REWARD_POINTS | FREE_PRODUCT.
+  /// Nullable for legacy; new campaigns must set it. Per-benefit
+  /// overrides live on CampaignBenefit.destinationOverride.
+  destinationKind String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   rules       CampaignRule[]
   benefits    CampaignBenefit[]
@@ -2203,6 +2224,7 @@ model Campaign {
   redemptions RedemptionHistory[]
 
   @@index([outletId, active, startsAt, endsAt])
+  @@index([outletId, trigger, active])
 }
 
 /// Generic IF condition. `conditionType` is a fixed vocabulary from the PRD
@@ -2253,15 +2275,19 @@ model BenefitDef {
 /// separate table (not a JSON array on Campaign) so we can index / trace
 /// per-benefit redemption stats.
 model CampaignBenefit {
-  id           String     @id @default(cuid())
-  campaignId   String
-  campaign     Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  benefitDefId String
-  benefitDef   BenefitDef @relation(fields: [benefitDefId], references: [id])
+  id                  String     @id @default(cuid())
+  campaignId          String
+  campaign            Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  benefitDefId        String
+  benefitDef          BenefitDef @relation(fields: [benefitDefId], references: [id])
   /// Per-instance override JSON — merged over BenefitDef.configJson at
   /// evaluation time. Null = use registry defaults.
-  overrideJson String?
-  order        Int        @default(0)
+  overrideJson        String?
+  /// v2 — optional per-benefit override of the campaign's destinationKind.
+  /// Handy for multi-benefit campaigns where one benefit goes to Cash
+  /// Wallet and another issues a coupon.
+  destinationOverride String?
+  order               Int        @default(0)
 
   @@unique([campaignId, benefitDefId])
   @@index([campaignId, order])

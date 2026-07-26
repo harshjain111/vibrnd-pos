@@ -13,7 +13,7 @@ import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
 import { inr } from "@/lib/utils";
 import { Wallet, AlarmClock, ArrowRight, Phone, HelpCircle } from "lucide-react";
-import { BUCKET_PRIORITY, type WalletBucket } from "@/lib/cve/types";
+import { BUCKET_PRIORITY, normalizeBucket, type WalletBucket } from "@/lib/cve/types";
 import { TopupDialog } from "./topup-dialog";
 
 export const dynamic = "force-dynamic";
@@ -99,8 +99,8 @@ export default async function WalletsPage({
     let expSoon = 0;
     let lastActivity: Date | null = a.updatedAt;
     for (const t of a.transactions) {
-      const b = (t.bucket as WalletBucket) ?? "MANUAL";
-      if (b in breakdown) breakdown[b] += t.remaining;
+      const b = normalizeBucket(t.bucket);
+      breakdown[b] += t.remaining;
       live += t.remaining;
       if (t.expiresAt && t.expiresAt.getTime() <= in7.getTime()) {
         expSoon += t.remaining;
