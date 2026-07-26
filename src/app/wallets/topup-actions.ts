@@ -8,6 +8,7 @@ import { requireUser } from "@/lib/rbac";
 import { getSessionUser } from "@/lib/session";
 import { logActivity } from "@/lib/audit";
 import { credit } from "@/lib/cve/wallet";
+import { applyBenefits, evaluateCustomerOffersForTrigger } from "@/lib/cve/offers";
 
 /**
  * "Top-up" is the cashier-facing flow for "customer paid ₹X, wallet
@@ -101,12 +102,35 @@ export async function topUpWalletAction(fd: FormData): Promise<TopupResult> {
       liveBalance = bonus.cachedBalance;
     }
 
+    // v2 — after crediting the paid amount + manual bonus, fire the
+    // WALLET_RECHARGE trigger so any admin-configured recharge campaigns
+    // (e.g. "top-up ≥ ₹1000 → +20% bonus") apply automatically. Fully
+    // idempotent per topup transaction id.
+    const triggerResults = await evaluateCustomerOffersForTrigger(
+      customer.id,
+      outlet.id,
+      "WALLET_RECHARGE",
+    );
+    const campaignApplied = await applyBenefits(triggerResults, {
+      customerId: customer.id,
+      outletId: outlet.id,
+      actor: user?.id ?? "system",
+      applyScope: `topup:${stamp}`,
+    });
+    if (campaignApplied.walletCreditsApplied > 0) {
+      liveBalance += campaignApplied.walletCreditTotal;
+    }
+
     await logActivity({
       action: "CREATE",
       entity: "Customer",
       entityId: customer.id,
       summary: `Wallet top-up: ₹${parsed.amountPaid} paid via ${parsed.paymentMode}${
-        parsed.bonusAmount > 0 ? ` + ₹${parsed.bonusAmount} bonus` : ""
+        parsed.bonusAmount > 0 ? ` + ₹${parsed.bonusAmount} manual bonus` : ""
+      }${
+        campaignApplied.walletCreditsApplied > 0
+          ? ` + ₹${campaignApplied.walletCreditTotal} campaign bonus`
+          : ""
       } — ${customer.name}`,
       outletId: outlet.id,
     });

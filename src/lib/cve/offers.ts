@@ -1,23 +1,83 @@
-// Customer Value Engine — DB glue for evaluating offers for a customer.
+// Customer Value Engine — DB glue for the Benefit Engine.
 //
-// Hydrates a RuleContext from the database (customer, active memberships,
-// optional order snapshot) and asks the pure engine which campaigns fire.
-// Called from the billing screen ("show me what applies") and from the
-// post-settle hook ("credit the campaigns that fired").
+// Two entry points, one shared hydrator:
+//   evaluateCustomerOffers(customerId, outletId, order?)         → bill context
+//   evaluateCustomerOffersForTrigger(customerId, outletId, trig) → non-bill triggers
+//                                                                  (registration,
+//                                                                   recharge, birthday,
+//                                                                   etc)
+//
+// And an applier:
+//   applyBenefits(customer, outletId, results, ...) → writes RedemptionHistory
+//                                                     and (for wallet destinations)
+//                                                     wallet.credit rows. Non-wallet
+//                                                     destinations are surfaced to
+//                                                     the caller as pending work.
 
 import "server-only";
 import { db } from "@/lib/db";
 import { evaluateAll } from "./engine";
-import type { CampaignLike, EvaluationResult, RuleContext, RuleDef, ConditionType, BenefitType } from "./types";
+import type {
+  BenefitType,
+  CampaignLike,
+  ConditionType,
+  DestinationKind,
+  EvaluationResult,
+  ResolvedBenefit,
+  RuleContext,
+  RuleDef,
+  TriggerKind,
+} from "./types";
+import { credit } from "./wallet";
 
 export type OrderSnapshot = RuleContext["order"];
 
+/** Extends the engine's per-campaign result with the campaign's
+ * declared destinationKind + per-benefit destinationOverride so the
+ * caller knows where to apply each benefit. */
+export type CampaignEvaluation = EvaluationResult & {
+  destinationKind: DestinationKind | null;
+  destinationOverrides: Record<string, DestinationKind | null>;
+};
+
+/** Full-bill evaluator — kept for the customer profile preview + POS. */
 export async function evaluateCustomerOffers(
   customerId: string,
   outletId: string,
   order?: OrderSnapshot,
   at: Date = new Date(),
-): Promise<EvaluationResult[]> {
+): Promise<CampaignEvaluation[]> {
+  return runEvaluation(customerId, outletId, {
+    order,
+    at,
+    triggerFilter: null,
+  });
+}
+
+/** Trigger evaluator — for registration, top-up, birthday cron, etc. */
+export async function evaluateCustomerOffersForTrigger(
+  customerId: string,
+  outletId: string,
+  trigger: TriggerKind,
+  at: Date = new Date(),
+): Promise<CampaignEvaluation[]> {
+  return runEvaluation(customerId, outletId, {
+    order: undefined,
+    at,
+    triggerFilter: trigger,
+  });
+}
+
+async function runEvaluation(
+  customerId: string,
+  outletId: string,
+  opts: {
+    order?: OrderSnapshot;
+    at: Date;
+    triggerFilter: TriggerKind | null;
+  },
+): Promise<CampaignEvaluation[]> {
+  const { at } = opts;
   const customer = await db.customer.findFirst({
     where: { id: customerId },
     include: {
@@ -39,6 +99,7 @@ export async function evaluateCustomerOffers(
       active: true,
       startsAt: { lte: at },
       endsAt: { gte: at },
+      ...(opts.triggerFilter ? { trigger: opts.triggerFilter } : {}),
     },
     include: {
       rules: { orderBy: { order: "asc" } },
@@ -46,9 +107,7 @@ export async function evaluateCustomerOffers(
     },
   });
 
-  // Redemption caps enforced here so an "eligible" result already respects
-  // max-per-customer + max-redemptions rather than pushing that to the
-  // caller. Keeps every caller correct.
+  // Redemption caps.
   const capsBlocked = new Set<string>();
   for (const c of campaignRows) {
     if (c.maxRedemptions == null && c.maxPerCustomer == null) continue;
@@ -82,7 +141,7 @@ export async function evaluateCustomerOffers(
         expiresAt: m.expiresAt,
       })),
     },
-    order,
+    order: opts.order,
   };
 
   const campaigns: CampaignLike[] = campaignRows
@@ -115,10 +174,113 @@ export async function evaluateCustomerOffers(
         })),
     }));
 
-  return evaluateAll(campaigns, ctx);
+  const results = evaluateAll(campaigns, ctx);
+
+  // Merge destination metadata onto each result so the applier knows
+  // where each benefit lands.
+  const rowById = new Map(campaignRows.map((c) => [c.id, c]));
+  return results.map<CampaignEvaluation>((r) => {
+    const row = rowById.get(r.campaign.id);
+    const overrides: Record<string, DestinationKind | null> = {};
+    for (const cb of row?.benefits ?? []) {
+      overrides[cb.benefitDefId] = (cb.destinationOverride as DestinationKind | null) ?? null;
+    }
+    return {
+      ...r,
+      destinationKind: (row?.destinationKind as DestinationKind | null) ?? null,
+      destinationOverrides: overrides,
+    };
+  });
 }
 
-/** Customer.tags is a CSV column in the existing schema. */
+// ─── Applier ───────────────────────────────────────────────────────────
+
+export type ApplyOptions = {
+  customerId: string;
+  outletId: string;
+  actor?: string;
+  /** Free-form scope for idempotency — e.g. topup transaction id, or
+   * `order:<orderId>` after settle. */
+  applyScope: string;
+  /** Optional order id to link on wallet transactions + redemption rows. */
+  orderId?: string;
+};
+
+export type ApplySummary = {
+  walletCreditsApplied: number;
+  walletCreditTotal: number;
+  /** Benefits whose destination we can't apply yet (DISCOUNT / COUPON /
+   * REWARD_POINTS / FREE_PRODUCT / MEMBERSHIP). Surfaced to the caller
+   * so the billing screen can render them as line items. */
+  pendingByDestination: Partial<Record<DestinationKind, ResolvedBenefit[]>>;
+};
+
+/** Persist eligible benefits. Wallet destinations write to the ledger
+ * (idempotent per benefit+scope). Non-wallet destinations are returned
+ * to the caller for downstream application. */
+export async function applyBenefits(
+  results: CampaignEvaluation[],
+  opts: ApplyOptions,
+): Promise<ApplySummary> {
+  const summary: ApplySummary = {
+    walletCreditsApplied: 0,
+    walletCreditTotal: 0,
+    pendingByDestination: {},
+  };
+
+  for (const r of results) {
+    for (const b of r.benefits) {
+      const destination =
+        r.destinationOverrides[b.benefitDefId] ?? r.destinationKind ?? "CASH_WALLET";
+      const rememberedKey = `${b.idempotencyKey}:${opts.applyScope}`;
+
+      if (destination === "CASH_WALLET" || destination === "PROMO_WALLET") {
+        // Only wallet-credit benefits actually move money at this layer.
+        if (b.detail.kind !== "WALLET_CREDIT" || b.amount <= 0) continue;
+        try {
+          await credit({
+            customerId: opts.customerId,
+            outletId: opts.outletId,
+            bucket: destination === "PROMO_WALLET" ? "PROMO" : "CASH",
+            sourceKind: "CAMPAIGN",
+            amount: b.amount,
+            source: `Campaign: ${r.campaign.name}`,
+            expiresInDays: b.detail.expiresInDays,
+            campaignId: r.campaign.id,
+            actor: opts.actor ?? "system",
+            orderId: opts.orderId,
+            txIdempotencyKey: rememberedKey,
+            remarks: b.label,
+          });
+          // Offer-level ledger for cap enforcement.
+          await db.redemptionHistory.upsert({
+            where: { idempotencyKey: rememberedKey },
+            create: {
+              customerId: opts.customerId,
+              campaignId: r.campaign.id,
+              benefitLabel: b.label,
+              orderId: opts.orderId ?? null,
+              outletId: opts.outletId,
+              amount: b.amount,
+              metaJson: JSON.stringify({ destination, benefitDefId: b.benefitDefId }),
+              idempotencyKey: rememberedKey,
+            },
+            update: {},
+          });
+          summary.walletCreditsApplied++;
+          summary.walletCreditTotal += b.amount;
+        } catch (err) {
+          console.error("[cve/applyBenefits] wallet credit failed", err);
+        }
+      } else {
+        (summary.pendingByDestination[destination] ??= []).push(b);
+      }
+    }
+  }
+
+  return summary;
+}
+
 function parseTags(csv: string | null | undefined): string[] {
   if (!csv) return [];
   return csv
