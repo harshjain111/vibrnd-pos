@@ -11,6 +11,12 @@ import { requireUser } from "@/lib/rbac";
 import { ArrowLeft, Plus } from "lucide-react";
 import { toggleCampaign } from "./actions";
 import { fmtDate } from "@/lib/utils";
+import {
+  DESTINATION_META,
+  TRIGGER_META,
+  type DestinationKind,
+  type TriggerKind,
+} from "@/lib/cve/types";
 
 export const dynamic = "force-dynamic";
 
@@ -63,10 +69,9 @@ export default async function CampaignsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  <TableHead>Trigger → Destination</TableHead>
                   <TableHead>Window</TableHead>
-                  <TableHead>Priority</TableHead>
-                  <TableHead>Rules</TableHead>
-                  <TableHead>Benefits</TableHead>
+                  <TableHead>Rules / Benefits</TableHead>
                   <TableHead>Redeemed</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead></TableHead>
@@ -86,12 +91,24 @@ export default async function CampaignsPage() {
                           </div>
                         ) : null}
                       </TableCell>
+                      <TableCell className="text-xs">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-medium">
+                            {c.trigger ? TRIGGER_META[c.trigger as TriggerKind]?.label : "—"}
+                          </span>
+                          <span className="text-muted-foreground">
+                            → {c.destinationKind ? DESTINATION_META[c.destinationKind as DestinationKind]?.label : "—"}
+                          </span>
+                        </div>
+                      </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {fmtDate(c.startsAt, "long")} → {fmtDate(c.endsAt, "long")}
+                        <div className="text-[10px]">priority {c.priority}</div>
                       </TableCell>
-                      <TableCell className="text-xs">{c.priority}</TableCell>
-                      <TableCell className="text-xs">{c._count.rules}</TableCell>
-                      <TableCell className="text-xs">{c._count.benefits}</TableCell>
+                      <TableCell className="text-xs">
+                        {c._count.rules} rule{c._count.rules === 1 ? "" : "s"} ·{" "}
+                        {c._count.benefits} benefit{c._count.benefits === 1 ? "" : "s"}
+                      </TableCell>
                       <TableCell className="text-xs">
                         {c._count.redemptions}
                         {c.maxRedemptions ? (

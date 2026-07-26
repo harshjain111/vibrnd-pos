@@ -8,7 +8,7 @@ import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
 import { CampaignForm, type CampaignInitial } from "../campaign-form";
 import { deleteCampaign } from "../actions";
-import type { ConditionType } from "@/lib/cve/types";
+import type { ConditionType, DestinationKind, TriggerKind } from "@/lib/cve/types";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +51,10 @@ export default async function EditCampaignPage({
     name: campaign.name,
     description: campaign.description ?? "",
     active: campaign.active,
+    // Migration backfills legacy campaigns to (BILL_PAID, CASH_WALLET),
+    // but be defensive in case a row snuck through without one set.
+    trigger: (campaign.trigger as TriggerKind) ?? "BILL_PAID",
+    destinationKind: (campaign.destinationKind as DestinationKind) ?? "CASH_WALLET",
     startsAt: toLocalInput(campaign.startsAt),
     endsAt: toLocalInput(campaign.endsAt),
     priority: campaign.priority,
@@ -64,6 +68,7 @@ export default async function EditCampaignPage({
     benefits: campaign.benefits.map((b) => ({
       benefitDefId: b.benefitDefId,
       overrideJson: b.overrideJson ?? undefined,
+      destinationOverride: (b.destinationOverride as DestinationKind | null) ?? null,
     })),
   };
 

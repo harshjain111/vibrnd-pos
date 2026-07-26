@@ -7,7 +7,11 @@ import { db } from "@/lib/db";
 import { getActiveOutlet } from "@/lib/outlet";
 import { requireUser } from "@/lib/rbac";
 import { logActivity } from "@/lib/audit";
-import { CONDITION_TYPES } from "@/lib/cve/types";
+import {
+  CONDITION_TYPES,
+  DESTINATION_KINDS,
+  TRIGGER_KINDS,
+} from "@/lib/cve/types";
 import { validateConditionConfig } from "@/lib/cve/conditions";
 
 // Payload shape sent by the client — one JSON blob containing everything
@@ -20,12 +24,22 @@ const RuleInput = z.object({
 const BenefitInput = z.object({
   benefitDefId: z.string(),
   overrideJson: z.string().optional(),
+  destinationOverride: z.enum(DESTINATION_KINDS).optional().nullable(),
 });
 const CampaignInput = z.object({
   id: z.string().optional(),
   name: z.string().trim().min(1).max(120),
   description: z.string().max(400).optional().nullable(),
   active: z.boolean().default(true),
+  // v2 — trigger + destinationKind are mandatory on new saves. Legacy
+  // campaigns are backfilled to (BILL_PAID, CASH_WALLET) by the R2
+  // migration so this schema doesn't reject them on edit either.
+  trigger: z.enum(TRIGGER_KINDS, {
+    errorMap: () => ({ message: "Pick a trigger — what fires this campaign?" }),
+  }),
+  destinationKind: z.enum(DESTINATION_KINDS, {
+    errorMap: () => ({ message: "Pick a destination — where does the benefit land?" }),
+  }),
   startsAt: z.string().min(1),
   endsAt: z.string().min(1),
   priority: z.coerce.number().int().default(0),
@@ -86,6 +100,8 @@ export async function saveCampaign(payloadJson: string): Promise<SaveResult> {
     name: parsed.name,
     description: parsed.description ?? null,
     active: parsed.active,
+    trigger: parsed.trigger,
+    destinationKind: parsed.destinationKind,
     startsAt,
     endsAt,
     priority: parsed.priority,
@@ -122,6 +138,7 @@ export async function saveCampaign(payloadJson: string): Promise<SaveResult> {
         campaignId,
         benefitDefId: b.benefitDefId,
         overrideJson: b.overrideJson ? canonicalJson(b.overrideJson) : null,
+        destinationOverride: b.destinationOverride ?? null,
         order: i,
       })),
     });

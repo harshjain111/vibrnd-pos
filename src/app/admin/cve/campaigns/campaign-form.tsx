@@ -10,7 +10,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Trash2 } from "lucide-react";
-import { CONDITION_TYPES, type ConditionType } from "@/lib/cve/types";
+import {
+  CONDITION_TYPES,
+  DESTINATION_KINDS,
+  DESTINATION_META,
+  TRIGGER_KINDS,
+  TRIGGER_META,
+  type ConditionType,
+  type DestinationKind,
+  type TriggerKind,
+} from "@/lib/cve/types";
 import { saveCampaign } from "./actions";
 
 export type CampaignInitial = {
@@ -18,13 +27,19 @@ export type CampaignInitial = {
   name: string;
   description: string;
   active: boolean;
+  trigger: TriggerKind;
+  destinationKind: DestinationKind;
   startsAt: string; // "YYYY-MM-DDTHH:mm"
   endsAt: string;
   priority: number;
   maxRedemptions: number | "";
   maxPerCustomer: number | "";
   rules: { conditionType: ConditionType; configJson: string; groupOp: "AND" | "OR" }[];
-  benefits: { benefitDefId: string; overrideJson?: string }[];
+  benefits: {
+    benefitDefId: string;
+    overrideJson?: string;
+    destinationOverride?: DestinationKind | null;
+  }[];
 };
 
 export type BenefitDefLite = { id: string; name: string; type: string; active: boolean };
@@ -168,6 +183,51 @@ export function CampaignForm({
               placeholder="Internal note — what this campaign is meant to do"
             />
           </div>
+
+          {/* v2 — Trigger + Destination are the two decisions that shape
+              a campaign's identity. Kept as their own row above the
+              schedule/caps so admins pick them first. */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label htmlFor="trigger">Trigger</Label>
+              <select
+                id="trigger"
+                value={state.trigger}
+                onChange={(e) => setState({ ...state, trigger: e.target.value as TriggerKind })}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm"
+              >
+                {TRIGGER_KINDS.map((t) => (
+                  <option key={t} value={t}>
+                    {TRIGGER_META[t].label}
+                  </option>
+                ))}
+              </select>
+              <div className="text-[10px] text-muted-foreground mt-0.5">
+                {TRIGGER_META[state.trigger].hint}
+              </div>
+            </div>
+            <div>
+              <Label htmlFor="destinationKind">Destination</Label>
+              <select
+                id="destinationKind"
+                value={state.destinationKind}
+                onChange={(e) =>
+                  setState({ ...state, destinationKind: e.target.value as DestinationKind })
+                }
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm"
+              >
+                {DESTINATION_KINDS.map((d) => (
+                  <option key={d} value={d}>
+                    {DESTINATION_META[d].label}
+                  </option>
+                ))}
+              </select>
+              <div className="text-[10px] text-muted-foreground mt-0.5">
+                {DESTINATION_META[state.destinationKind].hint}
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label htmlFor="startsAt">Starts</Label>
@@ -824,6 +884,10 @@ export function blankCampaign(): CampaignInitial {
     name: "",
     description: "",
     active: true,
+    // Sensible defaults — most campaigns fire post-settle and land credit
+    // in the Cash Wallet. Admins pick real values in the form.
+    trigger: "BILL_PAID",
+    destinationKind: "CASH_WALLET",
     startsAt: toLocalInput(now),
     endsAt: toLocalInput(in30),
     priority: 0,
