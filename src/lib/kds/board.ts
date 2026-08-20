@@ -71,13 +71,20 @@ export function buildBoard(kots: KotSnapshot[], kitchenId: string): Board {
     for (const [col, items] of groups) {
       const readyPart = col === "READY";
       const waitingForOthers = readyPart && !isFinalReady;
+      const { currentStageStartedAt, priorStages } = computeStageTrail(
+        col,
+        items,
+        kot.punchedAt,
+      );
       const tile: Tile = {
         kotId: kot.id,
         kotNo: kot.kotNo,
         column: col,
         items,
-        timerFrom: kot.punchedAt, // §9 S3 — identical on every part
+        timerFrom: kot.punchedAt, // §9 S3 — identical on every part; kept for KOT-level maths.
         heldMs,
+        currentStageStartedAt,
+        priorStages,
         isSplit,
         splitLabel: isSplit
           ? `SPLIT ${items.length}/${nonHeld.length}`
@@ -109,6 +116,97 @@ export function buildBoard(kots: KotSnapshot[], kitchenId: string): Board {
     READY: sortReadyColumn(cols.READY),
     SERVED: sortServed(cols.SERVED),
   };
+}
+
+// ─── stage trail (current stage timer + prior stage durations) ───────
+
+/**
+ * Where the big timer starts + how long every prior stage took.
+ *
+ * Timestamps we can read straight from the item:
+ *   punchedAt (KOT-level) — when the ticket landed on the board
+ *   startedAt              — when the chef first tapped it to PREPARING
+ *   readyAt                — when the chef tapped it to READY
+ *   servedAt               — when the captain marked it SERVED
+ *
+ * For a tile in a given column we take the EARLIEST relevant timestamp
+ * across the items so the chef sees the moment the FIRST item entered
+ * that stage — matches the felt experience of "how long has this tile
+ * been in Preparing".
+ */
+function computeStageTrail(
+  col: BoardColumn,
+  items: KotItemSnapshot[],
+  punchedAt: string,
+): {
+  currentStageStartedAt: string;
+  priorStages: Tile["priorStages"];
+} {
+  const punched = Date.parse(punchedAt);
+  const firstStarted = earliestDate(items.map((i) => i.startedAt));
+  const firstReady = earliestDate(items.map((i) => i.readyAt));
+  const firstServed = earliestDate(items.map((i) => i.servedAt));
+
+  const priorStages: Tile["priorStages"] = [];
+  let currentStart = punched;
+
+  if (col === "NEW") {
+    // Nothing prior — the tile is still on its first stage.
+  } else if (col === "PREPARING") {
+    if (firstStarted != null) {
+      priorStages.push({ stage: "NEW", seconds: secondsBetween(punched, firstStarted) });
+      currentStart = firstStarted;
+    }
+  } else if (col === "READY") {
+    if (firstStarted != null) {
+      priorStages.push({ stage: "NEW", seconds: secondsBetween(punched, firstStarted) });
+    }
+    if (firstReady != null) {
+      priorStages.push({
+        stage: "PREPARING",
+        seconds: secondsBetween(firstStarted ?? punched, firstReady),
+      });
+      currentStart = firstReady;
+    }
+  } else {
+    // SERVED
+    if (firstStarted != null) {
+      priorStages.push({ stage: "NEW", seconds: secondsBetween(punched, firstStarted) });
+    }
+    if (firstReady != null) {
+      priorStages.push({
+        stage: "PREPARING",
+        seconds: secondsBetween(firstStarted ?? punched, firstReady),
+      });
+    }
+    if (firstServed != null) {
+      priorStages.push({
+        stage: "READY",
+        seconds: secondsBetween(firstReady ?? firstStarted ?? punched, firstServed),
+      });
+      currentStart = firstServed;
+    }
+  }
+
+  return {
+    currentStageStartedAt: new Date(currentStart).toISOString(),
+    priorStages,
+  };
+}
+
+function earliestDate(iso: (string | null)[]): number | null {
+  let min: number | null = null;
+  for (const s of iso) {
+    if (!s) continue;
+    const t = Date.parse(s);
+    if (!Number.isFinite(t)) continue;
+    if (min == null || t < min) min = t;
+  }
+  return min;
+}
+
+function secondsBetween(a: number, b: number): number {
+  return Math.max(0, Math.floor((b - a) / 1000));
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────

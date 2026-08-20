@@ -115,6 +115,15 @@ export type Tile = {
   waitingForOthers: boolean;
   /** True when the whole KOT is ready → captain notification fires. */
   isFinalReady: boolean;
+  /** ISO time the current stage started for this tile. The big timer
+   *  ticks from here so managers can see how long the tile has been
+   *  sitting in its current stage, not since punch. */
+  currentStageStartedAt: string;
+  /** Fully-elapsed prior stages so the chef can see where the delay
+   *  happened. Rendered as a small footer strip on the tile:
+   *    NEW 02:15 · PREPARING 08:30 · READY (now).
+   *  The current stage is NOT included here (that's the big timer). */
+  priorStages: Array<{ stage: "NEW" | "PREPARING" | "READY"; seconds: number }>;
   serviceMode: ServiceMode | null;
   tableLabel: string | null;
   tokenNo: string | null;

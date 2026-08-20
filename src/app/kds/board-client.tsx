@@ -322,10 +322,21 @@ function TileCard({
   onRecall: (itemId: string) => void | Promise<void>;
   readOnly: boolean;
 }) {
+  // v2 tweak — big timer is stage-scoped (how long the tile has been in
+  // its current stage), not since punch. The prior-stage trail is
+  // rendered as a small footer so managers can see where the delay
+  // actually happened. Held time still gets subtracted.
   const targetSecs = ticketTargetSeconds(tile.items);
-  const elapsed = elapsedSeconds(tile.timerFrom, tile.heldMs, new Date(nowMs));
+  const elapsed = elapsedSeconds(tile.currentStageStartedAt, tile.heldMs, new Date(nowMs));
   const band = bandFor(elapsed, targetSecs);
   const timerLabel = formatTicketTimer(elapsed, targetSecs);
+  const columnStageLabel = tile.column === "NEW"
+    ? "waiting"
+    : tile.column === "PREPARING"
+      ? "cooking"
+      : tile.column === "READY"
+        ? "on pass"
+        : "served";
   const bandClass = {
     ON_TIME: "text-slate-900",
     GETTING_CLOSE: "text-amber-700",
@@ -368,10 +379,37 @@ function TileCard({
             {tile.guestCount ? ` · ${tile.guestCount} guests` : ""}
           </div>
         </div>
-        <div className={`font-mono font-bold text-lg tabular-nums ${bandClass}`}>
-          {timerLabel}
+        <div className="text-right shrink-0">
+          <div className={`font-mono font-bold text-lg tabular-nums leading-tight ${bandClass}`}>
+            {timerLabel}
+          </div>
+          <div className="text-[9px] uppercase tracking-wider text-muted-foreground leading-none">
+            {columnStageLabel}
+          </div>
         </div>
       </div>
+
+      {/* Prior-stage trail — where the tile has been so far. Renders
+          only when there is at least one completed stage; otherwise the
+          big timer alone is enough. Spec §7 timer semantics kept; this
+          is additive per the "show where the delay happened" ask. */}
+      {tile.priorStages.length > 0 && (
+        <div className="mx-2.5 mb-1.5 flex items-center gap-1 text-[10px] text-muted-foreground flex-wrap">
+          {tile.priorStages.map((s, i) => (
+            <React.Fragment key={s.stage}>
+              {i > 0 && <span className="opacity-50">→</span>}
+              <span className="rounded bg-muted/40 border px-1.5 py-0.5">
+                <span className="font-medium">{shortStage(s.stage)}</span>
+                <span className="ml-1 tabular-nums">{formatMmSs(s.seconds)}</span>
+              </span>
+            </React.Fragment>
+          ))}
+          <span className="opacity-50">→</span>
+          <span className="rounded bg-primary/10 border border-primary/40 text-primary px-1.5 py-0.5 font-medium">
+            {shortStage(tile.column)} <span className="tabular-nums">{formatMmSs(elapsed)}</span>
+          </span>
+        </div>
+      )}
 
       {/* Items */}
       <div className="px-2.5 pb-2 space-y-1.5">
@@ -595,4 +633,15 @@ function useTick(): Date {
 
 function nextLabel(from: "NEW" | "PREPARING" | "READY" | "HELD"): string {
   return from === "NEW" ? "Preparing" : from === "PREPARING" ? "Ready" : from === "READY" ? "Served" : "—";
+}
+
+function shortStage(s: "NEW" | "PREPARING" | "READY" | "SERVED"): string {
+  return s === "NEW" ? "N" : s === "PREPARING" ? "P" : s === "READY" ? "R" : "S";
+}
+
+function formatMmSs(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
 }

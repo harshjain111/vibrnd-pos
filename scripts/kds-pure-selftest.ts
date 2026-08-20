@@ -333,6 +333,75 @@ check(
   { newLink: boardA.NEW[0].linkText, preparingLink: boardA.PREPARING[0].linkText },
 );
 
+// ─── stage trail (prior stages + current-stage timer) ─────────────
+console.log("\n[stage trail — where did the delay happen?]");
+const T0 = new Date("2026-08-20T10:00:00Z").toISOString();
+const T2m = new Date("2026-08-20T10:02:00Z").toISOString();  // punched → started
+const T7m = new Date("2026-08-20T10:07:00Z").toISOString();  // started → ready
+const T9m = new Date("2026-08-20T10:09:00Z").toISOString();  // ready   → served
+
+// NEW tile — no prior stages, currentStage = punchedAt
+const kNew = kot("k_new", [item("n1", "NEW")], { punchedAt: T0 });
+const bNew = buildBoard([kNew], KID);
+check("stage trail: NEW tile has no prior stages", bNew.NEW[0].priorStages.length === 0);
+check("stage trail: NEW tile currentStage = punchedAt", bNew.NEW[0].currentStageStartedAt === T0);
+
+// PREPARING tile — one prior stage: NEW (2 min)
+const kPrep = kot("k_prep", [item("p1", "PREPARING", { startedAt: T2m })], { punchedAt: T0 });
+const bPrep = buildBoard([kPrep], KID);
+check(
+  "stage trail: PREPARING tile shows NEW duration",
+  bPrep.PREPARING[0].priorStages.length === 1 &&
+    bPrep.PREPARING[0].priorStages[0].stage === "NEW" &&
+    bPrep.PREPARING[0].priorStages[0].seconds === 120,
+  bPrep.PREPARING[0].priorStages,
+);
+check(
+  "stage trail: PREPARING tile currentStage = startedAt",
+  bPrep.PREPARING[0].currentStageStartedAt === T2m,
+);
+
+// READY tile — two prior stages: NEW (2m) + PREPARING (5m)
+const kReady = kot("k_ready", [
+  item("r1", "READY", { startedAt: T2m, readyAt: T7m }),
+], { punchedAt: T0 });
+const bReady = buildBoard([kReady], KID);
+check(
+  "stage trail: READY tile shows NEW + PREPARING",
+  bReady.READY[0].priorStages.length === 2 &&
+    bReady.READY[0].priorStages[0].stage === "NEW" &&
+    bReady.READY[0].priorStages[0].seconds === 120 &&
+    bReady.READY[0].priorStages[1].stage === "PREPARING" &&
+    bReady.READY[0].priorStages[1].seconds === 300,
+);
+check(
+  "stage trail: READY tile currentStage = readyAt",
+  bReady.READY[0].currentStageStartedAt === T7m,
+);
+
+// SERVED tile — three prior stages
+const kServed = kot("k_served", [
+  item("s1", "SERVED", { startedAt: T2m, readyAt: T7m, servedAt: T9m }),
+], { punchedAt: T0 });
+const bServed = buildBoard([kServed], KID);
+check(
+  "stage trail: SERVED tile shows NEW + PREPARING + READY",
+  bServed.SERVED[0].priorStages.length === 3 &&
+    bServed.SERVED[0].priorStages[2].stage === "READY" &&
+    bServed.SERVED[0].priorStages[2].seconds === 120,
+);
+
+// Split tile — earliest-item timestamp wins, not the KOT one
+const kSplitReady = kot("k_split", [
+  item("a", "READY",     { startedAt: T2m, readyAt: T7m }),
+  item("b", "READY",     { startedAt: T2m, readyAt: T9m }), // this one lagged
+], { punchedAt: T0 });
+const bSplitReady = buildBoard([kSplitReady], KID);
+check(
+  "stage trail: split with mixed readyAt uses EARLIEST",
+  bSplitReady.READY[0].currentStageStartedAt === T7m,
+);
+
 console.log(
   `\n${failed === 0 ? "OK" : "FAIL"} ${passed}/${passed + failed}${failed ? "\n  failures:\n    - " + fails.join("\n    - ") : ""}`,
 );
