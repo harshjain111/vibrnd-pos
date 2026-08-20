@@ -68,6 +68,7 @@ export type PageId =
   | "gift-cards"
   | "wallets"
   | "admin.cve"
+  | "admin.kitchens"
   | "customers.campaigns"
   // Accounting
   | "expenses"
@@ -179,6 +180,7 @@ export const PAGES: PageDef[] = [
   { id: "gift-cards", label: "Gift cards", category: "CRM", defaultRoles: ["MANAGER", "OWNER"] },
   { id: "wallets", label: "Virtual wallets", category: "CRM", defaultRoles: ["BILLER", "MANAGER", "OWNER"] },
   { id: "admin.cve", label: "Wallet & Offers admin", category: "CRM", defaultRoles: ["MANAGER", "OWNER"] },
+  { id: "admin.kitchens", label: "Kitchens (KDS routing)", category: "Management", defaultRoles: ["MANAGER", "OWNER"] },
   { id: "customers.campaigns", label: "Campaigns", category: "CRM", defaultRoles: ["MANAGER", "OWNER"] },
 
   // Accounting

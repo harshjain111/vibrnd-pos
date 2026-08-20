@@ -357,6 +357,181 @@ const RecallInput = z.object({
   reason: z.string().max(200).optional(),
 });
 
+// ─── Cancel item / whole KOT (POS or Captain App path — §13) ─────────
+
+const CancelInput = z.object({
+  kotId: z.string(),
+  itemIds: z.array(z.string()).optional(),
+  reason: z.string().max(200),
+});
+
+/** Called by POS / Captain App to cancel a whole KOT or specific items.
+ *  Items flip to CANCELLED with cancelReason + cancelledBy; the KDS
+ *  board renders the red alert ticket + banner + locks the items until
+ *  a chef acknowledges (§13). Broadcast is best-effort — clients poll
+ *  every 5 s (spec §23 upgrades this to WebSocket later). */
+export async function cancelKot(fd: FormData) {
+  await requireUser("MANAGER"); // §13 — POS-side action; kitchen never cancels
+  const outlet = await getActiveOutlet();
+  const user = await getSessionUser();
+  const parsed = CancelInput.parse({
+    kotId: String(fd.get("kotId") ?? ""),
+    itemIds: fd.get("itemIds")
+      ? JSON.parse(String(fd.get("itemIds")))
+      : undefined,
+    reason: String(fd.get("reason") ?? "").trim(),
+  });
+  if (!parsed.reason) {
+    return { ok: false, code: "REASON_REQUIRED" as const, message: "Cancellation reason is required" };
+  }
+
+  const now = new Date();
+  const targetItems = await db.kitchenTicketLine.findMany({
+    where: {
+      ticketId: parsed.kotId,
+      ticket: { outletId: outlet.id },
+      ...(parsed.itemIds ? { id: { in: parsed.itemIds } } : {}),
+      status: { not: "CANCELLED" },
+    },
+    select: { id: true, status: true, kitchenId: true },
+  });
+  if (targetItems.length === 0) {
+    return { ok: false, code: "NOTHING_TO_CANCEL" as const, message: "No live items to cancel" };
+  }
+
+  await db.$transaction(async (tx) => {
+    for (const it of targetItems) {
+      await tx.kitchenTicketLine.update({
+        where: { id: it.id },
+        data: {
+          status: "CANCELLED",
+          cancelledAt: now,
+          cancelReason: parsed.reason,
+          cancelledBy: user?.name ?? user?.id ?? "system",
+          version: { increment: 1 },
+        },
+      });
+      await tx.kotItemEvent.create({
+        data: {
+          kotItemId: it.id,
+          kotId: parsed.kotId,
+          outletId: outlet.id,
+          kitchenId: it.kitchenId,
+          fromStatus: it.status,
+          toStatus: "CANCELLED",
+          actorId: user?.id ?? null,
+          actorRole: "MANAGER",
+          reason: parsed.reason,
+          occurredAt: now,
+        },
+      });
+    }
+    // If the whole KOT is cancelled, close the KOT header too.
+    const remaining = await tx.kitchenTicketLine.count({
+      where: { ticketId: parsed.kotId, status: { not: "CANCELLED" } },
+    });
+    if (remaining === 0) {
+      await tx.kitchenTicket.update({
+        where: { id: parsed.kotId },
+        data: {
+          status: "CANCELLED",
+          clearedReason: "CANCELLED",
+        },
+      });
+    }
+  });
+
+  await logActivity({
+    action: "UPDATE",
+    entity: "Order",
+    entityId: parsed.kotId,
+    summary: `KDS cancel ${parsed.itemIds ? `${parsed.itemIds.length} item(s)` : "whole KOT"}: ${parsed.reason}`,
+    outletId: outlet.id,
+  });
+  revalidatePath("/kds");
+  return { ok: true as const };
+}
+
+// ─── Bill-settle clearing (§14) — hook the billing settle path calls
+// this after the Payment row lands. Every KOT of the order leaves the
+// board with a BILL_SETTLED stamp. Live items (New / Preparing) stay
+// per §14.2. ─────────────────────────────────────────────────────────
+
+export async function clearKotsOnSettle(orderId: string, outletId: string): Promise<void> {
+  const now = new Date();
+  const kots = await db.kitchenTicket.findMany({
+    where: { orderId, outletId, clearedAt: null },
+    include: { lines: { select: { status: true } } },
+  });
+  for (const k of kots) {
+    // §14.2 — unfinished work (NEW / PREPARING) never disappears.
+    const hasLive = k.lines.some((l) => l.status === "NEW" || l.status === "PREPARING" || l.status === "HELD");
+    if (hasLive) continue;
+    await db.kitchenTicket.update({
+      where: { id: k.id },
+      data: { clearedAt: now, clearedReason: "SETTLED" },
+    });
+  }
+}
+
+// ─── Move item to a different kitchen (§14 / E14) ───────────────────
+
+const MoveInput = z.object({
+  itemId: z.string(),
+  toKitchenId: z.string(),
+});
+
+export async function moveItemToKitchen(fd: FormData) {
+  await requireUser("BILLER");
+  const outlet = await getActiveOutlet();
+  const user = await getSessionUser();
+  const parsed = MoveInput.parse({
+    itemId: String(fd.get("itemId") ?? ""),
+    toKitchenId: String(fd.get("toKitchenId") ?? ""),
+  });
+  const row = await db.kitchenTicketLine.findFirst({
+    where: { id: parsed.itemId, ticket: { outletId: outlet.id } },
+    select: { id: true, kitchenId: true, status: true, ticketId: true, name: true },
+  });
+  if (!row) return { ok: false, code: "NOT_FOUND" as const };
+  if (row.kitchenId === parsed.toKitchenId) return { ok: true as const };
+
+  const now = new Date();
+  await db.$transaction(async (tx) => {
+    await tx.kitchenTicketLine.update({
+      where: { id: row.id },
+      data: {
+        kitchenId: parsed.toKitchenId,
+        movedFromKitchenId: row.kitchenId,
+        version: { increment: 1 },
+      },
+    });
+    await tx.kotItemEvent.create({
+      data: {
+        kotItemId: row.id,
+        kotId: row.ticketId,
+        outletId: outlet.id,
+        kitchenId: parsed.toKitchenId,
+        fromStatus: row.status,
+        toStatus: row.status,
+        actorId: user?.id ?? null,
+        actorRole: "CHEF",
+        reason: `move-from-${row.kitchenId}`,
+        occurredAt: now,
+      },
+    });
+  });
+  await logActivity({
+    action: "UPDATE",
+    entity: "Order",
+    entityId: row.ticketId,
+    summary: `KDS move ${row.name} to another kitchen`,
+    outletId: outlet.id,
+  });
+  revalidatePath("/kds");
+  return { ok: true as const };
+}
+
 export async function recallItem(fd: FormData) {
   await requireUser("BILLER");
   const outlet = await getActiveOutlet();

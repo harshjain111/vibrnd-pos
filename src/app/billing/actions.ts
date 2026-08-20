@@ -13,6 +13,7 @@ import {
   applyBenefits,
   evaluateCustomerOffersForTrigger,
 } from "@/lib/cve/offers";
+import { clearKotsOnSettle } from "@/app/kds/v2-actions";
 
 const AddonShape = z.object({
   name: z.string(),
@@ -409,6 +410,16 @@ export async function placeOrder(input: z.infer<typeof PlaceOrderInput>) {
         actor: "system",
       },
     });
+  }
+
+  // KDS v2 — clear finished KOTs off the board on settle (§14). Live
+  // work (New / Preparing / Held) stays visible per §14.2.
+  if (data.paymentMode !== "DUE") {
+    try {
+      await clearKotsOnSettle(order.id, outlet.id);
+    } catch (err) {
+      console.error("[billing] KDS clear failed", err);
+    }
   }
 
   // v2 — fire the BILL_PAID trigger so cashback / post-settle wallet
