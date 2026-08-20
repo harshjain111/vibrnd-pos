@@ -133,7 +133,10 @@ model Outlet {
   campaigns          Campaign[]
   benefitDefs        BenefitDef[]
   redemptionHistory  RedemptionHistory[]
-  otpChallenges      OtpChallenge[]
+
+  // KDS v2
+  kitchens      Kitchen[]
+  otpChallenges OtpChallenge[]
 }
 
 /// A stock-holding sub-unit within an outlet. Every outlet has at minimum a
@@ -267,7 +270,13 @@ model Item {
   /// 4-way dietary marker per audit TASK 4 — overrides isVeg when set.
   /// VEG (green) | NON_VEG (red) | EGG (yellow) | JAIN (saffron)
   dietary            String              @default("VEG")
-  station            String              @default("MAIN") // MAIN | TANDOOR | BAR | DESSERT
+  station            String              @default("MAIN") // legacy free-text; new code uses kitchenId
+  /// KDS v2 — routing target. When set, kot items for this dish land on
+  /// this kitchen's board. Falls back to `station` string when null.
+  kitchenId          String?
+  kitchen            Kitchen?            @relation(fields: [kitchenId], references: [id])
+  /// KDS v2 — target minutes for the timer colour band (§7).
+  prepMinutes        Int                 @default(10)
   categoryId         String
   category           Category            @relation(fields: [categoryId], references: [id])
   outletId           String
@@ -554,17 +563,60 @@ model Printer {
   @@index([outletId, station, active])
 }
 
+/// KDS v2 — Kitchen (routing target). Every dish maps to exactly one
+/// Kitchen; a KitchenTicket fans out to N Kitchens = N tiles on N boards.
+/// Per KDS_Specification_v2 §21.
+model Kitchen {
+  id        String   @id @default(cuid())
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  /// Short code the chef and admin both use: "TANDOOR", "MAIN", "BAR".
+  code      String
+  name      String
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items       Item[]
+  ticketLines KitchenTicketLine[]
+  devices     KdsDevice[]
+  itemEvents  KotItemEvent[]
+
+  @@unique([outletId, code])
+  @@index([outletId, isActive, sortOrder])
+}
+
+/// KDS v2 — Device (Display or Control screen). Per §21.
+model KdsDevice {
+  id         String    @id @default(cuid())
+  outletId   String
+  kitchenId  String
+  kitchen    Kitchen   @relation(fields: [kitchenId], references: [id])
+  /// Human-readable label, e.g. "KDS-TANDOOR-CONTROL-01".
+  deviceCode String    @unique
+  /// DISPLAY | CONTROL
+  mode       String
+  settings   String    @default("{}")
+  lastSeenAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([outletId, kitchenId])
+}
+
+/// KDS v2 — extended KOT. Column names match the pre-existing v1 shape;
+/// v2-only fields are additive so v1 code paths keep working. Per §21.
 model KitchenTicket {
   id            String              @id @default(cuid())
   kotNo         String              @unique
   orderId       String
   order         Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
   status        String              @default("NEW") // NEW | IN_PROGRESS | READY | SERVED | CANCELLED
-  station       String              @default("MAIN") // MAIN | TANDOOR | BAR | DESSERT
+  station       String              @default("MAIN") // legacy free-text kitchen name; use lines.kitchenId for routing
   outletId      String
   outlet        Outlet              @relation(fields: [outletId], references: [id])
   lines         KitchenTicketLine[]
-  notes         String?
+  notes         String? // legacy "kot note" field; v2 code writes kotNote instead
   /// KOT idempotency — Print KOT button locks after first send; reprints
   /// require a reason and bump this counter (audit anti-leakage signal).
   printedCount  Int                 @default(0)
@@ -574,20 +626,120 @@ model KitchenTicket {
   readyAt       DateTime?
   servedAt      DateTime?
 
+  // ─── KDS v2 additions (spec §21) ────────────────────────────────────
+  /// Daily reset business date — used with kotNo for the "punched today"
+  /// counter the chef sees.
+  businessDate  DateTime?
+  /// DINE_IN | TAKEAWAY | DELIVERY — drives table_label vs token_no.
+  serviceMode   String?
+  tableLabel    String?
+  tokenNo       String?
+  guestCount    Int?
+  captainId     String?
+  isRush        Boolean   @default(false)
+  /// The KOT-level note (v2 "kot_note"). Shown as an amber block below
+  /// the item list on every tile.
+  kotNote       String?
+  /// Free-text allergy warning captured at punch time. Promotes to the
+  /// red allergy strip on every tile.
+  allergyNote   String?
+  /// Timer origin. Equals createdAt for legacy rows; v2 code sets both.
+  punchedAt     DateTime?
+  /// When the whole ticket left the board (bumped, settled or all
+  /// cancelled).
+  clearedAt     DateTime?
+  clearedReason String? // BUMPED | SETTLED | CANCELLED
+
   @@index([status, createdAt])
   @@index([outletId, status])
+  @@index([outletId, businessDate, kotNo])
+  @@index([outletId, clearedAt])
 }
 
+/// KDS v2 — extended KotItem. Item is what carries status, not the KOT.
 model KitchenTicketLine {
   id       String        @id @default(cuid())
   ticketId String
   ticket   KitchenTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
   itemId   String
   item     Item          @relation(fields: [itemId], references: [id])
+  /// Snapshot at punch time — menu names change.
   name     String
   qty      Int
+  /// v2 — free-text note the captain typed (legacy). New captures land
+  /// in `comments` as a NOTE entry.
   note     String?
-  status   String        @default("NEW") // NEW | READY
+  status   String        @default("NEW") // NEW | HELD | PREPARING | READY | SERVED | CANCELLED
+
+  // ─── KDS v2 additions (spec §21) ────────────────────────────────────
+  /// Partial-quantity support (§9.2). qty_ready ≤ qty.
+  qtyReady           Int       @default(0)
+  portion            String?
+  isVeg              Boolean   @default(true)
+  /// Ordered array of comment objects. Rendered verbatim per §6.
+  /// [{ "type":"MODIFIER|ADDON|REMOVE|NOTE", "text":"...", "qty":1 }]
+  comments           String    @default("[]")
+  /// Stable hash of ordered comments used for line-grouping (§6.3).
+  commentKey         String    @default("")
+  /// Routing (§21). Nullable during rollout; falls back to the KOT's
+  /// legacy `station` string on legacy rows.
+  kitchenId          String?
+  kitchen            Kitchen?  @relation(fields: [kitchenId], references: [id])
+  movedFromKitchenId String?
+  /// Snapshot at punch — drives the timer colour band regardless of
+  /// later menu edits.
+  prepMinutes        Int       @default(10)
+  /// Hold / fire (§12). While held, timer is paused and heldMs grows.
+  holdUntil          DateTime?
+  heldMs             BigInt    @default(0)
+  /// Status timestamps for the timer + reports.
+  startedAt          DateTime?
+  readyAt            DateTime?
+  servedAt           DateTime?
+  cancelledAt        DateTime?
+  cancelReason       String?
+  cancelledBy        String?
+  cancelAckAt        DateTime?
+  cancelAckBy        String?
+  wasWasted          Boolean?
+  isRecalled         Boolean   @default(false)
+  recallCount        Int       @default(0)
+  /// When the chef tapped the red allergy strip on the tile.
+  allergyAckAt       DateTime?
+  /// Optimistic-concurrency version. Every status update bumps this.
+  version            Int       @default(1)
+  updatedAt          DateTime  @updatedAt
+
+  events KotItemEvent[]
+
+  @@index([kitchenId, status])
+  @@index([kitchenId, status, updatedAt])
+  @@index([status, cancelledAt])
+  @@index([holdUntil])
+}
+
+/// KDS v2 — append-only event log. Every status change lands here.
+/// Reports and the History page read from this, never from the mutable
+/// status columns, so they can't disagree with reality (§21).
+model KotItemEvent {
+  id         BigInt            @id @default(autoincrement())
+  kotItemId  String
+  kotItem    KitchenTicketLine @relation(fields: [kotItemId], references: [id], onDelete: Cascade)
+  kotId      String
+  outletId   String
+  kitchenId  String?
+  kitchen    Kitchen?          @relation(fields: [kitchenId], references: [id])
+  fromStatus String?
+  toStatus   String
+  actorId    String?
+  actorRole  String // CAPTAIN | CHEF | CASHIER | MANAGER | SYSTEM
+  deviceId   String?
+  reason     String?
+  occurredAt DateTime          @default(now())
+
+  @@index([outletId, occurredAt, toStatus])
+  @@index([kotItemId, occurredAt])
+  @@index([kotId, occurredAt])
 }
 
 model OrderItem {
